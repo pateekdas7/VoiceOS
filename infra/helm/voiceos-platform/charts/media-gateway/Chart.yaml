@@ -1,0 +1,6 @@
+apiVersion: v2
+name: media-gateway
+description: "Telephony ingress boundary (TransportAdapter: Twilio WebSocket, SIP/RTP)"
+type: application
+version: 0.1.0
+appVersion: "2.0.0"

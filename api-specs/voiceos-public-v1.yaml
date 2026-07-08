@@ -1,0 +1,245 @@
+openapi: 3.1.0
+info:
+  title: VoiceOS Public API
+  version: "1.0.0"
+  description: >
+    VoiceOS v2 public REST API (V5 Ch16). Spec-first: this document is the
+    source of truth served verbatim at GET /v1/openapi.json by
+    src.services.api_platform.openapi.
+  contact:
+    name: VoiceOS Platform Team
+servers:
+  - url: /v1
+security:
+  - ApiKeyAuth: []
+paths:
+  /customers/{id}:
+    get:
+      operationId: getCustomer
+      summary: Fetch a customer record by ID.
+      tags: [Customers]
+      parameters:
+        - $ref: '#/components/parameters/CustomerId'
+      responses:
+        "200":
+          description: Customer found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "429":
+          $ref: '#/components/responses/TooManyRequests'
+  /calls/{id}:
+    get:
+      operationId: getCall
+      summary: Fetch a call disposition record by call ID.
+      tags: [Calls]
+      parameters:
+        - $ref: '#/components/parameters/CallId'
+      responses:
+        "200":
+          description: Call found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CallDisposition'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "429":
+          $ref: '#/components/responses/TooManyRequests'
+  /campaigns:
+    post:
+      operationId: createCampaign
+      summary: Create a new dialler campaign (starts in DRAFT).
+      tags: [Campaigns]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CampaignCreateRequest'
+      responses:
+        "201":
+          description: Campaign created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Campaign'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "422":
+          description: Validation error.
+        "429":
+          $ref: '#/components/responses/TooManyRequests'
+  /campaigns/{id}/analytics:
+    get:
+      operationId: getCampaignAnalytics
+      summary: Fetch aggregated analytics for a campaign.
+      tags: [Campaigns]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Campaign analytics.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignAnalytics'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "429":
+          $ref: '#/components/responses/TooManyRequests'
+  /webhooks:
+    post:
+      operationId: registerWebhook
+      summary: Register a webhook endpoint for the caller's tenant.
+      tags: [Webhooks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookRegistrationRequest'
+      responses:
+        "201":
+          description: Webhook registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookRegistration'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "422":
+          description: Validation error (e.g. unknown event_type).
+        "429":
+          $ref: '#/components/responses/TooManyRequests'
+  /invoices:
+    get:
+      operationId: listInvoices
+      summary: List invoices for the caller's tenant.
+      tags: [Billing]
+      responses:
+        "200":
+          description: Invoice list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Invoice'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "429":
+          $ref: '#/components/responses/TooManyRequests'
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+  parameters:
+    CustomerId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    CallId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+  responses:
+    Unauthorized:
+      description: Missing or invalid API key.
+    NotFound:
+      description: Resource not found.
+    TooManyRequests:
+      description: Rate limit exceeded for this tenant's plan tier.
+  schemas:
+    Customer:
+      type: object
+      required: [customer_id, name]
+      properties:
+        customer_id: { type: string }
+        crm_id: { type: string }
+        name: { type: string }
+        preferred_language: { type: string }
+    CallDisposition:
+      type: object
+      required: [call_id, outcome_code]
+      properties:
+        call_id: { type: string }
+        customer_id: { type: string }
+        loan_account_id: { type: string }
+        outcome_code: { type: string }
+        duration_ms: { type: integer, minimum: 0 }
+    CampaignCreateRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        daily_start_hour: { type: integer, minimum: 0, maximum: 23 }
+        daily_end_hour: { type: integer, minimum: 0, maximum: 23 }
+        timezone: { type: string }
+    Campaign:
+      type: object
+      required: [campaign_id, name, status]
+      properties:
+        campaign_id: { type: string }
+        name: { type: string }
+        status:
+          type: string
+          enum: [DRAFT, REVIEW, APPROVED, ACTIVE, PAUSED, COMPLETED, ARCHIVED]
+    CampaignAnalytics:
+      type: object
+      required: [campaign_id]
+      properties:
+        campaign_id: { type: string }
+        calls_completed: { type: integer, minimum: 0 }
+        ptp_count: { type: integer, minimum: 0 }
+        ptp_rate: { type: number, minimum: 0, maximum: 1 }
+    WebhookRegistrationRequest:
+      type: object
+      required: [url, event_types]
+      properties:
+        url: { type: string, format: uri }
+        event_types:
+          type: array
+          items:
+            type: string
+            enum: [call.completed, ptp.created, ptp.broken, campaign.completed, transfer.initiated]
+    WebhookRegistration:
+      type: object
+      required: [webhook_id, url, event_types]
+      properties:
+        webhook_id: { type: string }
+        url: { type: string }
+        event_types:
+          type: array
+          items: { type: string }
+        is_active: { type: boolean }
+    Invoice:
+      type: object
+      required: [invoice_id, total_minor, currency, status]
+      properties:
+        invoice_id: { type: string }
+        total_minor: { type: integer, minimum: 0 }
+        currency: { type: string }
+        status:
+          type: string
+          enum: [DRAFT, ISSUED, PAID, OVERDUE, VOID]

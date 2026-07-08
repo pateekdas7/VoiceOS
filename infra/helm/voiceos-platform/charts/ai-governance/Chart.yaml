@@ -1,0 +1,6 @@
+apiVersion: v2
+name: ai-governance
+description: "Law of Authority + GovernanceVerdict gate"
+type: application
+version: 0.1.0
+appVersion: "2.0.0"

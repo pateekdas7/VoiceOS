@@ -1,0 +1,62 @@
+# VoiceOS v2 -- application alerts (Sprint-027.md): error rate spike,
+# circuit breaker open, DLQ growing.
+#
+# Architecture: V7 Ch8 (Alerting), V3 Ch11 (Circuit Breakers), V3 Ch4 (DLQ).
+
+groups:
+  - name: voiceos_application
+    rules:
+      - alert: ErrorRateSpike
+        expr: |
+          (
+            sum by (service) (rate(voiceos_gpu_scheduler_errors_total[5m]))
+            or sum by (service) (rate(voiceos_conversation_engine_errors_total[5m]))
+            or sum by (service) (rate(voiceos_media_gateway_errors_total[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          route: ticket
+        annotations:
+          summary: "Error rate spike on {{ $labels.service }}"
+          description: "{{ $labels.service }} error rate has exceeded 0.05 req/s over 5 minutes."
+
+      - alert: CircuitBreakerOpen
+        expr: voiceos_circuit_breaker_state == 2
+        for: 1m
+        labels:
+          severity: warning
+          route: ticket
+        annotations:
+          summary: "Circuit breaker OPEN for dependency {{ $labels.service }}"
+          description: "voiceos_circuit_breaker_state has been 2 (OPEN) for {{ $labels.service }} for at least 1 minute -- downstream calls are being short-circuited."
+
+      - alert: CircuitBreakerOpenCritical
+        expr: voiceos_circuit_breaker_state == 2
+        for: 10m
+        labels:
+          severity: critical
+          route: page
+        annotations:
+          summary: "Circuit breaker OPEN for {{ $labels.service }} for over 10 minutes"
+          description: "Sustained OPEN circuit breaker for {{ $labels.service }} -- likely a prolonged dependency outage. Page on-call."
+
+      - alert: DLQGrowing
+        expr: increase(voiceos_queue_size_current{queue_name=~".*dlq.*"}[15m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+          route: ticket
+        annotations:
+          summary: "DLQ depth growing for {{ $labels.queue_name }}"
+          description: "{{ $labels.queue_name }} has grown by more than 5 entries in the last 15 minutes -- events are exhausting their retry budget."
+
+      - alert: DLQDepthCritical
+        expr: voiceos_queue_size_current{queue_name=~".*dlq.*"} > 100
+        for: 5m
+        labels:
+          severity: critical
+          route: page
+        annotations:
+          summary: "DLQ depth critical for {{ $labels.queue_name }} ({{ $value }} entries)"
+          description: "{{ $labels.queue_name }} has exceeded 100 entries -- likely a systemic downstream failure, not transient retries."

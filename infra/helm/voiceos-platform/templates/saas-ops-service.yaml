@@ -1,0 +1,18 @@
+{{- if .Values.saasOps.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "voiceos-platform.saasOps.fullname" . }}
+  namespace: {{ .Values.saasOps.namespace }}
+  labels:
+    {{- include "voiceos-platform.saasOps.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.saasOps.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "voiceos-platform.saasOps.selectorLabels" . | nindent 4 }}
+{{- end }}

@@ -1,0 +1,47 @@
+# VoiceOS v2 -- priority classes: critical > high > normal > low (Sprint-026.md)
+#
+# Used by every Helm chart's Deployment.spec.template.spec.priorityClassName
+# (see infra/helm/_chart_template/templates/deployment.yaml) so the
+# scheduler evicts/preempts low before normal before high before critical
+# under node pressure -- the real-time call path (voiceos-runtime) must
+# never be preempted to make room for a platform/admin workload.
+#
+# Names are lowercase because PriorityClass is a cluster-scoped API object:
+# metadata.name must satisfy the RFC 1123 subdomain regex, which forbids
+# uppercase. This was found running `kubectl apply` against a genuinely real
+# API server -- `kubectl apply --dry-run=client` (Sprint-026 Phase 1) only
+# validates manifest *shape*, not server-side naming rules, so the original
+# uppercase names passed every Phase 1 check and only failed once actually
+# applied to a live cluster (Sprint-026 Phase 2, real-VM migration).
+
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: critical
+value: 1000000
+globalDefault: false
+description: "Real-time call-path services (voiceos-runtime) -- media/audio/VAD/GPU Scheduler/STT/LLM/TTS/ConversationEngine/DialogueManager. Never preempted for lower-priority work."
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: high
+value: 100000
+globalDefault: false
+description: "Cross-cutting control-plane services (voiceos-ops) -- PolicyEngine/Auth/Authz/AIGovernance, called synchronously on every turn."
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: normal
+value: 10000
+globalDefault: true
+description: "SaaS platform services (voiceos-platform) -- CRM/Collections/Campaign/Billing/Analytics/AdminPortal/etc. Default priority for anything not explicitly classified."
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: low
+value: 1000
+globalDefault: false
+description: "Best-effort batch/background work (reporting exports, offline analytics jobs). Reserved for future sprints -- no current Helm chart uses this class yet."

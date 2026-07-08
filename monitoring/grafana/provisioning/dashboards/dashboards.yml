@@ -1,0 +1,19 @@
+# VoiceOS v2 -- Grafana dashboard provisioning (Sprint-027).
+#
+# Loads every dashboard under monitoring/grafana/dashboards/ (including the
+# governance/ and security/ subdirectories) on Grafana startup -- no manual
+# dashboard import required after a rebuild (DR requirement, ROADMAP.md's
+# machine-rebuild-scripts principle).
+apiVersion: 1
+
+providers:
+  - name: voiceos
+    orgId: 1
+    folder: VoiceOS
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/provisioning/voiceos-dashboards
+      foldersFromFilesStructure: true

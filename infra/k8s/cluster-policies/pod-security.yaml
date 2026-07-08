@@ -1,0 +1,75 @@
+# VoiceOS v2 -- cluster-wide pod security policies (Sprint-026.md: "OPA/
+# Kyverno policies: no privileged containers, readOnly rootfs").
+#
+# Kyverno chosen over OPA/Gatekeeper -- ClusterPolicy CRDs are simpler to
+# author and read than Rego, and every rule below is a direct mechanical
+# check (no complex policy logic that would benefit from Rego's expressiveness).
+#
+# Dependency: requires the Kyverno admission controller installed in the
+# cluster (not part of this Helm umbrella chart -- Kyverno is
+# cluster-infrastructure, installed once via its own official Helm chart
+# before `helm upgrade --install voiceos-platform` runs, same "install the
+# platform, then deploy onto it" split as the EKS cluster itself). Every
+# VoiceOS-authored Deployment already satisfies both rules below
+# (infra/helm/_chart_template/templates/deployment.yaml sets
+# `readOnlyRootFilesystem: true`/`allowPrivilegeEscalation: false`/
+# `runAsNonRoot: true` unconditionally) -- these ClusterPolicies are
+# defense-in-depth against a future chart regressing that, not a gap being
+# closed today.
+
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-privileged-containers
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: no-privileged-containers
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - voiceos-runtime
+                - voiceos-ops
+                - voiceos-platform
+                - voiceos-data
+      validate:
+        message: "Privileged containers are not permitted in any VoiceOS namespace."
+        pattern:
+          spec:
+            =(securityContext):
+              =(privileged): "false"
+            containers:
+              - =(securityContext):
+                  =(privileged): "false"
+                  =(allowPrivilegeEscalation): "false"
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-read-only-root-filesystem
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: read-only-root-filesystem
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - voiceos-runtime
+                - voiceos-ops
+                - voiceos-platform
+                - voiceos-data
+      validate:
+        message: "Every VoiceOS container must set securityContext.readOnlyRootFilesystem: true."
+        pattern:
+          spec:
+            containers:
+              - securityContext:
+                  readOnlyRootFilesystem: true

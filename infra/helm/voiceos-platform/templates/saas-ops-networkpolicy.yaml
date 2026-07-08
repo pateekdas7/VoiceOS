@@ -1,0 +1,54 @@
+{{- if .Values.saasOps.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "voiceos-platform.saasOps.fullname" . }}
+  namespace: {{ .Values.saasOps.namespace }}
+  labels:
+    {{- include "voiceos-platform.saasOps.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "voiceos-platform.saasOps.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.saasOps.namespace }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.saasOps.service.port }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: voiceos-runtime
+      ports:
+        - protocol: TCP
+          port: {{ .Values.saasOps.service.port }}
+    # Sprint-027: Prometheus (voiceos-ops) needs ingress to scrape /metrics.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: voiceos-ops
+      ports:
+        - protocol: TCP
+          port: {{ .Values.saasOps.service.port }}
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6379
+{{- end }}

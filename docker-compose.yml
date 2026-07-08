@@ -1,0 +1,158 @@
+---
+# VoiceOS v2 — Local Development Environment
+#
+# Starts all backing services needed for integration tests and local dev.
+# Environment variables set below match the defaults expected by integration
+# tests when POSTGRES_DSN / REDIS_URL / MONGODB_URI are not overridden.
+#
+# Usage:
+#   docker compose up -d          # start all services
+#   docker compose ps             # check health
+#   docker compose down -v        # stop and remove volumes
+#
+# Integration test environment variables (set in shell or .env):
+#   POSTGRES_DSN  = postgresql://voiceos:voiceos_dev_pw@localhost:5432/voiceos_dev
+#   REDIS_URL     = redis://localhost:6379/0
+#   MONGODB_URI   = mongodb://localhost:27017/voiceos_dev
+#
+# Architecture: V3 (Reliability); V7 Ch2 (Deployment); DocSuite-09.
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL 16 — authoritative relational store
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: voiceos-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: voiceos_dev
+      POSTGRES_USER: voiceos
+      POSTGRES_PASSWORD: voiceos_dev_pw
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Run Sprint-002 migrations on first start.
+      # Files are executed in alphabetical order — filenames 001-010 ensure sequence.
+      - ./scripts/db/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U voiceos -d voiceos_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # Redis 7 — hot state and distributed locking
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: voiceos-redis
+    restart: unless-stopped
+    # AOF persistence enabled per V3 Ch4 (Redis architecture)
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
+  # ---------------------------------------------------------------------------
+  # MongoDB 7 — document store (response plans, transcripts, lineage)
+  # ---------------------------------------------------------------------------
+  mongodb:
+    image: mongo:7
+    container_name: voiceos-mongodb
+    restart: unless-stopped
+    # Single-node replica set — required for multi-document transactions (V3 Ch5)
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodata:/data/db
+      - ./docker/mongodb/init-replica.js:/docker-entrypoint-initdb.d/init-replica.js:ro
+    healthcheck:
+      test: >
+        mongosh --quiet --eval
+        "try { rs.status().ok } catch(e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'localhost:27017'}]}).ok }"
+        | grep -E '^1$$'
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 20s
+
+  # ---------------------------------------------------------------------------
+  # Prometheus — metrics collection stub
+  # ---------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.51.2
+    container_name: voiceos-prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheusdata:/prometheus
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # Grafana — dashboard stub (SLO, GPU, call funnel)
+  # ---------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: voiceos-grafana
+    restart: unless-stopped
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_SECURITY_ADMIN_PASSWORD: voiceos_grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafanadata:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+# ---------------------------------------------------------------------------
+# Named volumes
+# ---------------------------------------------------------------------------
+volumes:
+  pgdata:
+    driver: local
+  redisdata:
+    driver: local
+  mongodata:
+    driver: local
+  prometheusdata:
+    driver: local
+  grafanadata:
+    driver: local

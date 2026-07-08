@@ -1,0 +1,41 @@
+# voiceos-platform umbrella chart -- default values (Sprint-026)
+#
+# Per-service overrides live under each service's own key here (Helm's
+# standard "child chart values nested under the child's name" convention),
+# e.g.:
+#
+#   stt:
+#     replicaCount: 4
+#
+# environment-specific overrides (dev/staging/production) live in
+# infra/helm/values/{dev,staging,production}-values.yaml and are passed via
+# `helm upgrade --install ... -f infra/helm/values/<env>-values.yaml`.
+
+global:
+  environment: dev
+
+# ---------------------------------------------------------------------------
+# SaaSOpsService -- deployed directly by this umbrella chart (Sprint-026.md's
+# own Phase 2 services table lists it as "K8s Deployment -- voiceos-platform",
+# i.e. via the umbrella chart itself, not a 26th service sub-chart -- the
+# sprint's literal charts/ listing names exactly 25 sub-charts, see
+# infra/terraform/variables.tf's service_names comment for the same
+# resolved count discrepancy).
+# ---------------------------------------------------------------------------
+saasOps:
+  enabled: true
+  namespace: voiceos-platform
+  priorityClassName: normal
+  image:
+    repository: voiceos/saas-ops
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  replicaCount: 2
+  service:
+    port: 8042
+  resources:
+    cpu: "250m"
+    memory: "256Mi"
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1

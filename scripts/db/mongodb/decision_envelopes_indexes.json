@@ -1,0 +1,45 @@
+[
+  {
+    "collection": "decision_envelopes",
+    "comment": "Architecture: V2 Ch12 (DecisionEnvelope); V3 Ch5 (MongoDB Document Store). Decision envelopes hold the full AI governance audit trail for every LLM decision made during a call. They are retained for the regulatory audit window (V4 Ch11.3).",
+    "indexes": [
+      {
+        "name": "idx_de_tenant_call",
+        "keys": { "tenant_id": 1, "call_id": 1 },
+        "options": { "background": true }
+      },
+      {
+        "name": "idx_de_envelope_id",
+        "keys": { "envelope_id": 1 },
+        "options": { "unique": true, "background": true }
+      },
+      {
+        "name": "idx_de_tenant_created",
+        "keys": { "tenant_id": 1, "created_at": -1 },
+        "options": { "background": true }
+      },
+      {
+        "name": "idx_de_call_turn",
+        "keys": { "call_id": 1, "turn_id": 1 },
+        "options": { "background": true }
+      },
+      {
+        "name": "idx_de_governance_status",
+        "keys": { "tenant_id": 1, "governance_status": 1, "created_at": -1 },
+        "options": {
+          "background": true,
+          "comment": "Supports queries for blocked/escalated decisions in the governance dashboard."
+        }
+      },
+      {
+        "name": "idx_de_ttl",
+        "keys": { "created_at": 1 },
+        "options": {
+          "expireAfterSeconds": 7776000,
+          "background": true,
+          "comment": "Sprint-014: TTL retention — 90 days per V4 Ch11.3 (added; missing since Sprint-002)."
+        }
+      }
+    ]
+  }
+]

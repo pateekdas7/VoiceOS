@@ -1,0 +1,41 @@
+[
+  {
+    "collection": "call_transcripts",
+    "comment": "Architecture: V1 Ch8 (STT / Transcript); V4 Ch5 (PII Redaction); V5 Ch5 (Analytics). Call transcripts store the full turn-by-turn conversation with word-level timestamps. PII is redacted at write time (PIIRedacted event). TTL enforces the retention policy (V4 Ch11.3).",
+    "indexes": [
+      {
+        "name": "idx_ct_tenant_call",
+        "keys": { "tenant_id": 1, "call_id": 1 },
+        "options": { "unique": true, "background": true }
+      },
+      {
+        "name": "idx_ct_tenant_customer",
+        "keys": { "tenant_id": 1, "customer_id": 1, "started_at": -1 },
+        "options": { "background": true }
+      },
+      {
+        "name": "idx_ct_tenant_started_at",
+        "keys": { "tenant_id": 1, "started_at": -1 },
+        "options": { "background": true }
+      },
+      {
+        "name": "idx_ct_campaign_id",
+        "keys": { "tenant_id": 1, "campaign_id": 1, "started_at": -1 },
+        "options": {
+          "background": true,
+          "sparse": true,
+          "comment": "Sparse: only indexes documents that have a campaign_id field."
+        }
+      },
+      {
+        "name": "idx_ct_ttl",
+        "keys": { "expires_at": 1 },
+        "options": {
+          "expireAfterSeconds": 0,
+          "background": true,
+          "comment": "TTL retention: transcript expires_at = call date + retention_days (per tenant config)."
+        }
+      }
+    ]
+  }
+]

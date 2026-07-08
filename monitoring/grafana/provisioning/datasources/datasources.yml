@@ -1,0 +1,30 @@
+# VoiceOS v2 -- Grafana datasource provisioning (Sprint-027).
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus.voiceos-ops.svc.cluster.local:9090
+    isDefault: true
+    jsonData:
+      timeInterval: 15s
+
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki.voiceos-ops.svc.cluster.local:3100
+    jsonData:
+      derivedFields:
+        - datasourceUid: jaeger
+          matcherRegex: "trace_id=(\\w+)"
+          name: TraceID
+          url: "$${__value.raw}"
+
+  - name: Jaeger
+    uid: jaeger
+    type: jaeger
+    access: proxy
+    url: http://jaeger-query.voiceos-ops.svc.cluster.local:16686

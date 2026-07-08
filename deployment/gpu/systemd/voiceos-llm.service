@@ -1,0 +1,28 @@
+[Unit]
+Description=VoiceOS LLM Inference Server (Qwen2.5-7B-FP8 via vLLM)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/voiceos-gpu
+EnvironmentFile=-/opt/voiceos-gpu/.env
+# vLLM serves the LLM on port 8000. --gpu-memory-utilization 0.55 leaves room for
+# Whisper (~1.2 GB) and Veena 3B BF16 + SNAC (~8 GB) on the 23 GB L4.
+ExecStart=/opt/voiceos-gpu/venv/bin/vllm serve /opt/voiceos-gpu/models/qwen2.5-7b-fp8 \
+  --dtype auto \
+  --port 8000 \
+  --max-model-len 4096 \
+  --gpu-memory-utilization 0.55 \
+  --served-model-name qwen2.5-7b-instruct-fp8
+Restart=on-failure
+RestartSec=10
+# vLLM can take ~90s to warm up; do not kill during startup.
+TimeoutStartSec=300
+StandardOutput=append:/opt/voiceos-gpu/logs/llm.log
+StandardError=append:/opt/voiceos-gpu/logs/llm.log
+
+[Install]
+WantedBy=multi-user.target

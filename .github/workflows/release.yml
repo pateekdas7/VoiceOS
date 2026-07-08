@@ -1,0 +1,189 @@
+name: VoiceOS Release
+
+# Triggered on version tags: v1.0.0, v2.3.1, etc. `workflow_dispatch` (manual,
+# no schedule) is the only way to run the terraform-apply job below --
+# IaC-3: staging/production Terraform is applied via CI/CD only, and only
+# on an explicit, reviewed trigger, never automatically on every tag push.
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+  workflow_dispatch: {}
+
+env:
+  PYTHON_VERSION: "3.12"
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}/voiceos
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Step 1 — Full CI gate (must pass before any release artifact is produced)
+  # ---------------------------------------------------------------------------
+  ci-gate:
+    name: CI Gate
+    uses: ./.github/workflows/ci.yml
+
+  # ---------------------------------------------------------------------------
+  # Step 2 — Build and push Docker image to registry
+  # ---------------------------------------------------------------------------
+  docker-build-push:
+    name: Docker Build & Push
+    runs-on: ubuntu-latest
+    needs: ci-gate
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-,format=short
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ---------------------------------------------------------------------------
+  # Step 3 — Helm chart lint + template + manifest schema validation (Sprint-026)
+  # ---------------------------------------------------------------------------
+  helm-lint:
+    name: Helm Chart Lint
+    runs-on: ubuntu-latest
+    needs: ci-gate
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: "3.16.2"
+
+      - name: Install kubeconform
+        run: |
+          curl -sSL -o kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar -xzf kubeconform.tar.gz kubeconform
+          sudo mv kubeconform /usr/local/bin/kubeconform
+
+      - name: helm lint (umbrella chart + all sub-charts)
+        run: helm lint infra/helm/voiceos-platform/ -f infra/helm/values/dev-values.yaml --with-subcharts
+
+      - name: helm template | kubeconform (manifest schema validation)
+        run: |
+          helm template voiceos-platform infra/helm/voiceos-platform/ \
+            -f infra/helm/values/dev-values.yaml > /tmp/rendered.yaml
+          kubeconform -strict -summary /tmp/rendered.yaml
+
+      - name: kubectl apply --dry-run=client (Sprint-026.md AC)
+        run: |
+          curl -sSL -o kubectl "https://dl.k8s.io/release/v1.31.1/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          # --dry-run=client needs no live cluster -- pure client-side validation,
+          # matching Sprint-026.md's own Phase 1 scope ("No CPU or GPU
+          # infrastructure is required for this phase").
+          ./kubectl apply --dry-run=client --validate=false -f /tmp/rendered.yaml \
+            -f infra/k8s/namespaces.yaml -f infra/k8s/priority-classes.yaml \
+            -f infra/k8s/resource-quotas.yaml -f infra/k8s/cluster-policies/default-deny.yaml
+
+  # ---------------------------------------------------------------------------
+  # Step 4 — Terraform plan (dev environment; IaC-3: plan is always shown
+  # before any apply) + tfsec security scan
+  # ---------------------------------------------------------------------------
+  terraform-plan:
+    name: Terraform Plan (dev)
+    runs-on: ubuntu-latest
+    needs: ci-gate
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: terraform validate
+        working-directory: infra/terraform/environments/dev
+        run: |
+          terraform init -input=false
+          terraform validate
+
+      - name: terraform plan (dev -- no real AWS account required, see provider.tf)
+        working-directory: infra/terraform/environments/dev
+        run: terraform plan -input=false
+
+      - name: tfsec (IaC security scan — 0 high/critical findings gate)
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: infra/terraform
+          minimum_severity: HIGH
+
+  # ---------------------------------------------------------------------------
+  # Step 5 — Terraform apply (staging/production — manual, reviewed, never
+  # on every push; IaC-3: "no manual terraform apply in prod" is enforced by
+  # restricting this job to workflow_dispatch + a required-reviewers GitHub
+  # Environment, not by a developer's local credentials)
+  # ---------------------------------------------------------------------------
+  terraform-apply:
+    name: Terraform Apply (staging/production)
+    runs-on: ubuntu-latest
+    needs: terraform-plan
+    if: github.event_name == 'workflow_dispatch'
+    environment: production # requires a configured GitHub Environment with required reviewers
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: terraform apply
+        working-directory: infra/terraform/environments/production
+        run: |
+          terraform init -input=false
+          terraform apply -input=false -auto-approve
+
+  # ---------------------------------------------------------------------------
+  # Step 6 — Notify on release completion
+  # ---------------------------------------------------------------------------
+  notify:
+    name: Release Notification
+    runs-on: ubuntu-latest
+    needs: [docker-build-push, helm-lint, terraform-plan]
+    if: always()
+    steps:
+      - name: Release summary
+        run: |
+          echo "=== VoiceOS Release Summary ==="
+          echo "Tag       : ${{ github.ref_name }}"
+          echo "Commit    : ${{ github.sha }}"
+          echo "Docker    : ${{ needs.docker-build-push.result }}"
+          echo "Helm      : ${{ needs.helm-lint.result }}"
+          echo "Terraform : ${{ needs.terraform-plan.result }}"
+          echo "Workflow  : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

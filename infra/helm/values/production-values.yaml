@@ -1,0 +1,259 @@
+# production-values.yaml -- environment overrides for the voiceos-platform umbrella chart (Sprint-026)
+# Applied via: helm upgrade --install voiceos-platform infra/helm/voiceos-platform/ -f infra/helm/values/production-values.yaml
+
+global:
+  environment: production
+
+saasOps:
+  replicaCount: 3
+
+admin-portal:
+  environment: production
+  replicaCount: 3
+  resources:
+    cpu: "1000m"
+    memory: "1Gi"
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 10
+
+ai-config:
+  environment: production
+  replicaCount: 3
+  resources:
+    cpu: "1000m"
+    memory: "1Gi"
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 10
+
+ai-governance:
+  environment: production
+  replicaCount: 3
+  resources:
+    cpu: "1000m"
+    memory: "1Gi"
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 10
+
+analytics:
+  environment: production
+  replicaCount: 3
+  resources:
+    cpu: "1000m"
+    memory: "1Gi"
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 10
+
+api-platform:
+  environment: production
+  replicaCount: 3
+  resources:
+    cpu: "1000m"
+    memory: "1Gi"
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 10
+
+audio-preprocessing:
+  environment: production
+  replicaCount: 3
+  resources:
+    cpu: "1000m"
+    memory: "1Gi"
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 10
+
+auth:
+  environment: production
+  replicaCount: 3
+  resources:
+    cpu: "1000m"
+    memory: "1Gi"
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 10
+
+authz:
+  environment: production
+  replicaCount: 3
+  resources:
+    cpu: "1000m"
+    memory: "1Gi"
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 10
+
+billing:
+  environment: production
+  replicaCount: 3
+  resources:
+    cpu: "1000m"
+    memory: "1Gi"
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 10
+
+campaign-management:
+  environment: production
+  replicaCount: 3
+  resources:
+    cpu: "1000m"
+    memory: "1Gi"
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 10
+
+collections:
+  environment: production
+  replicaCount: 3
+  resources:
+    cpu: "1000m"
+    memory: "1Gi"
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 10
+
+contact-center:
+  environment: production
+  replicaCount: 3
+  resources:
+    cpu: "1000m"
+    memory: "1Gi"
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 10
+
+conversation-engine:
+  environment: production
+  replicaCount: 3
+  resources:
+    cpu: "1000m"
+    memory: "1Gi"
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 10
+
+crm:
+  environment: production
+  replicaCount: 3
+  resources:
+    cpu: "1000m"
+    memory: "1Gi"
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 10
+
+dialogue-manager:
+  environment: production
+  replicaCount: 3
+  resources:
+    cpu: "1000m"
+    memory: "1Gi"
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 10
+
+gpu-scheduler:
+  environment: production
+  replicaCount: 3
+  resources:
+    cpu: "1000m"
+    memory: "1Gi"
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 10
+
+integration-platform:
+  environment: production
+  replicaCount: 3
+  resources:
+    cpu: "1000m"
+    memory: "1Gi"
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 10
+
+llm-runtime:
+  environment: production
+  replicaCount: 3
+  resources:
+    cpu: "1000m"
+    memory: "1Gi"
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 10
+
+media-gateway:
+  environment: production
+  replicaCount: 3
+  resources:
+    cpu: "1000m"
+    memory: "1Gi"
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 10
+
+metering:
+  environment: production
+  replicaCount: 3
+  resources:
+    cpu: "1000m"
+    memory: "1Gi"
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 10
+
+policy-engine:
+  environment: production
+  replicaCount: 3
+  resources:
+    cpu: "1000m"
+    memory: "1Gi"
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 10
+
+stt:
+  environment: production
+  replicaCount: 3
+  resources:
+    cpu: "1000m"
+    memory: "1Gi"
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 10
+
+tenant-management:
+  environment: production
+  replicaCount: 3
+  resources:
+    cpu: "1000m"
+    memory: "1Gi"
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 10
+
+tts:
+  environment: production
+  replicaCount: 3
+  resources:
+    cpu: "1000m"
+    memory: "1Gi"
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 10
+
+vad-endpointing:
+  environment: production
+  replicaCount: 3
+  resources:
+    cpu: "1000m"
+    memory: "1Gi"
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 10
+

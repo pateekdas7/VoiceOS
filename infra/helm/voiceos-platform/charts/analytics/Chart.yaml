@@ -1,0 +1,6 @@
+apiVersion: v2
+name: analytics
+description: "Call/campaign analytics, daily aggregation"
+type: application
+version: 0.1.0
+appVersion: "2.0.0"

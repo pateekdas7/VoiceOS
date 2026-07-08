@@ -1,0 +1,5 @@
+# ruff.toml — VoiceOS v2
+# Extends the [tool.ruff] section in pyproject.toml.
+# This file exists to make ruff discoverable when running standalone.
+
+extend = "pyproject.toml"

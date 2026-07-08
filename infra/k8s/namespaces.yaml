@@ -1,0 +1,46 @@
+# VoiceOS v2 -- namespace structure (Sprint-026.md, V7 Ch5)
+#
+# voiceos-runtime  -- real-time call-path services (media/audio/VAD/GPU
+#                     Scheduler/STT/LLM/TTS/ConversationEngine/DialogueManager)
+# voiceos-ops      -- cross-cutting control-plane services called on every
+#                     turn (PolicyEngine/Auth/Authz/AIGovernance)
+# voiceos-platform -- SaaS platform services (Tenant/CRM/Collections/
+#                     Campaign/ContactCenter/Billing/Metering/Analytics/
+#                     AdminPortal/AIConfig/IntegrationPlatform/APIPlatform/
+#                     SaaSOps)
+# voiceos-data     -- reserved for data-plane workloads that run as pods in
+#                     a future sprint (RDS/ElastiCache/self-hosted MongoDB
+#                     EC2 nodes are provisioned by Terraform, not this
+#                     namespace, today -- see infra/terraform/modules/mongodb)
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: voiceos-runtime
+  labels:
+    kubernetes.io/metadata.name: voiceos-runtime
+    voiceos.io/tier: runtime
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: voiceos-ops
+  labels:
+    kubernetes.io/metadata.name: voiceos-ops
+    voiceos.io/tier: ops
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: voiceos-platform
+  labels:
+    kubernetes.io/metadata.name: voiceos-platform
+    voiceos.io/tier: platform
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: voiceos-data
+  labels:
+    kubernetes.io/metadata.name: voiceos-data
+    voiceos.io/tier: data

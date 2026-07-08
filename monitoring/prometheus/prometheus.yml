@@ -1,0 +1,151 @@
+# VoiceOS v2 -- Prometheus configuration (Sprint-027)
+#
+# Scrapes every one of the 26 voiceos-platform pods (25 service sub-charts +
+# SaaSOpsService) plus Prometheus itself and the infra exporters. Every
+# VoiceOS service target below corresponds 1:1 to a chart in
+# infra/helm/voiceos-platform/charts/ (port/namespace per that chart's own
+# values.yaml -- see monitoring/prometheus/targets/dev.yml for the resolved
+# static list used when Kubernetes SD is not available).
+#
+# Known limitation, found live (Sprint-027 Phase 2): the `kubernetes-*`
+# and `voiceos-services` (pod-annotation SD) jobs below query the
+# in-cluster API server via `kubernetes.default.svc` (ClusterIP
+# 10.96.0.1), which kube-proxy DNATs to the apiserver's advertised
+# address `10.0.2.2` -- the same NAT-internal-to-the-hypervisor address
+# documented in CPU_NODE_STATE.md §5/BACKLOG.md's TT-015 as unroutable
+# from the GPU node. It turns out this *also* blocks in-cluster pods
+# (including Prometheus itself, on this same control-plane node) from
+# reaching the apiserver via its ClusterIP -- a broader instance of the
+# same root cause, not just a cross-provider issue. Kubernetes SD is left
+# configured here as the intended, documented architecture (works once
+# the underlying network limitation is resolved -- see TT-015's own
+# "action needed" note), but the actually-functional scrape path today is
+# the `voiceos-services-static` job below, backed by
+# monitoring/prometheus/targets/*.yml.
+#
+# Architecture: V7 Ch7 (Monitoring Platform).
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: voiceos-cpu-node
+    environment: dev
+
+rule_files:
+  - "recording_rules.yml"
+  - "alert_rules/slo_alerts.yml"
+  - "alert_rules/infrastructure.yml"
+  - "alert_rules/application.yml"
+  - "alert_rules/business.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - "alertmanager.voiceos-ops.svc.cluster.local:9093"
+
+scrape_configs:
+  # -- Prometheus self-scrape --------------------------------------------
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # -- Kubernetes API server / node / cAdvisor (infra-level metrics) ------
+  - job_name: kubernetes-apiservers
+    kubernetes_sd_configs:
+      - role: endpoints
+    scheme: https
+    tls_config:
+      ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+        action: keep
+        regex: default;kubernetes;https
+
+  - job_name: kubernetes-nodes-cadvisor
+    kubernetes_sd_configs:
+      - role: node
+    scheme: https
+    tls_config:
+      ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+      insecure_skip_verify: true
+    bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    relabel_configs:
+      - target_label: __address__
+        replacement: kubernetes.default.svc:443
+      - source_labels: [__meta_kubernetes_node_name]
+        regex: (.+)
+        target_label: __metrics_path__
+        replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+
+  # -- VoiceOS application pods (Kubernetes pod annotation SD) ------------
+  # Every chart's pod template carries:
+  #   prometheus.io/scrape: "true"
+  #   prometheus.io/port: "<service.port>"
+  #   prometheus.io/path: "/metrics"
+  # (added this sprint -- see infra/helm/_chart_template/templates/deployment.yaml)
+  - job_name: voiceos-services
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+            - voiceos-runtime
+            - voiceos-ops
+            - voiceos-platform
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: "true"
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+      - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+        action: replace
+        regex: ([^:]+)(?::\d+)?;(\d+)
+        replacement: $1:$2
+        target_label: __address__
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+        target_label: service
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+
+  # -- Static fallback target list (used on hosts without full K8s SD, or
+  # to cross-check the SD-discovered target count against the known-good
+  # static inventory -- see targets/dev.yml) -----------------------------
+  - job_name: voiceos-services-static
+    file_sd_configs:
+      - files:
+          - "targets/dev.yml"
+    relabel_configs:
+      - action: labeldrop
+        regex: __meta_.*
+
+  # -- GPU node (STT/LLM/vLLM/TTS export /metrics themselves; scraped
+  # directly since the GPU node is not a cluster member -- TT-015) -------
+  - job_name: gpu-node
+    static_configs:
+      - targets:
+          - "217.18.55.96:8100" # stt
+          - "217.18.55.96:8000" # llm-runtime (vLLM)
+          - "217.18.55.96:8200" # tts
+        labels:
+          node_pool: gpu
+          cluster_member: "false"
+
+  # -- Infra exporters -----------------------------------------------------
+  - job_name: node-exporter
+    static_configs:
+      - targets: ["node-exporter.voiceos-ops.svc.cluster.local:9100"]
+
+  - job_name: redis-exporter
+    static_configs:
+      - targets: ["redis-exporter.voiceos-ops.svc.cluster.local:9121"]
+
+  - job_name: postgres-exporter
+    static_configs:
+      - targets: ["postgres-exporter.voiceos-ops.svc.cluster.local:9187"]

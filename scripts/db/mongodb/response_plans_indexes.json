@@ -1,0 +1,37 @@
+[
+  {
+    "collection": "response_plans",
+    "comment": "Architecture: V2 Ch15 (ResponsePlan); V3 Ch5 (MongoDB Document Store).",
+    "indexes": [
+      {
+        "name": "idx_rp_tenant_call",
+        "keys": { "tenant_id": 1, "call_id": 1 },
+        "options": { "background": true }
+      },
+      {
+        "name": "idx_rp_plan_id",
+        "keys": { "plan_id": 1 },
+        "options": { "unique": true, "background": true }
+      },
+      {
+        "name": "idx_rp_tenant_created",
+        "keys": { "tenant_id": 1, "created_at": -1 },
+        "options": { "background": true }
+      },
+      {
+        "name": "idx_rp_call_version",
+        "keys": { "call_id": 1, "version": -1 },
+        "options": { "background": true }
+      },
+      {
+        "name": "idx_rp_ttl",
+        "keys": { "expires_at": 1 },
+        "options": {
+          "expireAfterSeconds": 0,
+          "background": true,
+          "comment": "TTL index — documents auto-deleted after expires_at. Retention per V4 Ch11.3."
+        }
+      }
+    ]
+  }
+]

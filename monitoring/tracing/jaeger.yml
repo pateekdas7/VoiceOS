@@ -1,0 +1,42 @@
+# VoiceOS v2 -- Jaeger configuration (Sprint-027.md).
+#
+# Trace storage, UI, retention 7 days (Sprint-027.md's literal figure --
+# shorter than Loki's 30-day log retention since traces are a debugging
+# aid, not a compliance record; the audit trail of record remains the
+# hash-chained Postgres audit_log, Sprint-020).
+#
+# Deployed all-in-one for this single-node cluster (collector + query +
+# UI in one process, badger local storage) -- matches the scale of every
+# other Sprint-026/027 CPU-node service (single-node, no external
+# dependency beyond what already runs on this node).
+#
+# Architecture: V7 Ch10 (Tracing).
+
+storage:
+  type: badger
+  badger:
+    ephemeral: false
+    directory-key: /badger/key
+    directory-value: /badger/data
+
+collector:
+  otlp:
+    enabled: true
+    grpc:
+      host-port: 0.0.0.0:4317
+    http:
+      host-port: 0.0.0.0:4318
+
+query:
+  http:
+    host-port: 0.0.0.0:16686
+  base-path: /jaeger
+
+# Retention: 7 days (Sprint-027.md). Badger storage has no separate
+# retention config in the collector itself -- enforced via a periodic
+# `jaeger-badger-purge` job invoked from a CronJob (see
+# deployment/cpu/healthcheck.sh's new Jaeger check for the query-side
+# health probe, and infra/dr's rebuild validation for the "traces from all
+# services forwarded within 5s" check).
+retention:
+  max_age: 168h

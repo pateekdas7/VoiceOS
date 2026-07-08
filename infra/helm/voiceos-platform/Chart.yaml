@@ -1,0 +1,82 @@
+apiVersion: v2
+name: voiceos-platform
+description: "VoiceOS v2 umbrella chart -- depends on every service chart (Sprint-026, V7 Ch5)"
+type: application
+version: 0.1.0
+appVersion: "2.0.0"
+dependencies:
+  - name: admin-portal
+    version: 0.1.0
+    condition: admin-portal.enabled
+  - name: ai-config
+    version: 0.1.0
+    condition: ai-config.enabled
+  - name: ai-governance
+    version: 0.1.0
+    condition: ai-governance.enabled
+  - name: analytics
+    version: 0.1.0
+    condition: analytics.enabled
+  - name: api-platform
+    version: 0.1.0
+    condition: api-platform.enabled
+  - name: audio-preprocessing
+    version: 0.1.0
+    condition: audio-preprocessing.enabled
+  - name: auth
+    version: 0.1.0
+    condition: auth.enabled
+  - name: authz
+    version: 0.1.0
+    condition: authz.enabled
+  - name: billing
+    version: 0.1.0
+    condition: billing.enabled
+  - name: campaign-management
+    version: 0.1.0
+    condition: campaign-management.enabled
+  - name: collections
+    version: 0.1.0
+    condition: collections.enabled
+  - name: contact-center
+    version: 0.1.0
+    condition: contact-center.enabled
+  - name: conversation-engine
+    version: 0.1.0
+    condition: conversation-engine.enabled
+  - name: crm
+    version: 0.1.0
+    condition: crm.enabled
+  - name: dialogue-manager
+    version: 0.1.0
+    condition: dialogue-manager.enabled
+  - name: gpu-scheduler
+    version: 0.1.0
+    condition: gpu-scheduler.enabled
+  - name: integration-platform
+    version: 0.1.0
+    condition: integration-platform.enabled
+  - name: llm-runtime
+    version: 0.1.0
+    condition: llm-runtime.enabled
+  - name: media-gateway
+    version: 0.1.0
+    condition: media-gateway.enabled
+  - name: metering
+    version: 0.1.0
+    condition: metering.enabled
+  - name: policy-engine
+    version: 0.1.0
+    condition: policy-engine.enabled
+  - name: stt
+    version: 0.1.0
+    condition: stt.enabled
+  - name: tenant-management
+    version: 0.1.0
+    condition: tenant-management.enabled
+  - name: tts
+    version: 0.1.0
+    condition: tts.enabled
+  - name: vad-endpointing
+    version: 0.1.0
+    condition: vad-endpointing.enabled

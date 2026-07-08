@@ -1,0 +1,62 @@
+# VoiceOS v2 -- SLO recording rules (Sprint-027).
+#
+# Pre-aggregates the two SLOs named in Sprint-027.md over the four windows
+# (5m/30m/1h/6h) the multi-window burn-rate alerts in alert_rules/slo_alerts.yml
+# consume. Recording rules keep the alerting rules themselves free of
+# repeated range-vector aggregation (cheaper to evaluate, and the recorded
+# series is what the SLO Grafana dashboard reads directly).
+#
+# SLOs (Sprint-027.md):
+#   first_audio_p95_slo   target <= 1.5s
+#   availability_slo      target >= 99.95%
+#
+# Architecture: V7 Ch7 (Monitoring Platform), V7 Ch8 (Alerting -- burn-rate).
+
+groups:
+  - name: voiceos_slo_first_audio
+    rules:
+      - record: voiceos:first_audio_seconds:p95_5m
+        expr: histogram_quantile(0.95, sum(rate(voiceos_conversation_engine_request_duration_ms_bucket{status="first_audio"}[5m])) by (le)) / 1000
+      - record: voiceos:first_audio_seconds:p95_30m
+        expr: histogram_quantile(0.95, sum(rate(voiceos_conversation_engine_request_duration_ms_bucket{status="first_audio"}[30m])) by (le)) / 1000
+      - record: voiceos:first_audio_seconds:p95_1h
+        expr: histogram_quantile(0.95, sum(rate(voiceos_conversation_engine_request_duration_ms_bucket{status="first_audio"}[1h])) by (le)) / 1000
+      - record: voiceos:first_audio_seconds:p95_6h
+        expr: histogram_quantile(0.95, sum(rate(voiceos_conversation_engine_request_duration_ms_bucket{status="first_audio"}[6h])) by (le)) / 1000
+
+      # Error-budget burn rate = (actual p95 / SLO target). > 1 means the
+      # SLO is currently being violated at the sampled instant; the
+      # burn-rate *alerts* multiply this by the window-appropriate
+      # factor per the Google SRE multi-window method.
+      - record: voiceos:first_audio_slo:burn_rate_5m
+        expr: voiceos:first_audio_seconds:p95_5m / 1.5
+      - record: voiceos:first_audio_slo:burn_rate_1h
+        expr: voiceos:first_audio_seconds:p95_1h / 1.5
+      - record: voiceos:first_audio_slo:burn_rate_6h
+        expr: voiceos:first_audio_seconds:p95_6h / 1.5
+
+  - name: voiceos_slo_availability
+    rules:
+      - record: voiceos:availability:ratio_5m
+        expr: sum(rate(voiceos_call_count_total{outcome!="system_error"}[5m])) / sum(rate(voiceos_call_count_total[5m]))
+      - record: voiceos:availability:ratio_30m
+        expr: sum(rate(voiceos_call_count_total{outcome!="system_error"}[30m])) / sum(rate(voiceos_call_count_total[30m]))
+      - record: voiceos:availability:ratio_1h
+        expr: sum(rate(voiceos_call_count_total{outcome!="system_error"}[1h])) / sum(rate(voiceos_call_count_total[1h]))
+      - record: voiceos:availability:ratio_6h
+        expr: sum(rate(voiceos_call_count_total{outcome!="system_error"}[6h])) / sum(rate(voiceos_call_count_total[6h]))
+
+      # Burn rate for an availability SLO: (1 - actual) / (1 - target).
+      - record: voiceos:availability_slo:burn_rate_5m
+        expr: (1 - voiceos:availability:ratio_5m) / (1 - 0.9995)
+      - record: voiceos:availability_slo:burn_rate_1h
+        expr: (1 - voiceos:availability:ratio_1h) / (1 - 0.9995)
+      - record: voiceos:availability_slo:burn_rate_6h
+        expr: (1 - voiceos:availability:ratio_6h) / (1 - 0.9995)
+
+  - name: voiceos_business_recording
+    rules:
+      - record: voiceos:ptp_rate:ratio_1h
+        expr: sum(rate(voiceos_negotiation_outcome_total{outcome="ptp_created"}[1h])) / sum(rate(voiceos_call_count_total[1h]))
+      - record: voiceos:campaign_completion_rate:ratio_1h
+        expr: sum(rate(voiceos_saas_campaign_completed_total[1h])) / sum(rate(voiceos_saas_campaign_activated_total[1h]))

@@ -1,0 +1,81 @@
+# VoiceOS v2 -- infrastructure alerts (Sprint-027.md): node down, disk full,
+# OOM, GPU unavailable.
+#
+# Architecture: V7 Ch8 (Alerting), V7 Ch6 (GPU Fleet Management).
+
+groups:
+  - name: voiceos_infrastructure
+    rules:
+      - alert: NodeDown
+        expr: up{job=~"kubernetes-nodes-cadvisor|node-exporter"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          route: page
+        annotations:
+          summary: "Node target down: {{ $labels.instance }}"
+          description: "Node {{ $labels.instance }} has been unreachable by Prometheus for 2 minutes."
+          runbook: "infra/dr/runbooks/full-region-failure.md"
+
+      - alert: DiskAlmostFull
+        expr: (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"}) < 0.10
+        for: 5m
+        labels:
+          severity: warning
+          route: ticket
+        annotations:
+          summary: "Disk usage above 90% on {{ $labels.instance }} ({{ $labels.mountpoint }})"
+          description: "Less than 10% free space remains on {{ $labels.mountpoint }}."
+
+      - alert: DiskCritical
+        expr: (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"}) < 0.05
+        for: 2m
+        labels:
+          severity: critical
+          route: page
+        annotations:
+          summary: "Disk usage above 95% on {{ $labels.instance }} ({{ $labels.mountpoint }})"
+          description: "Less than 5% free space remains on {{ $labels.mountpoint }} -- imminent write failures."
+
+      - alert: PodOOMKilled
+        expr: increase(kube_pod_container_status_restarts_total[15m]) > 0 and on(pod) kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1
+        for: 0m
+        labels:
+          severity: warning
+          route: ticket
+        annotations:
+          summary: "Pod {{ $labels.pod }} OOMKilled"
+          description: "Container {{ $labels.container }} in pod {{ $labels.pod }} (namespace {{ $labels.namespace }}) was OOMKilled within the last 15 minutes."
+
+      - alert: GPUUnavailable
+        expr: up{job="gpu-node"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          route: page
+        annotations:
+          summary: "GPU node inference service unreachable: {{ $labels.instance }}"
+          description: "One of STT/LLM/TTS on the GPU node has not responded to Prometheus scrape for 1 minute."
+          runbook: "infra/dr/runbooks/gpu-node-failure.md"
+
+      - alert: GPUFleetDegraded
+        expr: voiceos_gpu_fleet_health_score < 0.8
+        for: 1m
+        labels:
+          severity: critical
+          route: page
+        annotations:
+          summary: "GPU fleet health degraded (score={{ $value }})"
+          description: "GPUFleetHealthMonitor.fleet_health_score() has dropped below 0.8 -- see monitoring/gpu-fleet/fleet_health.py. Below 0.5 pages on-call per Sprint-027.md's own threshold."
+          runbook: "infra/dr/runbooks/gpu-node-failure.md"
+
+      - alert: GPUFleetSevereDegradation
+        expr: voiceos_gpu_fleet_health_score < 0.5
+        for: 0m
+        labels:
+          severity: critical
+          route: page
+        annotations:
+          summary: "GPU fleet severely degraded (score={{ $value }}) -- page on-call"
+          description: "Majority of GPU fleet nodes are unhealthy. Immediate page per Sprint-027.md's explicit < 0.5 threshold."
+          runbook: "infra/dr/runbooks/gpu-node-failure.md"

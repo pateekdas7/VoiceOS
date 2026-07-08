@@ -1,0 +1,25 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.5.7
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.11.2
+    hooks:
+      - id: mypy
+        args: [--strict]
+        additional_dependencies:
+          - pydantic>=2.7
+          - pydantic-mypy>=2.7
+
+  - repo: local
+    hooks:
+      - id: pytest-fast
+        name: pytest (contracts + invariants only)
+        language: system
+        entry: pytest tests/unit/ -x -q
+        pass_filenames: false
+        always_run: true

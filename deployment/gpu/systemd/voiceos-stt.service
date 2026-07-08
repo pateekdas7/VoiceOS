@@ -1,0 +1,24 @@
+[Unit]
+Description=VoiceOS STT Inference Server (Whisper large-v3-turbo)
+After=network-online.target voiceos-llm.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/voiceos-gpu
+EnvironmentFile=-/opt/voiceos-gpu/.env
+# Whisper FastAPI server on port 8100, int8_float16 compute type (~1.2 GB VRAM).
+ExecStart=/opt/voiceos-gpu/venv/bin/python3 /opt/voiceos-gpu/services/stt/server.py \
+  --model-path /opt/voiceos-gpu/models/whisper-large-v3-turbo \
+  --compute-type int8_float16 \
+  --port 8100
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=120
+StandardOutput=append:/opt/voiceos-gpu/logs/stt.log
+StandardError=append:/opt/voiceos-gpu/logs/stt.log
+
+[Install]
+WantedBy=multi-user.target

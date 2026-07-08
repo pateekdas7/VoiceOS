@@ -1,0 +1,149 @@
+# VoiceOS v2 -- static Prometheus file_sd target list, staging environment.
+#
+# One entry per voiceos-platform Helm chart (port/namespace read from each
+# chart's own values.yaml -- see infra/helm/voiceos-platform/charts/*/values.yaml
+# and infra/helm/voiceos-platform/values.yaml for saas-ops). Mirrors the
+# Kubernetes-SD-discovered `voiceos-services` job so target coverage can be
+# cross-checked even when pod-annotation SD is unavailable (e.g. a
+# non-Kubernetes smoke run of Prometheus itself).
+#
+# Regenerate by hand whenever a chart's service.port changes (no chart has
+# changed its port since Sprint-026).
+#
+# Hostnames are prefixed `voiceos-platform-<service>` -- the Helm fullname
+# helper (`voiceos.fullname`, infra/helm/_chart_template/templates/_helpers.tpl)
+# produces `<release-name>-<chart-name>` Service objects, and every
+# documented `helm upgrade --install` in this project uses the release
+# name `voiceos-platform` (CPU_NODE_STATE.md §5.2) -- found live (Sprint-027
+# Phase 2): the bare per-chart name alone does not resolve.
+
+- targets:
+    - voiceos-platform-media-gateway.voiceos-runtime.svc.cluster.local:8010
+  labels:
+    namespace: voiceos-runtime
+    service: media-gateway
+- targets:
+    - voiceos-platform-audio-preprocessing.voiceos-runtime.svc.cluster.local:8011
+  labels:
+    namespace: voiceos-runtime
+    service: audio-preprocessing
+- targets:
+    - voiceos-platform-vad-endpointing.voiceos-runtime.svc.cluster.local:8012
+  labels:
+    namespace: voiceos-runtime
+    service: vad-endpointing
+- targets:
+    - voiceos-platform-gpu-scheduler.voiceos-runtime.svc.cluster.local:8013
+  labels:
+    namespace: voiceos-runtime
+    service: gpu-scheduler
+- targets:
+    - voiceos-platform-conversation-engine.voiceos-runtime.svc.cluster.local:8014
+  labels:
+    namespace: voiceos-runtime
+    service: conversation-engine
+- targets:
+    - voiceos-platform-dialogue-manager.voiceos-runtime.svc.cluster.local:8015
+  labels:
+    namespace: voiceos-runtime
+    service: dialogue-manager
+- targets:
+    - voiceos-platform-stt.voiceos-runtime.svc.cluster.local:8100
+  labels:
+    namespace: voiceos-runtime
+    service: stt
+- targets:
+    - voiceos-platform-llm-runtime.voiceos-runtime.svc.cluster.local:8000
+  labels:
+    namespace: voiceos-runtime
+    service: llm-runtime
+- targets:
+    - voiceos-platform-tts.voiceos-runtime.svc.cluster.local:8200
+  labels:
+    namespace: voiceos-runtime
+    service: tts
+- targets:
+    - voiceos-platform-policy-engine.voiceos-ops.svc.cluster.local:8020
+  labels:
+    namespace: voiceos-ops
+    service: policy-engine
+- targets:
+    - voiceos-platform-auth.voiceos-ops.svc.cluster.local:8021
+  labels:
+    namespace: voiceos-ops
+    service: auth
+- targets:
+    - voiceos-platform-authz.voiceos-ops.svc.cluster.local:8022
+  labels:
+    namespace: voiceos-ops
+    service: authz
+- targets:
+    - voiceos-platform-ai-governance.voiceos-ops.svc.cluster.local:8023
+  labels:
+    namespace: voiceos-ops
+    service: ai-governance
+- targets:
+    - voiceos-platform-tenant-management.voiceos-platform.svc.cluster.local:8030
+  labels:
+    namespace: voiceos-platform
+    service: tenant-management
+- targets:
+    - voiceos-platform-crm.voiceos-platform.svc.cluster.local:8031
+  labels:
+    namespace: voiceos-platform
+    service: crm
+- targets:
+    - voiceos-platform-collections.voiceos-platform.svc.cluster.local:8032
+  labels:
+    namespace: voiceos-platform
+    service: collections
+- targets:
+    - voiceos-platform-campaign-management.voiceos-platform.svc.cluster.local:8033
+  labels:
+    namespace: voiceos-platform
+    service: campaign-management
+- targets:
+    - voiceos-platform-contact-center.voiceos-platform.svc.cluster.local:8034
+  labels:
+    namespace: voiceos-platform
+    service: contact-center
+- targets:
+    - voiceos-platform-billing.voiceos-platform.svc.cluster.local:8035
+  labels:
+    namespace: voiceos-platform
+    service: billing
+- targets:
+    - voiceos-platform-metering.voiceos-platform.svc.cluster.local:8036
+  labels:
+    namespace: voiceos-platform
+    service: metering
+- targets:
+    - voiceos-platform-analytics.voiceos-platform.svc.cluster.local:8037
+  labels:
+    namespace: voiceos-platform
+    service: analytics
+- targets:
+    - voiceos-platform-admin-portal.voiceos-platform.svc.cluster.local:8038
+  labels:
+    namespace: voiceos-platform
+    service: admin-portal
+- targets:
+    - voiceos-platform-ai-config.voiceos-platform.svc.cluster.local:8039
+  labels:
+    namespace: voiceos-platform
+    service: ai-config
+- targets:
+    - voiceos-platform-integration-platform.voiceos-platform.svc.cluster.local:8040
+  labels:
+    namespace: voiceos-platform
+    service: integration-platform
+- targets:
+    - voiceos-platform-api-platform.voiceos-platform.svc.cluster.local:8041
+  labels:
+    namespace: voiceos-platform
+    service: api-platform
+- targets:
+    - voiceos-platform-saas-ops.voiceos-platform.svc.cluster.local:8042
+  labels:
+    namespace: voiceos-platform
+    service: saas-ops

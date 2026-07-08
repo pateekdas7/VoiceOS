@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "voiceos.fullname" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "voiceos.labels" . | nindent 4 }}
+data:
+  SERVICE_NAME: {{ .Chart.Name }}
+  VOICEOS_ENVIRONMENT: {{ .Values.environment | default "dev" | quote }}
+  # Must match containerPort (deployment.yaml, sourced from the same
+  # .Values.service.port) so any process honoring the PORT env convention
+  # actually binds the port the Service/probes target. Found missing when a
+  # real container's readiness probe failed with "connection refused" on a
+  # live cluster (Sprint-026 Phase 2, real-VM migration) -- Phase 1's
+  # dry-run/kubeconform validation only checks manifest shape, not that the
+  # ConfigMap and containerPort actually agree at runtime.
+  PORT: {{ .Values.service.port | quote }}
+  {{- range $key, $value := .Values.config }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}

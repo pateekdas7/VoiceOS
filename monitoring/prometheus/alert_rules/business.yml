@@ -1,0 +1,30 @@
+# VoiceOS v2 -- business-metric alerts (Sprint-027.md): ptp_rate drop,
+# campaign_completion_rate drop.
+#
+# Uses the recorded series from recording_rules.yml's voiceos_business_recording
+# group so the alert expression itself stays a simple threshold comparison.
+#
+# Architecture: V7 Ch8 (Alerting), V4 Ch21 (Operational Analytics).
+
+groups:
+  - name: voiceos_business
+    rules:
+      - alert: PTPRateDrop
+        expr: voiceos:ptp_rate:ratio_1h < (voiceos:ptp_rate:ratio_1h offset 1d) * 0.7
+        for: 30m
+        labels:
+          severity: warning
+          route: ticket
+        annotations:
+          summary: "Promise-to-pay rate dropped more than 30% vs. the same hour yesterday"
+          description: "voiceos:ptp_rate:ratio_1h is more than 30% below its value 24h ago -- investigate campaign/strategy-engine regressions before assuming seasonality."
+
+      - alert: CampaignCompletionRateDrop
+        expr: voiceos:campaign_completion_rate:ratio_1h < (voiceos:campaign_completion_rate:ratio_1h offset 1d) * 0.7
+        for: 30m
+        labels:
+          severity: warning
+          route: ticket
+        annotations:
+          summary: "Campaign completion rate dropped more than 30% vs. the same hour yesterday"
+          description: "voiceos:campaign_completion_rate:ratio_1h is more than 30% below its value 24h ago -- check ScheduleEngine/RetryPolicyEngine for a stuck or mis-configured campaign."

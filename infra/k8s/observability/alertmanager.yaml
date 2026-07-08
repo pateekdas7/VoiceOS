@@ -1,0 +1,125 @@
+# VoiceOS v2 -- Alertmanager Deployment (Sprint-027, V7 Ch8).
+#
+# Configuration mounted from a ConfigMap generated at deploy time from
+# monitoring/grafana/alerts/alertmanager.yml (single source of truth).
+# PAGERDUTY_SERVICE_KEY/JIRA_WEBHOOK_URL/SLACK_WEBHOOK_URL are injected as
+# real environment variables and substituted into the mounted config via
+# an init container (envsubst) -- alertmanager.yml itself keeps the
+# `${VAR}` placeholders literally, never a real secret value, matching
+# CLAUDE.md's "never hardcode credentials" rule.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  namespace: voiceos-ops
+  labels:
+    app.kubernetes.io/name: alertmanager
+    app.kubernetes.io/part-of: voiceos-ops
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: alertmanager
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: alertmanager
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9093"
+        prometheus.io/path: "/metrics"
+    spec:
+      priorityClassName: high
+      initContainers:
+        - name: render-config
+          image: "busybox:1.36"
+          # Plain sed substitution instead of envsubst -- busybox has no
+          # package manager to install gettext at pod-start time (found
+          # live: the original `apk add gettext` silently no-op'd since
+          # busybox's image isn't Alpine-based, and envsubst was never on
+          # PATH). sed/sh are both built into busybox.
+          command:
+            - sh
+            - -c
+            - |
+              # Alertmanager refuses to start if a configured receiver's
+              # required field is empty (e.g. PagerDuty's routing_key) --
+              # found live ("missing service or routing key in PagerDuty
+              # config"). No real PagerDuty/Jira/Slack account exists for
+              # this project (same "no real account, documented stub"
+              # precedent as StripeGateway/RazorpayGateway, Sprint-024) --
+              # fall back to an obvious placeholder so Alertmanager itself
+              # starts; replace via the real env vars once accounts exist.
+              sed -e "s|\${PAGERDUTY_SERVICE_KEY}|${PAGERDUTY_SERVICE_KEY:-REPLACE_WITH_REAL_PAGERDUTY_ROUTING_KEY}|g" \
+                  -e "s|\${JIRA_WEBHOOK_URL}|${JIRA_WEBHOOK_URL:-https://example.invalid/jira-webhook-not-configured}|g" \
+                  -e "s|\${SLACK_WEBHOOK_URL}|${SLACK_WEBHOOK_URL:-https://example.invalid/slack-webhook-not-configured}|g" \
+                  /etc/alertmanager-template/alertmanager.yml > /etc/alertmanager/alertmanager.yml
+          envFrom:
+            - secretRef:
+                name: alertmanager-routing-secrets
+          resources:
+            requests:
+              cpu: "20m"
+              memory: "32Mi"
+            limits:
+              cpu: "100m"
+              memory: "64Mi"
+          volumeMounts:
+            - name: config-template
+              mountPath: /etc/alertmanager-template
+            - name: config-rendered
+              mountPath: /etc/alertmanager
+      containers:
+        - name: alertmanager
+          image: "prom/alertmanager:v0.27.0"
+          args:
+            - "--config.file=/etc/alertmanager/alertmanager.yml"
+            - "--storage.path=/alertmanager"
+          ports:
+            - name: http
+              containerPort: 9093
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+          volumeMounts:
+            - name: config-rendered
+              mountPath: /etc/alertmanager
+            - name: data
+              mountPath: /alertmanager
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            initialDelaySeconds: 10
+      volumes:
+        - name: config-template
+          configMap:
+            name: alertmanager-config-template
+        - name: config-rendered
+          emptyDir: {}
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+  namespace: voiceos-ops
+  labels:
+    app.kubernetes.io/name: alertmanager
+spec:
+  selector:
+    app.kubernetes.io/name: alertmanager
+  ports:
+    - name: http
+      port: 9093
+      targetPort: http

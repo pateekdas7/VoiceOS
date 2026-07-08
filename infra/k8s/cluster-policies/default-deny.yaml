@@ -1,0 +1,52 @@
+# VoiceOS v2 -- deny-all-by-default NetworkPolicy, one per namespace
+# (Sprint-026.md AC: "Network policies deny-all default present in all
+# namespaces"). Each service chart's own NetworkPolicy (see
+# infra/helm/_chart_template/templates/networkpolicy.yaml) then layers an
+# explicit ingress/egress allow-list on top -- Kubernetes NetworkPolicies
+# are additive (a pod matched by any policy allowing a given connection
+# permits it), so the deny-all baseline here only actually denies traffic
+# that no chart's own policy explicitly allows.
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: voiceos-runtime
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: voiceos-ops
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: voiceos-platform
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: voiceos-data
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress

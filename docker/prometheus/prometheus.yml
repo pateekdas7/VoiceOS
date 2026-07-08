@@ -1,0 +1,35 @@
+# Prometheus configuration for VoiceOS local development.
+#
+# Scrape config stubs — real service endpoints are wired in Sprint-027
+# (Monitoring, Alerting, Logging, Tracing & Disaster Recovery).
+#
+# Architecture: V7 Ch7 (Prometheus/Grafana); V3 Ch16 (Observability).
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    environment: "dev"
+    project: "voiceos"
+
+# Rule files — alert rules added in Sprint-027
+rule_files: []
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # VoiceOS service stubs — populated Sprint-016 (Observability) and Sprint-027
+  # Each service exposes /metrics on port 8000 (configurable)
+  - job_name: "voiceos-services"
+    scrape_interval: 10s
+    static_configs:
+      - targets:
+          # Placeholder targets — replaced with real service addresses in Sprint-026
+          - "voiceos-media-gateway:8000"
+          - "voiceos-conversation-engine:8000"
+          - "voiceos-gpu-scheduler:8000"
+    # Tolerate connection errors in dev (services not running yet)
+    honor_labels: true

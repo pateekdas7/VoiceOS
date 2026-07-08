@@ -1,0 +1,59 @@
+# VoiceOS v2 -- per-namespace resource quotas (Sprint-026.md, V7 Ch5)
+#
+# Bounds total requested CPU/memory/pod count per namespace so a runaway
+# HPA (or a misconfigured chart) in one namespace cannot starve the others
+# of node capacity -- the namespace-level analogue of RI-3 (bounded
+# resources) already enforced at the process level by BoundedQueue
+# (Sprint-016, src/libs/queues/).
+
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: voiceos-runtime-quota
+  namespace: voiceos-runtime
+spec:
+  hard:
+    requests.cpu: "16"
+    requests.memory: 32Gi
+    limits.cpu: "16"
+    limits.memory: 32Gi
+    pods: "60"
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: voiceos-ops-quota
+  namespace: voiceos-ops
+spec:
+  hard:
+    requests.cpu: "8"
+    requests.memory: 16Gi
+    limits.cpu: "8"
+    limits.memory: 16Gi
+    pods: "30"
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: voiceos-platform-quota
+  namespace: voiceos-platform
+spec:
+  hard:
+    requests.cpu: "16"
+    requests.memory: 32Gi
+    limits.cpu: "16"
+    limits.memory: 32Gi
+    pods: "80"
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: voiceos-data-quota
+  namespace: voiceos-data
+spec:
+  hard:
+    requests.cpu: "8"
+    requests.memory: 16Gi
+    limits.cpu: "8"
+    limits.memory: 16Gi
+    pods: "20"

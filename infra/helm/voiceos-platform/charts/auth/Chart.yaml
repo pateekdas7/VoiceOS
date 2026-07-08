@@ -1,0 +1,6 @@
+apiVersion: v2
+name: auth
+description: "Authentication (JWT/OIDC/mTLS/API-key)"
+type: application
+version: 0.1.0
+appVersion: "2.0.0"

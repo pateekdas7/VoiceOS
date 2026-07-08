@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "voiceos.fullname" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "voiceos.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "voiceos.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "voiceos.labels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print .Template.BasePath "/configmap.yaml") . | sha256sum }}
+        # Sprint-027: Prometheus pod-annotation service discovery (see
+        # monitoring/prometheus/prometheus.yml's `voiceos-services` job).
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.service.port | quote }}
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: {{ include "voiceos.fullname" . }}
+      priorityClassName: {{ .Values.priorityClassName }}
+      {{- if .Values.gpu.tolerate }}
+      tolerations:
+        - key: "nvidia.com/gpu"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
+      nodeSelector:
+        voiceos.io/node-pool: gpu
+      {{- else }}
+      nodeSelector:
+        voiceos.io/node-pool: {{ .Values.nodePool | default "cpu" }}
+      {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "voiceos.fullname" . }}
+          resources:
+            # Guaranteed QoS (K8S-1, V7 Ch5): requests == limits on every
+            # hot-path service. Non-hot-path services get the same
+            # requests==limits shape as a conservative default -- see
+            # values.yaml's own comment for the per-service rationale.
+            requests:
+              cpu: {{ .Values.resources.cpu }}
+              memory: {{ .Values.resources.memory }}
+            limits:
+              cpu: {{ .Values.resources.cpu }}
+              memory: {{ .Values.resources.memory }}
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+      securityContext:
+        runAsNonRoot: true

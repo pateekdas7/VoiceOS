@@ -1,0 +1,259 @@
+# dev-values.yaml -- environment overrides for the voiceos-platform umbrella chart (Sprint-026)
+# Applied via: helm upgrade --install voiceos-platform infra/helm/voiceos-platform/ -f infra/helm/values/dev-values.yaml
+
+global:
+  environment: dev
+
+saasOps:
+  replicaCount: 1
+
+admin-portal:
+  environment: dev
+  replicaCount: 1
+  resources:
+    cpu: "250m"
+    memory: "256Mi"
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 2
+
+ai-config:
+  environment: dev
+  replicaCount: 1
+  resources:
+    cpu: "250m"
+    memory: "256Mi"
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 2
+
+ai-governance:
+  environment: dev
+  replicaCount: 1
+  resources:
+    cpu: "250m"
+    memory: "256Mi"
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 2
+
+analytics:
+  environment: dev
+  replicaCount: 1
+  resources:
+    cpu: "250m"
+    memory: "256Mi"
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 2
+
+api-platform:
+  environment: dev
+  replicaCount: 1
+  resources:
+    cpu: "250m"
+    memory: "256Mi"
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 2
+
+audio-preprocessing:
+  environment: dev
+  replicaCount: 1
+  resources:
+    cpu: "250m"
+    memory: "256Mi"
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 2
+
+auth:
+  environment: dev
+  replicaCount: 1
+  resources:
+    cpu: "250m"
+    memory: "256Mi"
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 2
+
+authz:
+  environment: dev
+  replicaCount: 1
+  resources:
+    cpu: "250m"
+    memory: "256Mi"
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 2
+
+billing:
+  environment: dev
+  replicaCount: 1
+  resources:
+    cpu: "250m"
+    memory: "256Mi"
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 2
+
+campaign-management:
+  environment: dev
+  replicaCount: 1
+  resources:
+    cpu: "250m"
+    memory: "256Mi"
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 2
+
+collections:
+  environment: dev
+  replicaCount: 1
+  resources:
+    cpu: "250m"
+    memory: "256Mi"
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 2
+
+contact-center:
+  environment: dev
+  replicaCount: 1
+  resources:
+    cpu: "250m"
+    memory: "256Mi"
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 2
+
+conversation-engine:
+  environment: dev
+  replicaCount: 1
+  resources:
+    cpu: "250m"
+    memory: "256Mi"
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 2
+
+crm:
+  environment: dev
+  replicaCount: 1
+  resources:
+    cpu: "250m"
+    memory: "256Mi"
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 2
+
+dialogue-manager:
+  environment: dev
+  replicaCount: 1
+  resources:
+    cpu: "250m"
+    memory: "256Mi"
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 2
+
+gpu-scheduler:
+  environment: dev
+  replicaCount: 1
+  resources:
+    cpu: "250m"
+    memory: "256Mi"
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 2
+
+integration-platform:
+  environment: dev
+  replicaCount: 1
+  resources:
+    cpu: "250m"
+    memory: "256Mi"
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 2
+
+llm-runtime:
+  environment: dev
+  replicaCount: 1
+  resources:
+    cpu: "250m"
+    memory: "256Mi"
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 2
+
+media-gateway:
+  environment: dev
+  replicaCount: 1
+  resources:
+    cpu: "250m"
+    memory: "256Mi"
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 2
+
+metering:
+  environment: dev
+  replicaCount: 1
+  resources:
+    cpu: "250m"
+    memory: "256Mi"
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 2
+
+policy-engine:
+  environment: dev
+  replicaCount: 1
+  resources:
+    cpu: "250m"
+    memory: "256Mi"
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 2
+
+stt:
+  environment: dev
+  replicaCount: 1
+  resources:
+    cpu: "250m"
+    memory: "256Mi"
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 2
+
+tenant-management:
+  environment: dev
+  replicaCount: 1
+  resources:
+    cpu: "250m"
+    memory: "256Mi"
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 2
+
+tts:
+  environment: dev
+  replicaCount: 1
+  resources:
+    cpu: "250m"
+    memory: "256Mi"
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 2
+
+vad-endpointing:
+  environment: dev
+  replicaCount: 1
+  resources:
+    cpu: "250m"
+    memory: "256Mi"
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 2
+

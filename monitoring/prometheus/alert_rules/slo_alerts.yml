@@ -1,0 +1,64 @@
+# VoiceOS v2 -- SLO burn-rate alerts (Sprint-027.md, multi-window method).
+#
+# Two SLOs, each with a fast-burn CRITICAL (page) and slow-burn WARNING
+# (ticket) pair, per Sprint-027.md's literal thresholds:
+#   first_audio_p95_slo   target <= 1.5s
+#     Page (CRITICAL):  1h burn rate > 14.4x AND 5m burn rate > 14.4x
+#     Ticket (WARNING):  6h burn rate > 6x  AND 1h burn rate > 6x
+#   availability_slo      target >= 99.95%
+#     Same multi-window burn-rate pattern.
+#
+# Depends on the recorded series in recording_rules.yml.
+#
+# Architecture: V7 Ch8 (Alerting).
+
+groups:
+  - name: voiceos_slo_first_audio_burn_rate
+    rules:
+      - alert: FirstAudioSLOFastBurn
+        expr: voiceos:first_audio_slo:burn_rate_1h > 14.4 and voiceos:first_audio_slo:burn_rate_5m > 14.4
+        for: 2m
+        labels:
+          severity: critical
+          slo: first_audio_p95
+          route: page
+        annotations:
+          summary: "First-audio p95 SLO burning fast (>14.4x over 1h+5m windows)"
+          description: "voiceos_conversation_engine first-audio p95 is consuming error budget at >14.4x the sustainable rate over both the 1h and 5m windows. At this rate the 30-day error budget for the 1.5s SLO is exhausted in <2 days. Page on-call immediately."
+          runbook: "infra/dr/runbooks/gpu-node-failure.md"
+
+      - alert: FirstAudioSLOSlowBurn
+        expr: voiceos:first_audio_slo:burn_rate_6h > 6 and voiceos:first_audio_slo:burn_rate_1h > 6
+        for: 15m
+        labels:
+          severity: warning
+          slo: first_audio_p95
+          route: ticket
+        annotations:
+          summary: "First-audio p95 SLO burning slow (>6x over 6h+1h windows)"
+          description: "voiceos_conversation_engine first-audio p95 is consuming error budget at >6x the sustainable rate over both the 6h and 1h windows. Not yet page-worthy; create a ticket for investigation this business day."
+
+  - name: voiceos_slo_availability_burn_rate
+    rules:
+      - alert: AvailabilitySLOFastBurn
+        expr: voiceos:availability_slo:burn_rate_1h > 14.4 and voiceos:availability_slo:burn_rate_5m > 14.4
+        for: 2m
+        labels:
+          severity: critical
+          slo: availability
+          route: page
+        annotations:
+          summary: "Availability SLO burning fast (>14.4x over 1h+5m windows)"
+          description: "Call success ratio is consuming the 99.95% availability error budget at >14.4x the sustainable rate. Page on-call immediately."
+          runbook: "infra/dr/runbooks/full-region-failure.md"
+
+      - alert: AvailabilitySLOSlowBurn
+        expr: voiceos:availability_slo:burn_rate_6h > 6 and voiceos:availability_slo:burn_rate_1h > 6
+        for: 15m
+        labels:
+          severity: warning
+          slo: availability
+          route: ticket
+        annotations:
+          summary: "Availability SLO burning slow (>6x over 6h+1h windows)"
+          description: "Call success ratio is consuming the 99.95% availability error budget at >6x the sustainable rate over 6h+1h. Create a ticket for investigation this business day."

@@ -1,0 +1,355 @@
+[build-system]
+requires = ["setuptools>=72", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "voiceos"
+version = "0.1.0"
+description = "Enterprise-grade AI Voice Operating System for collections, customer engagement, and conversational automation"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.7",
+    # Sprint-004: Media Gateway Prometheus metrics (AC-5 — admission_rejections counter)
+    # Purpose: Expose active_sessions, admission_rejections, bytes_received gauges/counters
+    # Benefits: Canonical Python Prometheus client; used by all production services
+    # Risks: Minor runtime dep; prometheus_client is stable, zero transitive deps
+    # Maintenance: Active; Apache 2.0 license
+    "prometheus-client>=0.20",
+    # Sprint-006: Audio Preprocessing Pipeline — DSP and resampling
+    # Purpose: numpy provides PCM16LE sample arithmetic (NLMS filter, FFT, AGC);
+    #          scipy provides polyphase sinc resampler (scipy.signal.resample_poly,
+    #          used by ResamplerStage for 8 kHz -> 16 kHz at <= 2 ms latency per frame)
+    # Benefits: Mature, well-tested scientific Python stack; no native audio library
+    #           build required on Windows dev machine; pip wheels available for all
+    #           platforms; numpy is effectively a runtime dependency of scipy
+    # Risks: Large transitive closure (~50 MB); vendored BLAS may conflict on GPU nodes
+    #        (mitigated by using system BLAS on production Linux hosts in Sprint-026)
+    # Maintenance: NumPy and SciPy have long-term support; NumPy 2.x / SciPy 1.x
+    # Licensing: BSD-3-Clause (both)
+    "numpy>=1.26",
+    "scipy>=1.13",
+    # Sprint-007: VAD & Endpointing — Silero VAD v4 ONNX inference
+    # Purpose: onnxruntime provides CPU inference for the Silero VAD v4 ONNX model
+    #          (~1 MB, stateful LSTM). VAD does not require GPU — runs entirely on CPU.
+    # Benefits: Standard ONNX inference runtime; no custom C extension needed;
+    #           cross-platform (Windows/Linux/Mac); pip wheels for all platforms.
+    # Risks: ~20 MB install; onnxruntime and onnxruntime-gpu cannot coexist —
+    #        GPU nodes use onnxruntime-gpu (swapped in Sprint-026 Helm charts).
+    # Maintenance: Active (Microsoft); MIT license; well-tested with Silero VAD.
+    "onnxruntime>=1.18",
+    # Sprint-009: STT/LLM/TTS adapter HTTP clients (vLLMAdapter, VeenaAdapter)
+    # Purpose: httpx provides async HTTP with SSE streaming for vLLM (OpenAI-compat API)
+    #          and sync/async HTTP for Veena TTS. Both adapters require client.stream()
+    #          for long-running token/audio generation without full buffering.
+    # Benefits: Native asyncio support; client.stream() handles SSE natively;
+    #           connection pooling; HTTP/1.1 + HTTP/2; used by FastAPI ecosystem.
+    # Risks: Adds ~1.5 MB to install; must not be used on the audio critical path
+    #        (bytes allocation happens inside the adapter, outside the DSP pipeline).
+    # Maintenance: Active (encode/httpx); BSD-3-Clause; no C extensions.
+    "httpx>=0.27",
+    # Sprint-013: Event Bus (Redis Streams) + Redis reliability layer
+    # (RedisClient, DistributedLock, RateLimiter, TTLGuard).
+    # Purpose: redis-py provides XADD/XREADGROUP/XACK/XGROUP + EVAL (Lua)
+    #          + sorted sets, the primitives EventBus and the lock/rate-limiter
+    #          are built on. Was already a dev-only dependency (Sprint-003,
+    #          integration test driver); promoted to core because it is now
+    #          imported by production library code (src/libs/event_bus,
+    #          src/libs/redis_client), not just tests.
+    # Benefits: Canonical, actively maintained Python Redis client; already
+    #           deployed and validated on the CPU node (redis 8.0.1, §11
+    #           CPU_NODE_STATE.md); no new operational surface.
+    # Risks: None beyond what Sprint-003 already accepted — same package,
+    #        wider (production) import scope.
+    # Maintenance: Active (redis-py core team); MIT license.
+    "redis>=5.0",
+    # Sprint-014: Persistent Storage — Postgres repository layer + Alembic
+    # migration tooling.
+    # Purpose: psycopg2 is the driver used by every repository in
+    #          src/libs/repositories/ (BaseRepository and all domain
+    #          repositories) to talk to the authoritative Postgres store.
+    #          alembic + sqlalchemy provide the migration framework/engine
+    #          that formalizes the Sprint-002 raw-SQL schema into versioned,
+    #          reversible revisions (V6 Ch7 expand-contract discipline).
+    #          sqlalchemy is used only as alembic's connection/engine layer
+    #          (op.execute of hand-written SQL) — no ORM models, keeping
+    #          repositories model-agnostic raw-SQL/psycopg2, consistent with
+    #          the existing RelationshipMemoryStore (Sprint-010) precedent.
+    # Benefits: psycopg2 was already a dev-only dependency (Sprint-003 test
+    #           fixtures) and already deployed/validated on the CPU node;
+    #           promoted to core because it is now imported by production
+    #           library code, not just tests (same precedent as Sprint-013's
+    #           redis promotion). Alembic is the de facto standard Python
+    #           migration tool with first-class reversibility support.
+    # Risks: None beyond what Sprint-003 already accepted for psycopg2 (same
+    #        package, wider import scope). Alembic/SQLAlchemy add ~10 MB;
+    #        no autogenerate/ORM mapping is used, limiting the new surface
+    #        to migration-file execution only.
+    # Maintenance: Active (psycopg/alembic/sqlalchemy core teams); LGPL
+    #        (psycopg2) / MIT (alembic) / MIT (sqlalchemy).
+    "psycopg2-binary>=2.9",
+    "alembic>=1.13",
+    "sqlalchemy>=2.0",
+    # Sprint-016: Health endpoints (src/libs/health/) — GET /health/live, /health/ready.
+    # Purpose: starlette provides the minimal ASGI application + routing needed
+    #          for two JSON endpoints, plus starlette.testclient.TestClient
+    #          (httpx-based) for the sprint's required in-process endpoint tests.
+    # Benefits: Smallest viable ASGI layer (it is FastAPI's own foundation)
+    #          without pulling in FastAPI's pydantic-request-model machinery
+    #          this sprint doesn't need; a natural fit once Sprint-026 gives
+    #          services real HTTP listeners (K8s liveness/readiness probes).
+    # Risks: New runtime surface, but self-contained (2 routes); no ASGI
+    #        server is bundled/started by this sprint — Sprint-026 wires uvicorn.
+    # Maintenance: Active (Encode); BSD-3-Clause.
+    "starlette>=0.37",
+    # Sprint-026: ASGI server for the Starlette health app above, run as each
+    # Helm-deployed pod's real process (K8s liveness/readiness probes hit
+    # GET /health/live, /health/ready over a real port instead of static
+    # manifest validation only) -- exactly what the Sprint-016 comment above
+    # flagged as deferred to this sprint.
+    # Purpose: run src.libs.health.aggregator.create_health_app() as a real
+    #          listening process inside each service's container.
+    # Benefits: Minimal, standard ASGI server; no framework beyond Starlette.
+    # Risks: New runtime surface, but self-contained (one entrypoint).
+    # Maintenance: Active (Encode); BSD-3-Clause.
+    "uvicorn>=0.30",
+    # Sprint-016: Distributed tracing (src/libs/observability/tracer.py).
+    # Purpose: opentelemetry-api/-sdk provide TracerProvider, spans, and W3C
+    #          Trace Context propagation; opentelemetry-exporter-otlp-proto-http
+    #          exports finished spans to a real OTel collector in production
+    #          (tests use the SDK's in-memory exporter, no network).
+    # Benefits: Canonical, vendor-neutral tracing stack (CNCF); required by
+    #          the AC "OTelTracer propagates trace_id across service boundaries".
+    # Risks: ~1 MB install; OTLP exporter is unused until an OTel collector is
+    #        deployed (Sprint-027) — the tracer works fully in-process until then.
+    # Maintenance: Active (OpenTelemetry community); Apache 2.0.
+    "opentelemetry-api>=1.25",
+    "opentelemetry-sdk>=1.25",
+    "opentelemetry-exporter-otlp-proto-http>=1.25",
+    # Sprint-018: Authentication (src/services/auth/) — JWT validation (OAuth2/OIDC)
+    # and mTLS client-certificate parsing/verification.
+    # Purpose: PyJWT validates/decodes RS256-signed JWTs (JWTValidator) and
+    #          issues test tokens in Phase 1 (in-process RSA key pair, no real
+    #          IdP required); cryptography provides RSA keypair generation for
+    #          tests and X.509 certificate parsing/chain verification for
+    #          mTLSEnforcer (service-to-service calls, AR-3).
+    # Benefits: PyJWT is the de facto standard JWT library for Python (simpler
+    #          surface than python-jose, same RS256 support via `cryptography`);
+    #          `cryptography` is the canonical Python X.509/TLS primitives
+    #          library — already a transitive dependency of several packages
+    #          above, now a direct one.
+    # Risks: New direct runtime surface for token/cert validation — a security
+    #          boundary. Both packages are widely audited; no custom crypto is
+    #          implemented in VoiceOS itself (V6 Ch2 dependency policy).
+    # Maintenance: Active (PyJWT core team; pyca/cryptography); MIT (PyJWT) /
+    #          Apache-2.0 or BSD (cryptography, dual-licensed).
+    "pyjwt>=2.8",
+    "cryptography>=42",
+    # Sprint-019: Secrets Management + Encryption (src/libs/secrets/,
+    # src/libs/encryption/) — client for the self-hosted HashiCorp Vault
+    # instance on the CPU node.
+    # Purpose: hvac is Vault's official Python client, used by
+    #          HVACVaultClient (KV v2 secret engine) and
+    #          VaultTransitKMSClient (Transit engine, standing in for a
+    #          cloud KMS since no AWS/GCP account exists for this project —
+    #          same self-managed-infrastructure precedent as Sprint-018's
+    #          mTLS CA). Imported lazily inside each class's constructor, so
+    #          Phase 1 tests (FakeVaultClient/FakeKMSClient) never require
+    #          it to be installed.
+    # Benefits: De facto standard Vault client; covers KV v2 + Transit +
+    #          auth backends without hand-rolling HTTP calls against
+    #          Vault's API.
+    # Risks: New direct runtime surface for a security-boundary component
+    #          (secret/key access) — mitigated by the lazy-import pattern
+    #          keeping it optional outside Phase 2 deployment code, and by
+    #          Vault's own audit logging (V4 Ch7 §7.17).
+    # Maintenance: Active (HashiCorp); MPL-2.0.
+    "hvac>=2.1",
+    # Sprint-024: Reporting Platform (src/services/reporting/exporter.py) —
+    # XLSX and PDF report export (Campaign Summary, Collections Performance,
+    # Compliance Audit templates).
+    # Purpose: openpyxl writes real .xlsx workbooks (no viable stdlib
+    #          alternative for the OOXML spreadsheet format); reportlab
+    #          generates real PDF documents (no viable stdlib alternative
+    #          for the PDF format) for the same report templates.
+    # Benefits: Both are the de facto standard Python libraries for their
+    #          format — widely used, actively maintained, no native/C
+    #          extension build step on any platform this project targets.
+    # Risks: New runtime surface limited to ExportService's XLSX/PDF code
+    #          paths; CSV export (stdlib csv) has no dependency on either.
+    #          ~15 MB combined install size.
+    # Maintenance: openpyxl active (MIT); reportlab's open-source
+    #          distribution is active (BSD-style license).
+    "openpyxl>=3.1",
+    "reportlab>=4.2",
+    # Sprint-025: API Platform (src/services/api_platform/openapi.py) — loads
+    # the spec-first api-specs/voiceos-public-v1.yaml OpenAPI 3.1 document.
+    # Purpose: PyYAML parses the YAML spec file; no stdlib YAML parser exists.
+    # Benefits: The de facto standard Python YAML library; used only to load
+    #          a single static file (openapi.py, scripts/validate_openapi.py)
+    #          — no dynamic/untrusted YAML is ever parsed (yaml.safe_load only).
+    # Risks: Minimal — pure-Python-adjacent (libyaml C extension optional,
+    #          falls back to a pure-Python parser), no known active CVEs.
+    # Maintenance: Active (yaml core team); MIT license.
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=5.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+    "mypy>=1.11",
+    "pydantic>=2.7",
+    "pre-commit>=3.7",
+    # Sprint-003: integration test DB driver (MongoDB). psycopg2-binary was
+    # promoted to core dependencies in Sprint-014 (see above) since it is now
+    # imported by production repository code, not just test fixtures.
+    "pymongo>=4.7",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+# ---------------------------------------------------------------------------
+# Ruff — lint + format (see ruff.toml for full config)
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "UP",   # pyupgrade
+    "N",    # pep8-naming
+    "ERA",  # eradicate commented-out code
+    "RUF",  # ruff-specific rules
+]
+ignore = [
+    "E501",  # line length — handled by formatter
+    "N818",  # exception names — our InvariantViolationError matches architecture naming
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src", "tests"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+# ---------------------------------------------------------------------------
+# mypy — strict mode
+# ---------------------------------------------------------------------------
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+# monitoring/gpu_fleet: Sprint-027's fleet-level GPU operational tooling
+# (monitoring/prometheus|grafana|logging|tracing and infra/dr are
+# config/docs/shell, not Python, so they need no mypy entry).
+files = ["src", "tests", "monitoring"]
+plugins = ["pydantic.mypy"]
+
+# Pydantic v2 mypy plugin settings
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+# ---------------------------------------------------------------------------
+# pytest + coverage
+# ---------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = [
+    "--cov=src",
+    "--cov-report=term-missing",
+    "--cov-report=html:htmlcov",
+    "-v",
+]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["src"]
+branch = true
+omit = ["src/**/__init__.py"]
+
+[tool.coverage.report]
+# Overall project minimum — individual module gates enforced in CI
+fail_under = 85
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "\\.\\.\\.",
+]
+
+[tool.coverage.paths]
+source = ["src"]
+
+# ---------------------------------------------------------------------------
+# mypy overrides — untyped third-party packages used in integration tests
+# ---------------------------------------------------------------------------
+
+[[tool.mypy.overrides]]
+module = ["psycopg2", "psycopg2.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["redis", "redis.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["pymongo", "pymongo.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["prometheus_client", "prometheus_client.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["scipy", "scipy.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["onnxruntime", "onnxruntime.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["httpx", "httpx.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["hvac", "hvac.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["boto3", "boto3.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["botocore", "botocore.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["openpyxl", "openpyxl.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["reportlab", "reportlab.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["yaml", "yaml.*"]
+ignore_missing_imports = true

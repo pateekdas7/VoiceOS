@@ -1,0 +1,326 @@
+# VoiceOS v2 -- NetworkPolicy for the observability stack (Sprint-027).
+#
+# The deny-all-default baseline (infra/k8s/cluster-policies/default-deny.yaml)
+# applies to voiceos-ops like every other namespace -- these rules are the
+# explicit allow-list the observability pods need on top of it:
+#   - Prometheus: egress to every VoiceOS service port, in every namespace
+#     (it must reach every pod it scrapes); ingress from Grafana (same ns).
+#   - Grafana: ingress from nowhere external (accessed via kubectl port-forward
+#     for this single-node cluster, matching the no-public-LB precedent set
+#     by every other chart); egress to Prometheus/Loki/Jaeger (same ns).
+#   - Alertmanager: ingress from Prometheus (same ns); egress to the
+#     internet (PagerDuty/Slack/Jira webhooks) -- the only chart in this
+#     project whose egress must leave the cluster's own service mesh.
+#   - Loki: ingress from FluentBit + Grafana (same ns).
+#   - OTel Collector: ingress from every namespace (every service pushes
+#     OTLP traces to it); egress to Jaeger (same ns).
+#   - Jaeger: ingress from OTel Collector + Grafana (same ns).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prometheus
+  namespace: voiceos-ops
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: voiceos-ops
+      ports:
+        - protocol: TCP
+          port: 9090
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - namespaceSelector: {}
+      ports:
+        # Union of every VoiceOS service's scrape port across all 26 charts
+        # (see monitoring/prometheus/targets/dev.yml) plus the API server
+        # (443, for kubernetes-apiservers/kubernetes-nodes-cadvisor jobs).
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 8000
+        - protocol: TCP
+          port: 8010
+        - protocol: TCP
+          port: 8011
+        - protocol: TCP
+          port: 8012
+        - protocol: TCP
+          port: 8013
+        - protocol: TCP
+          port: 8014
+        - protocol: TCP
+          port: 8015
+        - protocol: TCP
+          port: 8020
+        - protocol: TCP
+          port: 8021
+        - protocol: TCP
+          port: 8022
+        - protocol: TCP
+          port: 8023
+        - protocol: TCP
+          port: 8030
+        - protocol: TCP
+          port: 8031
+        - protocol: TCP
+          port: 8032
+        - protocol: TCP
+          port: 8033
+        - protocol: TCP
+          port: 8034
+        - protocol: TCP
+          port: 8035
+        - protocol: TCP
+          port: 8036
+        - protocol: TCP
+          port: 8037
+        - protocol: TCP
+          port: 8038
+        - protocol: TCP
+          port: 8039
+        - protocol: TCP
+          port: 8040
+        - protocol: TCP
+          port: 8041
+        - protocol: TCP
+          port: 8042
+        - protocol: TCP
+          port: 8100
+        - protocol: TCP
+          port: 8200
+        - protocol: TCP
+          port: 2020 # fluentbit metrics
+        - protocol: TCP
+          port: 8889 # otel-collector metrics
+        - protocol: TCP
+          port: 4318 # otel-collector OTLP/HTTP (DR/smoke-test trace pushes)
+        - protocol: TCP
+          port: 9093 # alertmanager
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: grafana
+  namespace: voiceos-ops
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: voiceos-ops
+      ports:
+        - protocol: TCP
+          port: 3000
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: loki
+      ports:
+        - protocol: TCP
+          port: 3100
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: jaeger
+      ports:
+        - protocol: TCP
+          port: 16686
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: alertmanager
+  namespace: voiceos-ops
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: alertmanager
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: voiceos-ops
+      ports:
+        - protocol: TCP
+          port: 9093
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        # PagerDuty/Slack/Jira webhooks -- the one chart in this project
+        # whose egress must legitimately leave the cluster (documented
+        # exception, same class as the EKS/MongoDB nodes' internet-egress
+        # exception in infra/terraform, Sprint-026).
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: loki
+  namespace: voiceos-ops
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: loki
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: voiceos-ops
+      ports:
+        - protocol: TCP
+          port: 3100
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: fluentbit
+  namespace: voiceos-ops
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fluentbit
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Prometheus scrapes FluentBit's own /api/v1/metrics (port 2020).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: voiceos-ops
+      ports:
+        - protocol: TCP
+          port: 2020
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: loki
+      ports:
+        - protocol: TCP
+          port: 3100
+    # The `kubernetes` filter plugin queries the API server
+    # (kubernetes.default.svc) to enrich each log line with pod metadata.
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: otel-collector
+  namespace: voiceos-ops
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: otel-collector
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Every service pod (any namespace) pushes OTLP traces here.
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 4317
+        - protocol: TCP
+          port: 4318
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: jaeger
+      ports:
+        - protocol: TCP
+          port: 4317
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: jaeger
+  namespace: voiceos-ops
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: jaeger
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: voiceos-ops
+      ports:
+        - protocol: TCP
+          port: 16686
+        - protocol: TCP
+          port: 4317
+        - protocol: TCP
+          port: 4318

@@ -1,0 +1,25 @@
+[Unit]
+Description=VoiceOS TTS Inference Server (Veena 3B BF16 + SNAC 24 kHz)
+After=network-online.target voiceos-llm.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/voiceos-gpu
+EnvironmentFile=-/opt/voiceos-gpu/.env
+Environment=HF_HOME=/opt/voiceos-gpu/cache
+# Veena + SNAC FastAPI server on port 8200 (~8 GB VRAM). Loads in ~28s.
+ExecStart=/opt/voiceos-gpu/venv/bin/python3 /opt/voiceos-gpu/services/tts/server.py \
+  --model-path /opt/voiceos-gpu/models/veena-fp16 \
+  --snac-path /opt/voiceos-gpu/models/snac-24khz \
+  --port 8200
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=180
+StandardOutput=append:/opt/voiceos-gpu/logs/tts.log
+StandardError=append:/opt/voiceos-gpu/logs/tts.log
+
+[Install]
+WantedBy=multi-user.target

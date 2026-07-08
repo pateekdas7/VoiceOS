@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "voiceos.fullname" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "voiceos.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "voiceos.selectorLabels" . | nindent 4 }}

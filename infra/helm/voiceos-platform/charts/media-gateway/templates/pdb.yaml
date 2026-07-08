@@ -1,0 +1,14 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "voiceos.fullname" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "voiceos.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "voiceos.selectorLabels" . | nindent 6 }}
+{{- end }}

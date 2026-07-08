@@ -1,0 +1,6 @@
+apiVersion: v2
+name: vad-endpointing
+description: "Voice activity detection, endpointing, barge-in"
+type: application
+version: 0.1.0
+appVersion: "2.0.0"

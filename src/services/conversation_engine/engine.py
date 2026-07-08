@@ -1,0 +1,648 @@
+"""ConversationEngine — top-level CIL orchestrator service.
+
+The ConversationEngine is the "brain" of VoiceOS. Per turn it:
+  1. Retrieves knowledge snippets (KnowledgeRetrievalService).
+  2. Runs the CIL pipeline (via injected CILPort protocol → ResponsePlanningEngine).
+  3. Builds the LLM prompt (via injected PromptBuilderPort).
+  4. Streams LLM output through OutputValidator and TrueStreamingPipeline → TTS.
+  5. Publishes the DecisionEnvelope before TTS starts (RI-4 commit-before-act).
+  6. Fires async quality scoring (non-blocking).
+
+BOUNDARY RULE (check_boundaries.py Rule 1):
+  This file is in src/services/ and must NOT import from src/engines/.
+  All engine functionality is accessed through Protocol objects injected
+  at construction time (dependency inversion / structural typing).
+
+Architecture: V2 Ch1 (Conversation Engine / CIL orchestrator).
+Invariants: RI-4 (commit before act — envelope published before TTS).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from dataclasses import dataclass
+from typing import Any, Protocol, runtime_checkable
+
+from src.libs.ai_safety.prompt_injection import PromptInjectionDetector
+from src.libs.concurrency.worker_pool import Priority, WorkerPool
+from src.libs.contracts.context import CustomerContext
+from src.libs.contracts.decision import DecisionEnvelope
+from src.libs.contracts.models.ai_config import ModelConfig, PromptVersion
+from src.libs.contracts.primitives import CallId, CustomerId, TenantId
+from src.libs.contracts.response_plan import ResponsePlan, Snippet
+from src.libs.contracts.streaming import AudioClause
+from src.libs.contracts.turn import TurnInput
+from src.libs.idempotency.guard import IdempotencyGuard
+from src.libs.idempotency.key_builder import IdempotencyKeyBuilder
+from src.libs.invariants.guards import assert_ri4_commit_before_act
+from src.libs.observability.logger import StructuredLogger
+from src.libs.observability.tracer import OTelTracer
+from src.libs.state.snapshot import Snapshot
+from src.services.ai_config.model_config import ModelConfigService
+from src.services.ai_config.prompt_versioning import PromptVersioningService
+from src.services.ai_governance.service import AIGovernanceService
+from src.services.campaign_management.service import CampaignPromptNotPinnedError
+from src.services.contact_center.live_transfer import TransferResult
+from src.services.contact_center.service import ContactCenterService
+from src.services.conversation_quality.scorer import ConversationQualityScorer
+from src.services.crm.context_assembler import CustomerContextAssembler
+from src.services.knowledge_retrieval.service import KnowledgeRetrievalService
+from src.services.llm_runtime.output_validator import OutputValidator
+from src.services.llm_runtime.service import LLMService
+from src.services.playback.scheduler import PlaybackScheduler
+from src.services.policy_engine.decision import PolicyDecision, PolicyOutcome
+from src.services.policy_engine.service import PolicyEngineService
+from src.services.tts.service import TTSService
+from src.services.tts.streaming_pipeline import TrueStreamingPipeline
+
+from .session_state import ConversationSessionState
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class RuntimeConfig:
+    """The resolved, immutable configuration for one call's turns (Sprint-025 Part-3, V5 Ch14).
+
+    Resolution order: pinned Prompt Version (Campaign Management, immutable
+    once published) and Model Configuration (global default -> tenant
+    override -> campaign override) -- both resolved once, before inference
+    begins, via :meth:`ConversationEngine.resolve_runtime_config`. Either
+    field is ``None`` when its corresponding service wasn't wired or no
+    pin/config exists yet (preserves pre-Sprint-025 behavior: the engine's
+    existing ``prompt_builder``/``llm_service`` remain the actual inference
+    path -- this method centralizes *resolution*, not model invocation,
+    keeping business logic model-agnostic per CLAUDE.md's AI Model Rules).
+    """
+
+    prompt_version: PromptVersion | None
+    model_config: ModelConfig | None
+
+
+# ---------------------------------------------------------------------------
+# Protocol interfaces — allow injecting engine implementations without
+# importing from src/engines/ (check_boundaries Rule 1).
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class CILPort(Protocol):
+    """Protocol for the CIL pipeline (implemented by ResponsePlanningEngine)."""
+
+    def assemble(
+        self,
+        turn: TurnInput,
+        context: CustomerContext | None,
+        retrieval: list[Snippet],
+        intent_history: list[str] | None,
+        identity_verified: bool,
+        silence_duration_ms: int,
+    ) -> tuple[ResponsePlan, DecisionEnvelope]:
+        """Run all CIL engines and return (ResponsePlan, DecisionEnvelope)."""
+        ...
+
+
+@runtime_checkable
+class PromptBuilderPort(Protocol):
+    """Protocol for the PromptBuilder (implemented by PromptBuilder engine)."""
+
+    def build(
+        self,
+        response_plan: ResponsePlan,
+        context: CustomerContext | None,
+    ) -> tuple[str, str]:
+        """Return (prompt_text, prompt_hash)."""
+        ...
+
+
+@runtime_checkable
+class OutputEvaluatorPort(Protocol):
+    """Protocol for async quality scoring (implemented by OutputEvaluationEngine)."""
+
+    def score(
+        self,
+        turn: TurnInput,
+        llm_output: str,
+        response_plan: ResponsePlan,
+    ) -> Any:
+        """Return a TurnQualityScore-like object."""
+        ...
+
+
+@runtime_checkable
+class EventBusPort(Protocol):
+    """Protocol for publishing DecisionEnvelope (implemented by EventBus, Sprint-013)."""
+
+    async def publish(self, envelope: DecisionEnvelope) -> str:
+        """Durably persist the envelope (RI-4: before any external act).
+
+        Returns:
+            The EventBus stream entry ID the envelope was appended under
+            (Sprint-015: used as the Recoverable session's snapshot resume
+            offset — see ``ConversationSessionState``/``EventTailReplay``).
+        """
+        ...
+
+
+class _NoOpEventBus:
+    """No-op event bus for Sprint-012 walking skeleton (no Kafka/Redis yet)."""
+
+    async def publish(self, envelope: DecisionEnvelope) -> str:
+        logger.debug(
+            "EventBus(noop): envelope %s published for call %s",
+            envelope.envelope_id,
+            envelope.call_id,
+        )
+        return "-"
+
+
+class ConversationEngine:
+    """Orchestrates the full per-turn pipeline.
+
+    All engine dependencies are injected via Protocol objects so this
+    class never imports from src/engines/ (boundary Rule 1).
+
+    Args:
+        cil: CILPort implementation (ResponsePlanningEngine).
+        prompt_builder: PromptBuilderPort implementation.
+        llm_service: LLMService for LLM generation.
+        tts_service: TTSService for speech synthesis.
+        validator: OutputValidator.
+        knowledge: KnowledgeRetrievalService.
+        quality_scorer: ConversationQualityScorer.
+        ai_governance_service: AIGovernanceService — the mandatory Law-of-
+            Authority/policy/content-safety gate (V4 Ch3, Sprint-018). Every
+            LLM output passes through it before TTS; there is no way to
+            construct a ConversationEngine without one.
+        output_evaluator: OutputEvaluatorPort (optional; no-op if None).
+        event_bus: EventBusPort for DecisionEnvelope publication (RI-4).
+        max_validation_retries: Maximum LLM output rejection retries.
+        quality_scoring_pool: WorkerPool bounding concurrent background
+            quality-scoring tasks (Sprint-016; defaults to a private
+            4-worker pool if not supplied).
+        structured_logger: StructuredLogger for JSON turn-completion logs
+            (Sprint-016; no-op if None).
+        tracer: OTelTracer opening a span per turn (Sprint-016; no-op if None).
+    """
+
+    def __init__(
+        self,
+        cil: CILPort,
+        prompt_builder: PromptBuilderPort,
+        llm_service: LLMService,
+        tts_service: TTSService,
+        validator: OutputValidator,
+        knowledge: KnowledgeRetrievalService,
+        quality_scorer: ConversationQualityScorer,
+        ai_governance_service: AIGovernanceService,
+        output_evaluator: OutputEvaluatorPort | None = None,
+        event_bus: EventBusPort | None = None,
+        max_validation_retries: int = 2,
+        idempotency_guard: IdempotencyGuard | None = None,
+        snapshot_store: Snapshot | None = None,
+        snapshot_every_n_turns: int = 10,
+        quality_scoring_pool: WorkerPool | None = None,
+        structured_logger: StructuredLogger | None = None,
+        tracer: OTelTracer | None = None,
+        policy_engine_service: PolicyEngineService | None = None,
+        prompt_injection_detector: PromptInjectionDetector | None = None,
+        context_assembler: CustomerContextAssembler | None = None,
+        contact_center_service: ContactCenterService | None = None,
+        model_config_service: ModelConfigService | None = None,
+        prompt_versioning_service: PromptVersioningService | None = None,
+    ) -> None:
+        self._cil = cil
+        self._prompt_builder = prompt_builder
+        self._llm = llm_service
+        self._tts = tts_service
+        self._validator = validator
+        self._knowledge = knowledge
+        self._quality = quality_scorer
+        self._evaluator = output_evaluator
+        self._event_bus: EventBusPort = event_bus or _NoOpEventBus()
+        self._max_retries = max_validation_retries
+        # Sprint-018 (V4 Ch3): AI Governance is a mandatory gate, not an
+        # optional/additive wiring like every Sprint-013-017 integration —
+        # ConversationEngine cannot be constructed without one, so every
+        # LLM output this engine ever produces passes through it before TTS.
+        self._ai_governance_service = ai_governance_service
+        self._pipeline = TrueStreamingPipeline(ai_governance_service=ai_governance_service)
+        self._background_tasks: set[asyncio.Task[None]] = set()
+        # Sprint-016 (V3 Ch9 §9.12): background quality scoring runs through a
+        # bounded, fair-share WorkerPool at LOW priority instead of an
+        # unbounded `asyncio.ensure_future` fan-out, so a burst of turns can't
+        # spawn unbounded concurrent scoring work.
+        self._quality_scoring_pool = quality_scoring_pool or WorkerPool(max_workers=4)
+
+        # Sprint-015: reliability wiring. `idempotency_guard` and
+        # `snapshot_store` are optional so pre-Sprint-015 callers/tests keep
+        # working unchanged (matches the `event_bus or _NoOpEventBus()`
+        # precedent set in Sprint-013).
+        self._idempotency_guard = idempotency_guard
+        self._snapshot_store = snapshot_store
+        self._snapshot_every_n_turns = snapshot_every_n_turns
+        self._sessions: dict[str, ConversationSessionState] = {}
+
+        # Sprint-016: observability wiring (V3 Ch16 logging; Ch17 tracing).
+        # Both optional — None preserves pre-Sprint-016 behavior exactly.
+        self._structured_logger = structured_logger
+        self._tracer = tracer
+
+        # Sprint-017: PDP wiring (V4 Ch4). Optional — None preserves
+        # pre-Sprint-017 behavior (check_call_admission always PERMITs).
+        self._policy_engine_service = policy_engine_service
+
+        # Sprint-020 (V4 Ch13 §13.7 screen_input): detective-only — the Law
+        # of Authority remains the structural defense; this only flags known
+        # manipulation patterns for a SECURITY log line. Optional — None
+        # preserves pre-Sprint-020 behavior (no screening).
+        self._prompt_injection_detector = prompt_injection_detector
+
+        # Sprint-022 (V5 Ch4, RI-5): CustomerContext is assembled exactly once
+        # per call, at start_call() — never re-assembled mid-call. Optional
+        # (None preserves pre-Sprint-022 behavior: callers pass `context`
+        # explicitly to handle_turn(), as every test does today).
+        self._context_assembler = context_assembler
+        self._call_contexts: dict[str, CustomerContext] = {}
+
+        # Sprint-023 (V5 Ch7): optional live-transfer hook. None preserves
+        # pre-Sprint-023 behavior — ESCALATE remains prompt-guidance-only
+        # unless a caller explicitly invokes escalate_call().
+        self._contact_center_service = contact_center_service
+        self._call_campaign_ids: dict[str, str] = {}
+
+        # Sprint-025 Part-3 (V5 Ch14): AI Configuration resolution. Optional --
+        # None preserves pre-Sprint-025 behavior (resolve_runtime_config()
+        # returns an all-None RuntimeConfig when unwired).
+        self._model_config_service = model_config_service
+        self._prompt_versioning_service = prompt_versioning_service
+
+    def start_call(
+        self, tenant_id: TenantId, customer_id: str, call_id: str, campaign_id: str | None = None
+    ) -> CustomerContext:
+        """Assemble the authoritative CustomerContext once, at call start (V5 Ch4, RI-5).
+
+        The result is cached for ``call_id`` and reused by every subsequent
+        ``handle_turn()`` call in this session — ``CustomerContextAssembler
+        .assemble()`` is never invoked again for this call, and the returned
+        CustomerContext is itself frozen (pydantic), so nothing downstream can
+        mutate it.
+
+        ``campaign_id`` (Sprint-023, optional): when this call was dispatched
+        by a campaign (``CallDispatcher``), the campaign becomes the
+        authoritative source of the call — recorded here so
+        ``escalate_call()``/disposition recording can trace back to it.
+        ``None`` preserves pre-Sprint-023 behavior (a call not dispatched by
+        any campaign, e.g. an inbound call).
+
+        Raises:
+            RuntimeError: No ``context_assembler`` was configured for this engine.
+        """
+        if self._context_assembler is None:
+            raise RuntimeError("start_call() requires a context_assembler to be configured")
+        context = self._context_assembler.assemble(tenant_id, CustomerId(customer_id), call_id)
+        self._call_contexts[call_id] = context
+        if campaign_id is not None:
+            self._call_campaign_ids[call_id] = campaign_id
+        return context
+
+    def end_call(self, call_id: str) -> None:
+        """Release the cached CustomerContext (and campaign linkage) for a finished call."""
+        self._call_contexts.pop(call_id, None)
+        self._call_campaign_ids.pop(call_id, None)
+
+    def campaign_id_for_call(self, call_id: str) -> str | None:
+        """The campaign that dispatched ``call_id``, if any (Sprint-023)."""
+        return self._call_campaign_ids.get(call_id)
+
+    def resolve_runtime_config(self, tenant_id: TenantId, call_id: str) -> RuntimeConfig:
+        """Resolve this call's immutable runtime configuration before inference begins
+        (Sprint-025 Part-3, V5 Ch14): pinned Prompt Version (Campaign Management) and
+        Model Configuration (global default -> tenant override -> campaign override).
+
+        Callers (e.g. the runtime orchestrator that constructs each turn) may call
+        this once per call -- right after :meth:`start_call` -- to parameterize the
+        prompt/model selection for every turn in the call. This is a convenience
+        pre-flight check, not the enforcement point: :meth:`handle_turn` calls the
+        same underlying resolution on every turn regardless of whether a caller
+        remembers to call this method first, so a campaign-dispatched call cannot
+        reach inference without a pinned prompt version merely because an
+        orchestrator skipped this call (see :meth:`_require_pinned_prompt`).
+        """
+        campaign_id = self.campaign_id_for_call(call_id)
+        prompt_version = self._require_pinned_prompt(tenant_id, campaign_id)
+
+        model_config: ModelConfig | None = None
+        if self._model_config_service is not None:
+            model_config = self._model_config_service.resolve(tenant_id, campaign_id)
+
+        return RuntimeConfig(prompt_version=prompt_version, model_config=model_config)
+
+    def _require_pinned_prompt(self, tenant_id: TenantId, campaign_id: str | None) -> PromptVersion | None:
+        """Resolve (and enforce) the pinned prompt version for a campaign-dispatched call.
+
+        This is the actual authority for "every campaign execution path uses a
+        pinned published prompt version" (Sprint-025 Part-3) -- it is invoked from
+        :meth:`_handle_turn_impl` on every turn, not only when a caller explicitly
+        opts into :meth:`resolve_runtime_config`, so the guarantee holds regardless
+        of how the ``CampaignService`` instance that approved the campaign's
+        activation happened to be constructed elsewhere (``CampaignService.
+        activate()``'s own ``prompt_pins`` gate is defense-in-depth at the
+        administrative state-transition boundary; this is enforcement at the
+        point of actual inference).
+
+        Returns ``None`` when unwired (``prompt_versioning_service`` was never
+        supplied) or when the call was not dispatched by a campaign (``campaign_id
+        is None`` -- inbound calls remain unaffected). Raises
+        :class:`CampaignPromptNotPinnedError` when the call **is**
+        campaign-dispatched, AI Config **is** wired, and no prompt version has
+        been pinned for that campaign -- fails closed rather than silently
+        proceeding with unpinned, editable prompt text.
+        """
+        if self._prompt_versioning_service is None or campaign_id is None:
+            return None
+        prompt_version = self._prompt_versioning_service.pinned_version(tenant_id, campaign_id)
+        if prompt_version is None:
+            raise CampaignPromptNotPinnedError(
+                f"campaign {campaign_id} has no pinned prompt version -- "
+                "call cannot proceed without one (V5 Ch14 immutable Prompt Version requirement)"
+            )
+        return prompt_version
+
+    def escalate_call(
+        self,
+        tenant_id: TenantId,
+        call_id: str,
+        reason: str,
+        *,
+        transcript: tuple[str, ...] = (),
+        ai_summary: str = "",
+        open_issues: tuple[str, ...] = (),
+        required_skills: tuple[str, ...] = (),
+    ) -> TransferResult:
+        """Transfer this call from AI to a human agent (V5 Ch7 — ESCALATE / REQUIRE_HUMAN).
+
+        Uses the CustomerContext cached by ``start_call()`` — the same
+        authoritative snapshot the AI has been using all call — to assemble
+        the agent's ``AgentScreenContext``.
+
+        Raises:
+            RuntimeError: No ``contact_center_service`` was configured, or
+                ``start_call()`` was never invoked for this ``call_id``.
+        """
+        if self._contact_center_service is None:
+            raise RuntimeError("escalate_call() requires a contact_center_service to be configured")
+        context = self._call_contexts.get(call_id)
+        if context is None:
+            raise RuntimeError(f"escalate_call(): no CustomerContext cached for call_id={call_id!r}")
+        return self._contact_center_service.transfer_to_human(
+            tenant_id,
+            call_id,
+            reason,
+            context,
+            transcript=transcript,
+            ai_summary=ai_summary,
+            open_issues=open_issues,
+            required_skills=required_skills,
+        )
+
+    async def handle_turn(
+        self,
+        turn: TurnInput,
+        playback: PlaybackScheduler,
+        context: CustomerContext | None = None,
+        intent_history: list[str] | None = None,
+        identity_verified: bool = False,
+        silence_duration_ms: int = 0,
+    ) -> list[AudioClause]:
+        """Process one customer turn end-to-end.
+
+        Flow:
+          retrieve → CIL → prompt → (RI-4 commit) → LLM stream → TTS → playback
+
+        Args:
+            turn: Sealed TurnInput from the DialogueManager.
+            playback: PlaybackScheduler for the current call session.
+            context: Authoritative CustomerContext (None for tests).
+            intent_history: Recent intent label strings for loop detection.
+            identity_verified: Whether identity was verified for this call.
+            silence_duration_ms: Customer silence duration in milliseconds.
+
+        Returns:
+            List of all synthesised AudioClauses for this turn.
+        """
+        # Sprint-022: if the caller doesn't pass an explicit context, fall back
+        # to the one CustomerContextAssembler assembled once at start_call() —
+        # never re-assembled here, so the same frozen CustomerContext is reused
+        # for every turn in this call (RI-5).
+        if context is None:
+            context = self._call_contexts.get(turn.call_id)
+
+        if self._tracer is None:
+            return await self._handle_turn_impl(
+                turn, playback, context, intent_history, identity_verified, silence_duration_ms
+            )
+
+        with self._tracer.start_span(
+            "conversation_engine.handle_turn",
+            attributes={"call_id": turn.call_id, "turn_id": turn.turn_id, "tenant_id": turn.tenant_id},
+        ) as span:
+            trace_id = format(span.get_span_context().trace_id, "032x")
+            clauses = await self._handle_turn_impl(
+                turn, playback, context, intent_history, identity_verified, silence_duration_ms, trace_id=trace_id
+            )
+        return clauses
+
+    async def _handle_turn_impl(
+        self,
+        turn: TurnInput,
+        playback: PlaybackScheduler,
+        context: CustomerContext | None,
+        intent_history: list[str] | None,
+        identity_verified: bool,
+        silence_duration_ms: int,
+        trace_id: str = "",
+    ) -> list[AudioClause]:
+        """The actual per-turn pipeline — see :meth:`handle_turn` for the public contract."""
+        # Step 0 — Sprint-020 (V4 Ch13 §13.7): detective prompt-injection screen.
+        # Structural containment (Law of Authority) is the real defense; this
+        # only logs a SECURITY signal for monitoring/incident-response (Ch16/17).
+        if self._prompt_injection_detector is not None:
+            injection_verdict = self._prompt_injection_detector.detect(turn.transcript)
+            if injection_verdict.flagged and self._structured_logger is not None:
+                self._structured_logger.warning(
+                    "SECURITY: prompt injection pattern detected in customer utterance",
+                    tenant_id=turn.tenant_id,
+                    call_id=turn.call_id,
+                    matched_pattern=injection_verdict.matched_pattern,
+                )
+
+        # Step 0.5 — Sprint-025 Part-3 (V5 Ch14): a campaign-dispatched call may not
+        # proceed to inference without a pinned, immutable prompt version. Enforced
+        # here (not only at CampaignService.activate()) so every turn of every
+        # campaign-dispatched call is gated, regardless of what wired the
+        # CampaignService that approved the campaign's activation. Raises
+        # CampaignPromptNotPinnedError, failing this turn closed, if unpinned.
+        self._require_pinned_prompt(TenantId(turn.tenant_id), self._call_campaign_ids.get(turn.call_id))
+
+        # Step 1 — Knowledge retrieval.
+        snippets: list[Snippet] = await self._knowledge.retrieve(turn.transcript)
+
+        # Step 2 — CIL pipeline (all engines via injected protocol).
+        response_plan, decision_envelope = self._cil.assemble(
+            turn=turn,
+            context=context,
+            retrieval=snippets,
+            intent_history=intent_history,
+            identity_verified=identity_verified,
+            silence_duration_ms=silence_duration_ms,
+        )
+
+        # Step 3 — Build deterministic prompt.
+        prompt_text, _prompt_hash = self._prompt_builder.build(response_plan, context)
+
+        # Step 4 — RI-4: commit DecisionEnvelope before any external act.
+        # Sprint-015: publishing is the authoritative effect this turn
+        # performs — IdempotencyGuard makes a retried handle_turn() call for
+        # the same turn a no-op instead of double-publishing.
+        async def _publish_decision_envelope() -> str:
+            return await self._event_bus.publish(decision_envelope)
+
+        if self._idempotency_guard is not None:
+            idempotency_key = IdempotencyKeyBuilder.build(
+                call_id=CallId(turn.call_id),
+                turn_id=turn.turn_id,
+                effect_name="decision_envelope_publish",
+            )
+            entry_id = await self._idempotency_guard.execute_once(
+                TenantId(turn.tenant_id),
+                idempotency_key,
+                "decision_envelope",
+                _publish_decision_envelope,
+            )
+        else:
+            entry_id = await _publish_decision_envelope()
+
+        assert_ri4_commit_before_act(
+            event_committed=True,
+            action_name="tts_synthesis",
+        )
+
+        # Sprint-015: track this call's Recoverable session state and take a
+        # periodic snapshot (every `snapshot_every_n_turns` turns — V3 Ch6).
+        # `entry_id` is the real EventBus stream offset (not decision_envelope's
+        # own UUID) — EventTailReplay resumes from it via a literal Redis
+        # XRANGE, which rejects anything that is not a genuine stream ID.
+        session = self._sessions.setdefault(turn.call_id, ConversationSessionState(CallId(turn.call_id)))
+        session.record_turn(
+            intent_label=intent_history[-1] if intent_history else None,
+            event_offset=entry_id,
+        )
+        if self._snapshot_store is not None and session.turn_count % self._snapshot_every_n_turns == 0:
+            self._snapshot_store.take_snapshot(session, TenantId(turn.tenant_id), CallId(turn.call_id))
+
+        # Step 5 — Stream LLM → validate → TTS → playback.
+        all_clauses: list[AudioClause] = []
+        full_output_text = ""
+
+        token_stream = await self._llm.generate_stream(
+            prompt=prompt_text,
+            response_plan=response_plan,
+            max_tokens=response_plan.delivery.max_response_tokens,
+        )
+
+        clauses = await self._pipeline.run(
+            token_stream=token_stream,
+            response_plan=response_plan,
+            tts_service=self._tts,
+            validator=self._validator,
+            playback=playback,
+        )
+        all_clauses.extend(clauses)
+        full_output_text = " ".join(c.text for c in all_clauses)
+
+        # Step 6 — Async quality scoring (fire-and-forget, non-blocking).
+        # Sprint-016: dispatched through the bounded WorkerPool at LOW
+        # priority — a burst of turns queues fairly instead of spawning
+        # unbounded concurrent scoring tasks (V3 Ch9 §9.12).
+        if self._evaluator is not None:
+
+            async def _score() -> None:
+                await self._async_quality_score(turn, full_output_text, response_plan)
+
+            task = asyncio.ensure_future(self._quality_scoring_pool.submit(_score, Priority.LOW))
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
+
+        logger.info(
+            "ConversationEngine: turn %s complete — %d clauses, plan=%s",
+            turn.turn_id,
+            len(all_clauses),
+            response_plan.plan_id,
+        )
+        if self._structured_logger is not None:
+            self._structured_logger.info(
+                "turn complete",
+                tenant_id=turn.tenant_id,
+                call_id=turn.call_id,
+                trace_id=trace_id,
+                correlation_id=turn.turn_id,
+                clause_count=len(all_clauses),
+                plan_id=response_plan.plan_id,
+            )
+        return all_clauses
+
+    def check_call_admission(
+        self,
+        tenant_id: str,
+        call_id: str,
+        hour: int | None = None,
+        calls_today_count: int = 0,
+    ) -> PolicyDecision:
+        """Query the Policy Engine for RBI call-admission (Sprint-017 integration wiring).
+
+        Callers invoke this before call start (turn_index == 0); a DENY
+        outcome (outside calling hours, or the daily call-frequency cap
+        reached) means the call must not proceed. Returns an unconditional
+        PERMIT when no ``PolicyEngineService`` is wired — this method is
+        purely additive and does not change ``handle_turn`` behavior.
+        """
+        if self._policy_engine_service is None:
+            return PolicyDecision(outcome=PolicyOutcome.PERMIT, reason="no PolicyEngineService wired")
+        return self._policy_engine_service.check_call_admission(
+            tenant_id=tenant_id,
+            call_id=call_id,
+            hour=hour,
+            calls_today_count=calls_today_count,
+        )
+
+    def get_session_state(self, call_id: str) -> ConversationSessionState | None:
+        """Return the tracked Recoverable session state for ``call_id``, if any.
+
+        Used by ``RecoveryManager``/``CPURestartStrategy`` (Sprint-015) to
+        snapshot or restore a call's session state around a crash.
+        """
+        return self._sessions.get(call_id)
+
+    async def _async_quality_score(
+        self,
+        turn: TurnInput,
+        llm_output: str,
+        response_plan: ResponsePlan,
+    ) -> None:
+        """Score output quality and record in the ConversationQualityScorer."""
+        if self._evaluator is None:
+            return
+        try:
+            score = self._evaluator.score(turn, llm_output, response_plan)
+            self._quality.record_turn_score(
+                turn_id=turn.turn_id,
+                call_id=turn.call_id,
+                coherence=score.coherence,
+                policy_compliance=score.policy_compliance,
+                empathy=score.empathy,
+                factual_accuracy=score.factual_accuracy,
+            )
+        except Exception:
+            logger.exception("ConversationEngine: quality scoring failed for turn %s", turn.turn_id)

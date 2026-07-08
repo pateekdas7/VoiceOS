@@ -1,0 +1,14 @@
+{{- if and .Values.saasOps.enabled .Values.saasOps.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "voiceos-platform.saasOps.fullname" . }}
+  namespace: {{ .Values.saasOps.namespace }}
+  labels:
+    {{- include "voiceos-platform.saasOps.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.saasOps.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "voiceos-platform.saasOps.selectorLabels" . | nindent 6 }}
+{{- end }}

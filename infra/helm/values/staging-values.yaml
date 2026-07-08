@@ -1,0 +1,259 @@
+# staging-values.yaml -- environment overrides for the voiceos-platform umbrella chart (Sprint-026)
+# Applied via: helm upgrade --install voiceos-platform infra/helm/voiceos-platform/ -f infra/helm/values/staging-values.yaml
+
+global:
+  environment: staging
+
+saasOps:
+  replicaCount: 2
+
+admin-portal:
+  environment: staging
+  replicaCount: 2
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 4
+
+ai-config:
+  environment: staging
+  replicaCount: 2
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 4
+
+ai-governance:
+  environment: staging
+  replicaCount: 2
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 4
+
+analytics:
+  environment: staging
+  replicaCount: 2
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 4
+
+api-platform:
+  environment: staging
+  replicaCount: 2
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 4
+
+audio-preprocessing:
+  environment: staging
+  replicaCount: 2
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 4
+
+auth:
+  environment: staging
+  replicaCount: 2
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 4
+
+authz:
+  environment: staging
+  replicaCount: 2
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 4
+
+billing:
+  environment: staging
+  replicaCount: 2
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 4
+
+campaign-management:
+  environment: staging
+  replicaCount: 2
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 4
+
+collections:
+  environment: staging
+  replicaCount: 2
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 4
+
+contact-center:
+  environment: staging
+  replicaCount: 2
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 4
+
+conversation-engine:
+  environment: staging
+  replicaCount: 2
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 4
+
+crm:
+  environment: staging
+  replicaCount: 2
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 4
+
+dialogue-manager:
+  environment: staging
+  replicaCount: 2
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 4
+
+gpu-scheduler:
+  environment: staging
+  replicaCount: 2
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 4
+
+integration-platform:
+  environment: staging
+  replicaCount: 2
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 4
+
+llm-runtime:
+  environment: staging
+  replicaCount: 2
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 4
+
+media-gateway:
+  environment: staging
+  replicaCount: 2
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 4
+
+metering:
+  environment: staging
+  replicaCount: 2
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 4
+
+policy-engine:
+  environment: staging
+  replicaCount: 2
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 4
+
+stt:
+  environment: staging
+  replicaCount: 2
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 4
+
+tenant-management:
+  environment: staging
+  replicaCount: 2
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 4
+
+tts:
+  environment: staging
+  replicaCount: 2
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 4
+
+vad-endpointing:
+  environment: staging
+  replicaCount: 2
+  resources:
+    cpu: "500m"
+    memory: "512Mi"
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 4
+

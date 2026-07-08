@@ -1,0 +1,65 @@
+# VoiceOS v2 -- OpenTelemetry Collector configuration (Sprint-027.md).
+#
+# Receives OTLP from every service's OTelTracer (src/libs/observability/tracer.py,
+# Sprint-016 -- trace_id propagation end-to-end) and exports to Jaeger for
+# storage/UI. Also receives OTLP from the GPU node (STT/LLM/TTS), which is
+# not a cluster member (TT-015) and so exports directly over the network
+# rather than via an in-cluster sidecar.
+#
+# Architecture: V7 Ch10 (Tracing).
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+
+  # PII must never reach a trace attribute (Law of Authority / DPDP) --
+  # defense-in-depth alongside the application-level discipline of never
+  # setting a raw customer-fact span attribute in the first place.
+  attributes/redact:
+    actions:
+      - key: customer.phone
+        action: delete
+      - key: customer.account_number
+        action: delete
+      - key: customer.name
+        action: delete
+
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: dev
+        action: upsert
+
+exporters:
+  otlp/jaeger:
+    endpoint: jaeger-collector.voiceos-ops.svc.cluster.local:4317
+    tls:
+      insecure: true
+
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    namespace: otelcol
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [attributes/redact, resource, batch]
+      exporters: [otlp/jaeger]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]
+
+  telemetry:
+    logs:
+      level: info

@@ -1,0 +1,183 @@
+{
+  "id": null,
+  "uid": "voiceos-call-funnel",
+  "title": "VoiceOS / Call Funnel",
+  "description": "Calls started through VAD, STT, CIL, TTS to completion.",
+  "tags": [
+    "voiceos",
+    "call-funnel"
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "timezone": "utc",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "refresh": "30s",
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "label": "Datasource"
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Call Funnel: Connect -> VAD -> STT -> CIL -> TTS -> Completed",
+      "type": "barchart",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 10
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(voiceos_call_funnel_stage_total{stage=\"calls_started\"}[1h]))",
+          "legendFormat": "calls_started",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "expr": "sum(increase(voiceos_call_funnel_stage_total{stage=\"vad_detected\"}[1h]))",
+          "legendFormat": "vad_detected",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "expr": "sum(increase(voiceos_call_funnel_stage_total{stage=\"stt_transcribed\"}[1h]))",
+          "legendFormat": "stt_transcribed",
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "expr": "sum(increase(voiceos_call_funnel_stage_total{stage=\"cil_decided\"}[1h]))",
+          "legendFormat": "cil_decided",
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "expr": "sum(increase(voiceos_call_funnel_stage_total{stage=\"tts_synthesized\"}[1h]))",
+          "legendFormat": "tts_synthesized",
+          "refId": "E",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "expr": "sum(increase(voiceos_call_funnel_stage_total{stage=\"calls_completed\"}[1h]))",
+          "legendFormat": "calls_completed",
+          "refId": "F",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 2,
+      "title": "Funnel Drop-off Rate by Stage",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 10,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "expr": "1 - (sum(increase(voiceos_call_funnel_stage_total{stage=\"vad_detected\"}[1h])) / sum(increase(voiceos_call_funnel_stage_total{stage=\"calls_started\"}[1h])))",
+          "legendFormat": "calls_started->vad_detected",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "expr": "1 - (sum(increase(voiceos_call_funnel_stage_total{stage=\"stt_transcribed\"}[1h])) / sum(increase(voiceos_call_funnel_stage_total{stage=\"vad_detected\"}[1h])))",
+          "legendFormat": "vad_detected->stt_transcribed",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "expr": "1 - (sum(increase(voiceos_call_funnel_stage_total{stage=\"cil_decided\"}[1h])) / sum(increase(voiceos_call_funnel_stage_total{stage=\"stt_transcribed\"}[1h])))",
+          "legendFormat": "stt_transcribed->cil_decided",
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "expr": "1 - (sum(increase(voiceos_call_funnel_stage_total{stage=\"tts_synthesized\"}[1h])) / sum(increase(voiceos_call_funnel_stage_total{stage=\"cil_decided\"}[1h])))",
+          "legendFormat": "cil_decided->tts_synthesized",
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "expr": "1 - (sum(increase(voiceos_call_funnel_stage_total{stage=\"calls_completed\"}[1h])) / sum(increase(voiceos_call_funnel_stage_total{stage=\"tts_synthesized\"}[1h])))",
+          "legendFormat": "tts_synthesized->calls_completed",
+          "refId": "E",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {}
+    }
+  ]
+}

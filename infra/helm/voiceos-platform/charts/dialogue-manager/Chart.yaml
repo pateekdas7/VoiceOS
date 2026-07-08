@@ -1,0 +1,6 @@
+apiVersion: v2
+name: dialogue-manager
+description: "Turn coordination: barge-in, turn yield, backchannel gating"
+type: application
+version: 0.1.0
+appVersion: "2.0.0"

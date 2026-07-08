@@ -1,0 +1,195 @@
+# ==============================================================================
+# VoiceOS GPU Node — Model Manifest
+# Defines all AI models, their download sources, local paths, and VRAM budgets.
+# Updated after every sprint that introduces GPU model changes.
+# Used by restore.sh → download_models.py to rebuild the GPU node.
+# ==============================================================================
+
+manifest_version: "1.2"
+last_updated: "Sprint-009 Phase 2 complete (2026-07-03)"
+
+# ── GPU node hardware ─────────────────────────────────────────────────────────
+gpu:
+  model: "NVIDIA L4"
+  vram_mb: 23034
+  driver_version: "580.126.20"
+  cuda_version: "13.0"          # spec ≥ 12.1 — 13.0 is backward-compatible
+
+# ── Runtime stack (pinned versions) ──────────────────────────────────────────
+runtime:
+  python: "3.12.13"
+  torch: "2.11.0+cu130"
+  cuda: "13.0"
+  cudnn: "9.19.0"               # available via torch.backends.cudnn
+  vllm: "0.24.0"
+  faster_whisper: "1.2.1"
+  ctranslate2: "4.8.0"
+  transformers: "5.12.1"
+  tokenizers: "0.22.2"
+  flashinfer: "0.6.12"
+  triton: "3.6.0"
+  numpy: "2.3.5"
+
+# ── VRAM budget ───────────────────────────────────────────────────────────────
+# Actual GPU capacity: 23,034 MB
+# Three-model allocation (MEASURED Sprint-009 Phase 2, 2026-07-03):
+#   Whisper int8_float16:  1,242 MB loaded  (6,144 MB reserved in scheduler for headroom)
+#   Qwen FP8 (vLLM @0.55): 12,628 MB        (16,384 MB reserved)
+#   Veena 3B BF16 + SNAC:  7,980 MB         (2,048 MB reserved)
+#   Measured total:        21,850 MB used / 695 MB free
+#   vLLM util reduced 0.70 → 0.55 to make room for Veena 3B BF16 (larger than the 2 GB estimate).
+vram_budget_mb: 23034
+vram_budget_spec_mb: 24576
+vram_measured_used_mb: 21850   # Sprint-009 Phase 2, all three services running
+
+# ── Models ────────────────────────────────────────────────────────────────────
+# PRODUCTION BASELINE — locked 2026-07-02.
+# Do NOT change model names, repos, or quantization without explicit approval.
+models:
+
+  # ── STT: Whisper Large-v3 Turbo ────────────────────────────────────────────
+  - name: whisper-large-v3-turbo
+    purpose: Speech-to-Text (STT)
+    introduced_in: Sprint-009
+
+    # IMPORTANT: faster-whisper 1.2.1 maps the size string "large-v3-turbo"
+    # to mobiuslabsgmbh/faster-whisper-large-v3-turbo (CTranslate2-format binary).
+    # download_models.py uses faster_whisper.download_model(), NOT huggingface_hub.
+    # The openai/whisper-large-v3-turbo safetensors repo is NOT used here.
+    local_path: /opt/voiceos-gpu/models/whisper-large-v3-turbo/
+    cache_path: /opt/voiceos-gpu/cache/whisper/
+
+    download:
+      method: faster_whisper
+      model_size: large-v3-turbo
+      # Resolves to: mobiuslabsgmbh/faster-whisper-large-v3-turbo
+      # Actual HF host: dropbox-dash/faster-whisper-large-v3-turbo
+      download_size_mb: 1547       # model.bin 1,542.9 MB + tokenizer files
+      format: ctranslate2          # pre-converted binary, NOT safetensors
+
+    # compute_type is a runtime parameter to WhisperModel(), not a download option.
+    # FP8 is NOT supported by CTranslate2 4.8.0 on NVIDIA L4 (SM 8.9).
+    # int8_float16 is the most memory-efficient available compute type.
+    compute_type: int8_float16     # INT8 weights, FP16 activations
+
+    vram_mb: 6144                  # scheduler reservation; actual loaded: 1,242 MB (measured)
+    port: 8100
+    server_script: /opt/voiceos-gpu/services/stt/server.py   # Sprint-009 FastAPI wrapper
+    endpoints: ["/health/live", "/health/ready", "/transcribe"]
+    health_check: "curl -sf http://localhost:8100/health/ready"
+    latency_target_ms:
+      first_word_p95: 500
+    measured_latency_ms: 330       # Sprint-009 Phase 2 on synthetic audio
+    streaming: true
+
+  # ── LLM: Qwen2.5-7B FP8 ───────────────────────────────────────────────────
+  - name: qwen2.5-7b-instruct-fp8
+    purpose: LLM response generation
+    introduced_in: Sprint-009
+
+    # IMPORTANT: Qwen/Qwen2.5-7B-Instruct-FP8 does NOT exist on HuggingFace.
+    # RedHatAI/Qwen2.5-7B-Instruct-FP8-dynamic is the production-ready FP8 repo:
+    #   - Actively maintained (last updated 2026-06-09)
+    #   - W8A8 FP8: weights=float8 (channel-sym), activations=float8 (token-sym dynamic)
+    #   - Uses compressed-tensors format, auto-detected by vLLM
+    #   - No --dtype or --quantization flag needed; vLLM reads quantization_config
+    local_path: /opt/voiceos-gpu/models/qwen2.5-7b-fp8/
+    cache_path: /opt/voiceos-gpu/cache/qwen/
+
+    download:
+      method: huggingface
+      repo_id: RedHatAI/Qwen2.5-7B-Instruct-FP8-dynamic
+      download_size_mb: 8306       # two safetensors shards: 4755 + 3551 MB
+      format: safetensors
+      ignore_patterns:
+        - "*.pt"
+        - "*.gguf"
+
+    startup:
+      # No --dtype or --quantization flags: vLLM auto-detects compressed-tensors FP8
+      # from the model's quantization_config in config.json.
+      # --dtype auto reads torch_dtype=bfloat16 from model config (non-quantized ops).
+      command: >
+        /opt/voiceos-gpu/venv/bin/vllm serve /opt/voiceos-gpu/models/qwen2.5-7b-fp8/
+          --dtype auto
+          --port 8000
+          --max-model-len 4096
+          --gpu-memory-utilization 0.55
+          --served-model-name qwen2.5-7b-instruct-fp8
+
+    # NOTE: --gpu-memory-utilization reduced 0.70 → 0.55 and --max-model-len 8192 → 4096
+    # in Sprint-009 Phase 2 to fit Veena 3B BF16 (7,980 MB) alongside on the 23 GB L4.
+    vram_mb: 16384                 # scheduler reservation; measured footprint 12,628 MB @0.55
+    port: 8000
+    health_check: "curl -sf http://localhost:8000/health"
+    latency_target_ms:
+      ttft_p95: 500
+    measured_ttft_ms: 208          # Sprint-009 Phase 2
+    streaming: true
+
+  # ── TTS: Veena (3B BF16) + SNAC 24 kHz codec ───────────────────────────────
+  - name: veena-tts
+    purpose: Text-to-Speech (TTS) — Hindi/Hinglish/English
+    introduced_in: Sprint-009
+
+    local_path: /opt/voiceos-gpu/models/veena-fp16/    # dir name retained; weights are BF16
+    cache_path: /opt/voiceos-gpu/cache/
+
+    download:
+      # Sprint-009 Phase 2: internal registry (models.voiceos.internal/veena-fp16) was
+      # unavailable (requires VPN). Switched to the public maya-research/Veena repo.
+      # Veena is a 3B LlamaForCausalLM that emits SNAC codec tokens (BF16, NOT FP16).
+      method: huggingface
+      repo_id: maya-research/Veena
+      precision: bfloat16
+      format: safetensors
+      params: 3B
+
+    # SNAC codec is a required companion — decodes Veena's 7-token-per-frame output.
+    companion_codec:
+      name: snac-24khz
+      repo_id: hubertsiuzdak/snac_24khz
+      local_path: /opt/voiceos-gpu/models/snac-24khz/
+      vq_strides: [4, 2, 1]        # → 1 + 2 + 4 = 7 tokens per frame
+      codebook_size: 4096
+      sample_rate: 24000
+
+    # Veena token layout (verified against maya-research/Veena reference):
+    veena_tokens:
+      start_of_speech: 128257
+      end_of_speech: 128258
+      start_of_human: 128259
+      end_of_human: 128260
+      start_of_ai: 128261
+      end_of_ai: 128262
+      audio_code_base_offset: 128266
+      prompt_format: "<spk_{speaker}> {text}"
+      speakers: [kavya, agastya, maitri, vinaya]   # kavya = default
+
+    vram_mb: 2048                  # scheduler reservation; actual Veena 3B + SNAC = 7,980 MB
+    port: 8200
+    server_script: /opt/voiceos-gpu/services/tts/server.py   # Sprint-009 FastAPI wrapper
+    endpoints: ["/health/live", "/health/ready", "/synthesize"]
+    health_check: "curl -sf http://localhost:8200/health/ready"
+    latency_target_ms:
+      first_clause_p95: 300
+    measured_rtf_warm: 2.3         # autoregressive; mitigated by clause-level streaming
+    streaming: true                # clause-level (Veena has no within-clause token streaming)
+
+# ── Startup order ──────────────────────────────────────────────────────────────
+# vLLM startup takes ~90s (start first). Whisper ~7s. Veena + SNAC ~28s.
+# Launch each with `setsid ... < /dev/null` so it survives SSH disconnect.
+startup_order:
+  - qwen2.5-7b-instruct-fp8       # vLLM ~90s startup — start first
+  - whisper-large-v3-turbo        # 1,242 MB loaded — ~7s start
+  - veena-tts                     # Veena 3B + SNAC — ~28s start
+
+# ── Post-restore validation ────────────────────────────────────────────────────
+post_restore_validation:
+  vram_check: true
+  latency_check: true
+  streaming_check: true
+  commands:
+    - "/opt/voiceos-gpu/venv/bin/python deployment/validate_latency.py --test stt"
+    - "/opt/voiceos-gpu/venv/bin/python deployment/validate_latency.py --test llm"
+    - "/opt/voiceos-gpu/venv/bin/python deployment/validate_latency.py --test tts"

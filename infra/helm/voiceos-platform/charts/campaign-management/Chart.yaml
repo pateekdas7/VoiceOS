@@ -1,0 +1,6 @@
+apiVersion: v2
+name: campaign-management
+description: "Campaign lifecycle, audience selection, scheduling"
+type: application
+version: 0.1.0
+appVersion: "2.0.0"

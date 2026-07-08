@@ -1,0 +1,6 @@
+apiVersion: v2
+name: conversation-engine
+description: "Full CIL orchestration (ConversationEngine)"
+type: application
+version: 0.1.0
+appVersion: "2.0.0"

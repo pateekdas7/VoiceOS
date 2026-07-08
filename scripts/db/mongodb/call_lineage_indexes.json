@@ -1,0 +1,45 @@
+[
+  {
+    "collection": "call_lineage",
+    "comment": "Architecture: V3 Ch6 (Event Lineage / Causal Graph); V3 Ch7 (Replay). Call lineage documents capture the ordered event sequence for each call, enabling deterministic replay and forensic analysis. Each document corresponds to one call and embeds a chronological array of events with their correlation and causation IDs.",
+    "indexes": [
+      {
+        "name": "idx_cl_call_id",
+        "keys": { "call_id": 1 },
+        "options": { "unique": true, "background": true }
+      },
+      {
+        "name": "idx_cl_tenant_call",
+        "keys": { "tenant_id": 1, "call_id": 1 },
+        "options": { "background": true }
+      },
+      {
+        "name": "idx_cl_tenant_started_at",
+        "keys": { "tenant_id": 1, "started_at": -1 },
+        "options": { "background": true }
+      },
+      {
+        "name": "idx_cl_correlation_id",
+        "keys": { "events.correlation_id": 1 },
+        "options": {
+          "background": true,
+          "comment": "Supports cross-call correlation queries (e.g. tracing a session across retried calls)."
+        }
+      },
+      {
+        "name": "idx_cl_event_type",
+        "keys": { "tenant_id": 1, "events.event_type": 1, "started_at": -1 },
+        "options": { "background": true }
+      },
+      {
+        "name": "idx_cl_ttl",
+        "keys": { "created_at": 1 },
+        "options": {
+          "expireAfterSeconds": 7776000,
+          "background": true,
+          "comment": "Sprint-014: TTL retention — 90 days per V4 Ch11.3 (added; missing since Sprint-002)."
+        }
+      }
+    ]
+  }
+]
