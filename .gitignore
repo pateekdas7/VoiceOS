@@ -32,6 +32,7 @@ credentials.json
 
 # Generated local artifacts
 *.wav
+!tests/audio_clips/*.wav
 *.log
 
 # Editor / OS
