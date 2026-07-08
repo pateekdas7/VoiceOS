@@ -206,6 +206,20 @@ dev = [
     # promoted to core dependencies in Sprint-014 (see above) since it is now
     # imported by production repository code, not just test fixtures.
     "pymongo>=4.7",
+    # Sprint-028: Load Testing (tests/load/locustfile.py) -- Sprint-028.md's
+    # own literal "Tool: Locust or k6" choice.
+    # Purpose: drives the 500-concurrent-simulated-call load test against
+    #          the GPU node's real STT/LLM/TTS HTTP inference endpoints
+    #          (deployment/gpu/services/), reporting p95/error-rate against
+    #          the sprint's own AC gates.
+    # Benefits: pure-Python load generator (no separate Go/JS toolchain
+    #          required, unlike k6); first-class Python `User`/`HttpUser`
+    #          classes let the load script model a call turn (STT -> LLM ->
+    #          TTS) directly, not just a single flat HTTP request.
+    # Risks: test-only dependency (never imported by src/), no production
+    #          runtime surface; adds ~5 MB + gevent to the dev install.
+    # Maintenance: Active (Locust core team); MIT license.
+    "locust>=2.29",
 ]
 
 [tool.setuptools.packages.find]
@@ -352,4 +366,8 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["yaml", "yaml.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["locust", "locust.*"]
 ignore_missing_imports = true

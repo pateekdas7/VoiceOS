@@ -3,3 +3,12 @@
 # This file exists to make ruff discoverable when running standalone.
 
 extend = "pyproject.toml"
+
+[lint.per-file-ignores]
+# Sprint-028.md's own literal path is `tests/chaos/chaos-scenarios.py` --
+# hyphenated (not a valid Python module name) same as several prior sprints'
+# dashed-path deliverables; unlike those (renamed to underscores, since they
+# are *imported* packages), this file is a standalone script, never
+# `import`-ed, so it keeps the literal spec filename and only needs N999
+# suppressed.
+"tests/chaos/chaos-scenarios.py" = ["N999"]

@@ -64,9 +64,9 @@ class TestMigrationUpgradeDowngrade:
         os.environ["POSTGRES_DSN"] = scratch_dsn
         cfg = Config("alembic.ini")
 
-        # Upgrade from empty database to head — all 20 revisions apply cleanly.
+        # Upgrade from empty database to head — all 27 revisions apply cleanly.
         command.upgrade(cfg, "head")
-        assert _current_revision(scratch_dsn) == "0026"
+        assert _current_revision(scratch_dsn) == "0027"
         assert _table_exists(scratch_dsn, "tenants")
         assert _table_exists(scratch_dsn, "usage_events")
         assert _table_exists(scratch_dsn, "snapshots")
@@ -98,6 +98,7 @@ class TestMigrationUpgradeDowngrade:
         assert _table_exists(scratch_dsn, "tenant_rollout_rings")
         assert _table_exists(scratch_dsn, "fleet_versions")
         assert _table_exists(scratch_dsn, "tenant_migrations")
+        assert _table_exists(scratch_dsn, "performance_baselines")
 
         # Downgrade all the way back to base — every revision's downgrade() runs
         # in reverse order without error.
@@ -134,10 +135,11 @@ class TestMigrationUpgradeDowngrade:
         assert not _table_exists(scratch_dsn, "tenant_rollout_rings")
         assert not _table_exists(scratch_dsn, "fleet_versions")
         assert not _table_exists(scratch_dsn, "tenant_migrations")
+        assert not _table_exists(scratch_dsn, "performance_baselines")
 
         # Upgrade again successfully — revisions are re-runnable from empty.
         command.upgrade(cfg, "head")
-        assert _current_revision(scratch_dsn) == "0026"
+        assert _current_revision(scratch_dsn) == "0027"
         assert _table_exists(scratch_dsn, "tenants")
         assert _table_exists(scratch_dsn, "customers")
         assert _table_exists(scratch_dsn, "loan_accounts")
@@ -159,6 +161,7 @@ class TestMigrationUpgradeDowngrade:
         assert _table_exists(scratch_dsn, "campaign_results")
         assert _table_exists(scratch_dsn, "hitl_queue")
         assert _table_exists(scratch_dsn, "hitl_decisions")
+        assert _table_exists(scratch_dsn, "performance_baselines")
 
 
 def _current_revision(dsn: str) -> str | None:
