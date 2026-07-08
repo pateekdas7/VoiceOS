@@ -16,10 +16,13 @@ Six new gaps not previously tracked, none contradicting the existing (largely ac
 ### Fixed
 
 - **TT-018 resolved same day:** `infra/k8s/cluster-addons/metrics-server.yaml` (new — upstream `metrics-server` v0.7.2, `--kubelet-insecure-tls` patch for this self-signed kubeadm cluster) applied to the live cluster (user-approved, cluster-wide RBAC). Verified: `kubectl top nodes/pods` now return real data; 25/26 HPAs report real `cpu: N%/70%` targets instead of `<unknown>` (the 26th, `gpu-scheduler`, needs a separate custom-metrics adapter — already tracked, same class as TT-006/TT-017).
+- **TT-020 resolved same day (user-approved):** `temporary.pem` moved out of the repo root to `~/.ssh/temporary.pem` (`chmod 600`); the 3 operational doc references (`GPU_NODE_STATE.md`, `infra/dr/runbooks/gpu-node-failure.md`, `ADR-001-vllm-tts-streaming.md`) updated to the new path. `DONE.md`'s historical Sprint-011 mention left untouched (append-only history).
+- **TT-022 resolved same day:** `sso_stub.py`'s four stale "ships in Sprint-025" references corrected to "Sprint-032," matching the actual SSO/SCIM rescoping already reflected in `BACKLOG.md`'s Epic table. Documentation-only, no behavior change; confirmed no test asserts on the old string.
+- **TT-021 partially resolved same day (user-approved):** repository brought under git for the first time — new root `.gitignore` (excludes venvs/caches/`*.pem`/`*.key`/`.env`/generated `*.wav`/`*.log`), `git add -A` reviewed for secrets (none found — only `.env.example` templates and legitimate secrets-management library code), one initial commit (`ac2ec2a`). **Deliberately not pushed anywhere yet** — no remote configured; that decision, and the resulting first real CI run, is deferred pending your choice of remote.
 
-### Not fixed this session (deferred, see BACKLOG.md for detail)
+### Still open (see BACKLOG.md for full detail)
 
-TT-019 (needs load-test observation once metrics exist), TT-020 (needs user decision on key relocation/rotation), TT-021 (needs `git init` + real remote — foundational, recommend prioritizing), TT-022/TT-023 (low urgency, ride along with Sprint-032/030). **Sprint-028 itself remains un-started per explicit standing instruction in `CURRENT_SPRINT.md`.**
+TT-019 (needs load-test observation once metrics exist), TT-021's remaining half (remote + first real CI run), TT-023 (needs real payment-gateway credentials, timed to Sprint-030). **Sprint-028 itself remains un-started per explicit standing instruction in `CURRENT_SPRINT.md`.**
 
 ---
 
