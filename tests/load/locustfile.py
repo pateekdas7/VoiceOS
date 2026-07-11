@@ -146,15 +146,33 @@ class FullCallUser(HttpUser):
     def _call_tts_first_clause(self, call_id: str, _preceding_ttft_ms: float) -> None:
         transcript = _TEST_TRANSCRIPTS[hash(call_id) % len(_TEST_TRANSCRIPTS)]
         payload = {"text": transcript, "speaker": "kavya"}
-        with self.client.post(
-            f"{TTS_URL}/synthesize",
-            json=payload,
-            name="/synthesize (TTS first clause)",
-            catch_response=True,
-            stream=True,
-        ) as response:
-            if response.status_code != 200:
-                response.failure(f"TTS /synthesize returned {response.status_code}")
+        start = time.perf_counter()
+        ttfa_ms: float | None = None
+        exception: Exception | None = None
+
+        try:
+            resp = self.client.post(f"{TTS_URL}/synthesize", json=payload, stream=True)
+            resp.raise_for_status()
+            for chunk in resp.iter_content(chunk_size=None):
+                if chunk and ttfa_ms is None:
+                    ttfa_ms = (time.perf_counter() - start) * 1000.0
+                # Drain full response — do NOT break early. The server runs Veena in a
+                # background daemon thread; disconnecting early orphans that thread, causing
+                # concurrent synthesis contention on the GPU (observed: 15-17s TTFA vs
+                # 700ms baseline). Draining ensures the thread finishes before the next
+                # Locust iteration begins.
+        except Exception as exc:
+            exception = exc
+
+        # Fire event with TTFA (not full drain time) as the reported latency so
+        # Locust's p95 stat reflects time-to-first-audio, not full synthesis.
+        events.request.fire(  # type: ignore[no-untyped-call]
+            request_type="POST",
+            name="/synthesize (TTS TTFA)",
+            response_time=ttfa_ms if ttfa_ms is not None else (time.perf_counter() - start) * 1000.0,
+            response_length=0,
+            exception=exception,
+        )
 
 
 class HealthPollUser(HttpUser):

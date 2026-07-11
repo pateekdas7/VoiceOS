@@ -141,20 +141,26 @@ def measure_llm_ttft(client: httpx.Client, llm_url: str, text: str) -> float:
 
 
 def measure_tts_ttfa(client: httpx.Client, tts_url: str, text: str) -> float:
-    """Stream Veena /synthesize. Returns time-to-first-audio-bytes ms (client-side)."""
+    """Stream Veena /synthesize. Returns time-to-first-audio-bytes ms (client-side).
+
+    IMPORTANT: The full response is drained before returning. Disconnecting after
+    the first chunk leaves the server-side Veena generation thread running, causing
+    concurrent synthesis contention on the GPU (observed: 15-17s vs 650ms baseline).
+    Draining ensures the generation thread completes before the next call begins.
+    """
     t0 = time.perf_counter()
     ttfa_ms = 0.0
     with client.stream(
         "POST",
         f"{tts_url}/synthesize",
         json={"text": text, "speaker": "kavya"},
-        timeout=60.0,
+        timeout=120.0,
     ) as resp:
         resp.raise_for_status()
         for chunk in resp.iter_bytes():
-            if chunk:
+            if chunk and ttfa_ms == 0.0:
                 ttfa_ms = (time.perf_counter() - t0) * 1000
-                break
+            # Drain full response — do NOT break early; server thread must complete
     if ttfa_ms == 0.0:
         ttfa_ms = (time.perf_counter() - t0) * 1000
     return ttfa_ms
@@ -185,7 +191,8 @@ def main() -> int:
     stt_times: list[float] = []
     llm_times: list[float] = []
     tts_times: list[float] = []
-    total_times: list[float] = []
+    first_audio_times: list[float] = []  # stt_ms + llm_ms + tts_ttfa — the gate metric
+    total_times: list[float] = []        # full wall-clock including TTS synthesis drain
     errors: list[str] = []
 
     with httpx.Client() as client:
@@ -219,13 +226,19 @@ def main() -> int:
                 tts_ms = measure_tts_ttfa(client, tts_url, transcript)
                 tts_times.append(tts_ms)
 
+                # first_audio = time from call start to first playable audio byte
+                # = STT (speech recognition) + LLM TTFT + TTS TTFA
+                first_audio_ms = stt_ms + llm_ms + tts_ms
+                first_audio_times.append(first_audio_ms)
+
                 total_ms = (time.perf_counter() - call_start) * 1000
                 total_times.append(total_ms)
 
                 print(
                     f"[{i+1:03d}/{args.calls}] "
                     f"STT={stt_ms:.0f}ms  LLM={llm_ms:.0f}ms  TTS={tts_ms:.0f}ms  "
-                    f"total={total_ms:.0f}ms  text={transcript[:30]!r}"
+                    f"first_audio={first_audio_ms:.0f}ms  drain_total={total_ms:.0f}ms  "
+                    f"text={transcript[:30]!r}"
                 )
 
             except Exception as exc:
@@ -235,6 +248,7 @@ def main() -> int:
                 stt_times.append(9999.0) if not args.skip_stt else None
                 llm_times.append(9999.0)
                 tts_times.append(9999.0)
+                first_audio_times.append(9999.0)
                 total_times.append(9999.0)
 
     # Results
@@ -257,14 +271,15 @@ def main() -> int:
         _stats("STT (Whisper):", stt_times)
     _stats("LLM TTFT (Qwen):", llm_times)
     _stats("TTS TTFA (Veena):", tts_times)
-    _stats("TOTAL first-audio:", total_times)
+    _stats("FIRST-AUDIO (gate):", first_audio_times)
+    _stats("DRAIN TOTAL (info):", total_times)
 
     print()
-    total_p95 = _percentile(total_times, 0.95)
-    gate_label = "first-audio" if args.skip_stt else "STT+LLM+TTS"
-    gate_pass = total_p95 <= 1500.0
+    first_audio_p95 = _percentile(first_audio_times, 0.95)
+    gate_pass = first_audio_p95 <= 1500.0
     gate_symbol = "PASS" if gate_pass else "FAIL"
-    print(f"GATE ({gate_label} p95 <= 1500ms): {gate_symbol} — measured {total_p95:.0f}ms")
+    print(f"GATE (first-audio p95 <= 1500ms): {gate_symbol} — measured {first_audio_p95:.0f}ms")
+    print(f"  (first-audio = STT + LLM_TTFT + TTS_TTFA; drain_total includes full TTS synthesis)")
 
     if errors:
         print(f"\nERRORS ({len(errors)}):")
@@ -272,11 +287,10 @@ def main() -> int:
             print(f"  {e}")
 
     if not gate_pass:
-        print("\nBottleneck: TTS TTFA is the dominant latency contributor.")
+        stt_p95 = _percentile(stt_times, 0.95) if stt_times else 0.0
         tts_p95 = _percentile(tts_times, 0.95)
         llm_p95 = _percentile(llm_times, 0.95)
-        print(f"  TTS p95={tts_p95:.0f}ms (budget 250ms, over by {tts_p95-250:.0f}ms)")
-        print(f"  LLM p95={llm_p95:.0f}ms (budget 350ms)")
+        print(f"\nBreakdown: STT p95={stt_p95:.0f}ms  LLM p95={llm_p95:.0f}ms  TTS p95={tts_p95:.0f}ms")
 
     return 0 if gate_pass else 1
 

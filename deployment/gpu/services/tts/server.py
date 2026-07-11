@@ -245,17 +245,17 @@ class _SNACTokenStreamer:
 
 
 def _snac_decode_window(window: list[int], voice_config: VoiceConfigRequest) -> bytes | None:
-    """Decode a 28-token sliding window; return middle super-frame as float32 bytes.
+    """Decode a 21-token sliding window; return middle super-frame as float32 bytes.
 
     Args:
-        window: List of 28 pre-decoded codebook values (position-indexed, 0..4095).
+        window: List of 21 pre-decoded codebook values (position-indexed, 0..4095).
                 window[7*i + j] is the codebook value for frame i, position j.
         voice_config: Prosody config (energy_scale applied per chunk).
 
     Returns:
         8192 bytes (2048 float32 samples = 85.33ms) or None if window too short.
 
-    Design: decode 4 super-frames (28 tokens → 8192 samples), extract only the
+    Design: decode 3 super-frames (21 tokens → 6144 samples), extract only the
     middle frame (samples [2048:4096]), discarding outer frames which have
     CNN boundary artifacts from the non-causal convolutional decoder.
     """
@@ -316,7 +316,7 @@ def _stream_synthesis_sync(
 
     Yields:
         bytes: Float32 LE PCM (8192 bytes = 2048 samples = 85.33ms at 24 kHz).
-               First chunk arrives after 28 SNAC tokens are generated (~100-300ms on L4).
+               First chunk arrives after 21 SNAC tokens are generated (~640ms on L4).
     """
     # ── Build the Veena prompt ────────────────────────────────────────────────
     prompt = f"<spk_{speaker}> {text}"
@@ -374,7 +374,7 @@ def _stream_synthesis_sync(
             audio_buffer.append(max(0, min(codebook_val, _SNAC_CODEBOOK_SIZE - 1)))
             audio_count += 1
 
-            # Every complete super-frame (7 tokens), after minimum 4 frames (28 tokens):
+            # Every complete super-frame (7 tokens), after minimum 3 frames (21 tokens):
             # decode sliding window and yield the middle frame (85.33ms audio)
             if audio_count % _TOKENS_PER_FRAME == 0 and audio_count >= _SLIDING_WINDOW_TOKENS:
                 chunk = _snac_decode_window(audio_buffer[-_SLIDING_WINDOW_TOKENS:], voice_config)
@@ -417,24 +417,18 @@ def _load_model(model_path: str, snac_path: str) -> None:
     )
     _model.eval()
 
-    # torch.compile with reduce-overhead mode: eliminates Python dispatch overhead on each
-    # forward pass, giving ~1.5-2x token throughput improvement for autoregressive generation.
-    # mode="reduce-overhead" is safer than max-autotune for streaming (avoids CUDA graph capture
-    # conflicts with the generation thread). First inference triggers JIT compilation (~60-120s).
-    logger.info("Compiling Veena model with torch.compile (reduce-overhead)...")
-    _model = torch.compile(_model, mode="reduce-overhead")  # type: ignore[assignment]
-
     logger.info("Loading SNAC 24 kHz codec from %s ...", snac_path)
     _snac_model = SNAC.from_pretrained(snac_path).to(_device)
     _snac_model.eval()
 
-    # Warm-up: trigger torch.compile JIT before accepting traffic.
-    # Without this, the first real request pays the full 60-120s compile penalty.
-    logger.info("Running compile warm-up synthesis (5-char text)...")
+    # Warm-up: run one short synthesis to trigger CUDA kernel JIT compilation.
+    # HuggingFace transformers/triton kernels compile on first use; without this
+    # warm-up the first real request pays a ~900ms one-time penalty.
+    logger.info("Running CUDA kernel warm-up synthesis...")
     t_warmup = time.monotonic()
     _warmup_req = VoiceConfigRequest()
     for _ in _stream_synthesis_sync("hello", "kavya", _warmup_req):
-        pass  # drain the generator to complete compilation
+        pass
     logger.info("Warm-up complete in %.0f ms", (time.monotonic() - t_warmup) * 1000)
 
     _model_ready = True
