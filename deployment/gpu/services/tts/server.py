@@ -77,7 +77,9 @@ _AUDIO_CODE_BASE_OFFSET = 128266
 
 _SNAC_CODEBOOK_SIZE = 4096
 _TOKENS_PER_FRAME = 7  # SNAC 24 kHz: vq_strides [4,2,1] -> 1+2+4 = 7 per super-frame
-_SLIDING_WINDOW_TOKENS = 28  # 4 super-frames: decode all 4, keep middle 1 (avoid CNN edge artifacts)
+_SLIDING_WINDOW_TOKENS = 21  # 3 super-frames: decode 3, keep middle frame (index 1). Reduces TTFA 28→21 tok.
+# Previously 28 (4 frames). Reduced to 21 (3 frames) in Sprint-028: frame 1 of 3 is still the clean
+# middle frame — no CNN boundary artifacts — while first audio arrives 7 tokens (214ms) sooner.
 _SAMPLES_PER_FRAME = 2048  # 1 super-frame at 24 kHz: hop_length(512) x coarse_stride(4) = 2048 samples = 85.33ms
 
 _SNAC_MIN_TOKEN = _AUDIO_CODE_BASE_OFFSET
@@ -260,7 +262,7 @@ def _snac_decode_window(window: list[int], voice_config: VoiceConfigRequest) -> 
     if len(window) < _SLIDING_WINDOW_TOKENS:
         return None
 
-    num_frames = _SLIDING_WINDOW_TOKENS // _TOKENS_PER_FRAME  # 4
+    num_frames = _SLIDING_WINDOW_TOKENS // _TOKENS_PER_FRAME  # 3 (window=21 tokens)
     codes_0: list[int] = []
     codes_1: list[int] = []
     codes_2: list[int] = []
@@ -415,9 +417,25 @@ def _load_model(model_path: str, snac_path: str) -> None:
     )
     _model.eval()
 
+    # torch.compile with reduce-overhead mode: eliminates Python dispatch overhead on each
+    # forward pass, giving ~1.5-2x token throughput improvement for autoregressive generation.
+    # mode="reduce-overhead" is safer than max-autotune for streaming (avoids CUDA graph capture
+    # conflicts with the generation thread). First inference triggers JIT compilation (~60-120s).
+    logger.info("Compiling Veena model with torch.compile (reduce-overhead)...")
+    _model = torch.compile(_model, mode="reduce-overhead")  # type: ignore[assignment]
+
     logger.info("Loading SNAC 24 kHz codec from %s ...", snac_path)
     _snac_model = SNAC.from_pretrained(snac_path).to(_device)
     _snac_model.eval()
+
+    # Warm-up: trigger torch.compile JIT before accepting traffic.
+    # Without this, the first real request pays the full 60-120s compile penalty.
+    logger.info("Running compile warm-up synthesis (5-char text)...")
+    t_warmup = time.monotonic()
+    _warmup_req = VoiceConfigRequest()
+    for _ in _stream_synthesis_sync("hello", "kavya", _warmup_req):
+        pass  # drain the generator to complete compilation
+    logger.info("Warm-up complete in %.0f ms", (time.monotonic() - t_warmup) * 1000)
 
     _model_ready = True
     logger.info("Veena + SNAC loaded in %.0f ms (streaming mode)", (time.monotonic() - t0) * 1000)

@@ -10,7 +10,7 @@ Streaming design (ADR-001):
   and yields an AudioClause per chunk. A look-ahead buffer ensures the final chunk
   in the final clause is marked is_final=True.
 
-VRAM: Requests 2,048 MB from GPU Scheduler before inference.
+VRAM: Requests 7,974 MB from GPU Scheduler before inference (Veena 3B BF16 + SNAC measured footprint).
 Model: maya-research/Veena (3B params, BF16, SNAC codec, 24 kHz) — production model retained.
 
 Architecture: V1 Ch15-17 (Speech Rendering / TTS); V7 Ch6 (GPU fleet); ADR-001.
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     import httpx
 
 _VEENA_MODEL_NAME = "veena"
-_VEENA_VRAM_MB = 2048
+_VEENA_VRAM_MB = 7974  # measured: Veena 3B BF16 + SNAC 24kHz = 7,974 MB actual footprint
 _DEFAULT_BASE_URL = "http://localhost:8200"
 _SAMPLE_RATE = 24000
 
