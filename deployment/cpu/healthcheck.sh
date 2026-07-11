@@ -103,10 +103,10 @@ fi
 if command -v alembic &>/dev/null; then
   export POSTGRES_DSN="${POSTGRES_DSN:-postgresql://${POSTGRES_USER:-voiceos}:${POSTGRES_PASSWORD:-}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-voiceos}}"
   ALEMBIC_VERSION=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && alembic current 2>/dev/null | tail -1 || true)
-  if echo "${ALEMBIC_VERSION}" | grep -q "0026"; then
+  if echo "${ALEMBIC_VERSION}" | grep -q "0027"; then
     ok "Alembic migration version: ${ALEMBIC_VERSION}"
   else
-    fail "Alembic — expected head revision 0026, got: '${ALEMBIC_VERSION}'"
+    fail "Alembic — expected head revision 0027, got: '${ALEMBIC_VERSION}'"
   fi
 fi
 TABLE_COUNT=$(psql -h "${POSTGRES_HOST:-postgres}" -U "${POSTGRES_USER:-voiceos}" -d "${POSTGRES_DB:-voiceos}" -tAc \
