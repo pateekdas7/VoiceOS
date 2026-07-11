@@ -6,20 +6,20 @@
 # ==============================================================================
 
 manifest_version: "1.2"
-last_updated: "Sprint-009 Phase 2 complete (2026-07-03)"
+last_updated: "Phase 0 restoration complete (2026-07-11)"
 
 # ── GPU node hardware ─────────────────────────────────────────────────────────
 gpu:
   model: "NVIDIA L4"
   vram_mb: 23034
   driver_version: "580.126.20"
-  cuda_version: "13.0"          # spec ≥ 12.1 — 13.0 is backward-compatible
+  cuda_version: "13.0"          # driver max CUDA compatibility (NOT the PyTorch build version)
 
 # ── Runtime stack (pinned versions) ──────────────────────────────────────────
 runtime:
   python: "3.12.13"
-  torch: "2.11.0+cu130"
-  cuda: "13.0"
+  torch: "2.11.0+cu128"         # cu128 = CUDA 12.8 PyTorch build (cu130 wheels not published)
+  cuda: "12.8"                  # torch.version.cuda — PyTorch CUDA build version, NOT driver max
   cudnn: "9.19.0"               # available via torch.backends.cudnn
   vllm: "0.24.0"
   faster_whisper: "1.2.1"
