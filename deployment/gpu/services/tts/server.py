@@ -172,6 +172,13 @@ async def synthesize(request: SynthesizeRequest) -> StreamingResponse:
     if not text:
         raise HTTPException(status_code=400, detail="Empty text")
 
+    _MAX_TEXT_CHARS = 2000  # PEN-009: cap prevents single-request GPU monopolisation
+    if len(text) > _MAX_TEXT_CHARS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Text too long: {len(text)} chars (max {_MAX_TEXT_CHARS})",
+        )
+
     t_start = time.monotonic()
     logger.info("Stream start: %d chars | speaker=%s", len(text), request.speaker)
 

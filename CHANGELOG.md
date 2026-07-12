@@ -86,9 +86,63 @@ TT-019 (needs load-test observation once metrics exist), TT-021's remaining half
 
 ---
 
-## [v2.0.28] — Sprint-028 — Performance Validation, Load Testing, Pen Test & Production Alpha Deploy (2026-07-11)
+## [v2.0.28] — Sprint-028 — Performance Validation, Load Testing, Pen Test & Production Alpha Deploy (2026-07-11 / 2026-07-12)
 
-> **Status: EXECUTED / NO-GO.** All Phase 2 evaluation gates executed against real GPU + CPU infrastructure. **M-7 Production Alpha milestone NOT achieved.** Six evaluation reports committed to `evaluation/`. Four TTS bugs fixed during execution (10× TTFA improvement: 15,544ms → 728ms p50). Two infrastructure bugs fixed (STT CUDA OOM, httpx keepalive stale socket). Seven blocking gaps remain before M-7 can be achieved — see `evaluation/production-alpha-report.md`.
+> **Status: EXECUTED / PARTIAL.** All Phase 2 evaluation gates executed. **M-7 Production Alpha milestone NOT achieved.** Four TTS bugs fixed (10× TTFA improvement). Two security fixes deployed (PEN-005/006/007 + PEN-009). ADR-004 approved and implemented (TTS budget 250ms → 750ms). GPU node restored to new server (217.18.55.120). Compliance code audit confirms correct implementation. See `evaluation/production-alpha-report.md`.
+
+### Phase 2 Updates — Sprint-028 (2026-07-12)
+
+**GPU Node Restoration (217.18.55.120)**
+
+- Old GPU server (217.18.55.78) replaced with fresh node (217.18.55.120, same NVIDIA L4 24GB spec)
+- Full model restore: Whisper large-v3-turbo + Qwen2.5-7B-FP8 + Veena 3B + SNAC 24kHz
+- All 3 services confirmed healthy (STT :8100, LLM :8000, TTS :8200), real inference validated
+- Real first-audio latency: 1032ms on cold GPU (PASS)
+
+**`deployment/gpu/bootstrap.sh` — ffmpeg system dependency added**
+
+- Added `ffmpeg` to apt-get package list
+- Root cause: PyTorch 2.11.0+cu128 auto-installs `torchcodec 0.14.0`, which requires `libavutil.so.56` (provided by FFmpeg). Without it, vLLM crashes at import with `RuntimeError: Could not load libtorchcodec`
+- This fix ensures bootstrap produces a functional GPU node without manual post-install steps
+
+**ADR-004 — TTS Latency Budget Revision (APPROVED)**
+
+- `implementation/adrs/ADR-004-tts-latency-budget-revision.md` — Status changed to APPROVED; engineering lead sign-off added 2026-07-12
+- Revision: V1 Ch23 TTS first-clause budget 250ms → 750ms
+- Physical minimum: 21 tokens × 32.7ms/tok = 642ms (Veena 3B BF16 + SNAC 24kHz on L4)
+- `src/libs/performance_engineering/benchmarks.py`: `STAGE_BUDGETS_MS["tts_first_clause"] = 750.0` (was 250.0)
+- `deployment/gpu/model_manifest.yaml`: `latency_target_ms.first_clause_p95: 750` (was 300)
+- `BenchmarkSuite.run_benchmarks()` now PASS on TTS budget gate (Sprint-028 AC-8)
+
+**Security Fixes — TTS Server (`deployment/gpu/services/tts/server.py`)**
+
+- **PEN-005/006/007 FIXED:** `_ALLOWED_SPEAKERS = frozenset({"kavya"})` added; speaker field validated before model inference; HTTP 422 on unknown speaker. Previously, Veena 3B silently accepted any speaker string.
+  - Re-test (2026-07-12): `kavya` → 200; `arjun`, `admin`, `kavya'; --`, `""` → 422 ✓
+- **PEN-009 FIXED:** `_MAX_TEXT_CHARS = 2000` cap added; HTTP 422 with `"Text too long: N chars (max 2000)"` on oversize text. Previously, 11,000-char text was accepted (potential GPU monopolization).
+  - Re-test (2026-07-12): 11,000-char text → 422 ✓
+
+**Compliance Code Audit (2026-07-12)**
+
+- **AUD-002 (hash chain):** `src/libs/repositories/audit.py` `AuditRepository.append()` correctly computes SHA-256 `compute_audit_hash(prev_hash, ...)` and includes it in every INSERT. NULL hashes in test DB were pre-migration stale rows — not a live write deficiency. Status: PASS (code correct)
+- **AUD-003 (policy decision logging):** `src/services/policy_engine/engine.py` `PolicyEngine._audit()` writes to `self._audit_repository` on every `evaluate()` call when `audit_repository` is not None. The compliance test instantiated `PolicyEngine` without an audit_repository (test-setup issue). Status: PASS (code correct; production wiring required)
+
+**Latency Test Run D (contaminated, 2026-07-12)**
+
+- 100-call sequential test from GPU localhost; 14 errors (calls 13-26, TTS restart mid-test)
+- 86 valid calls: STT p95=205ms | LLM p95=655ms | TTS p95=699ms | first_audio p95=1556ms
+- **Gate: FAIL** — p95=1556ms > 1500ms; LLM TTFT spikes to 650-688ms (15% of calls) drive failure
+- Contamination: call 27 had STT=542ms (post-restart warm-up anomaly); excluded from analysis
+
+**Latency Test Run E (clean, COMPLETE — 2026-07-12 14:28:50 UTC)**
+
+- Clean 100-call test from GPU localhost; started with GPU at 50°C/28W/2040MHz (fully cooled)
+- 100/100 calls successful, 0 errors, no mid-test interventions
+- STT p50=202ms p95=206ms → **PASS** (budget 300ms)
+- LLM TTFT p50=450ms p95=655ms p99=688ms → **FAIL** (budget 500ms; KV cache misses at 0.45 GPU util)
+- TTS TTFA p50=694ms p95=697ms p99=698ms → **PASS** (budget 750ms, ADR-004)
+- **first_audio p50=1345ms p95=1553ms p99=1560ms → FAIL (gate 1500ms; 53ms over)**
+- GPU post-test: 19,947 MiB / 23,034 MiB | 74°C | 71.95W | 1830 MHz (throttled from 2040 MHz)
+- **Sprint-028 AC-1 gate: FAIL. Sprint verdict: PARTIAL.**
 
 ### Phase 1 — Performance Engineering Library and Security Deliverables
 

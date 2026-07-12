@@ -22,7 +22,7 @@ STAGE_BUDGETS_MS: Mapping[str, float] = {
     "stt": 300.0,
     "cil": 120.0,
     "llm_ttft": 350.0,
-    "tts_first_clause": 250.0,
+    "tts_first_clause": 750.0,  # ADR-004: revised from 250ms — Veena 3B SNAC requires min 21 tokens × 32.7ms/tok = 642ms minimum
 }
 """Per-stage p95 budgets required by Sprint-028.md's own BenchmarkSuite spec
 (V1 Ch23's full first-audio budget also includes endpoint=120ms/validate=40ms/
@@ -77,7 +77,7 @@ class StaticFixtureProvider:
 
 
 class BenchmarkSuite:
-    """Per-stage baseline benchmarks: STT <= 300ms, CIL <= 120ms, LLM TTFT <= 350ms, TTS first-clause <= 250ms."""
+    """Per-stage baseline benchmarks: STT <= 300ms, CIL <= 120ms, LLM TTFT <= 350ms, TTS first-clause <= 750ms (ADR-004)."""
 
     def __init__(
         self,

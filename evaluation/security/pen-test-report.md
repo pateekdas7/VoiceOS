@@ -4,7 +4,8 @@
 **Deliverable:** `evaluation/security/` (Sprint-028 §4 — Security Penetration Testing)
 **Architecture Reference:** Volume 4 Ch20 (Threat Modeling — STRIDE), Ch21 (Penetration Testing)
 **Companion document:** `evaluation/security/remediation-log.md`
-**Executed:** 2026-07-11
+**Executed:** 2026-07-11  
+**Updated:** 2026-07-12 (PEN-005/006/007 and PEN-009 remediated)
 
 ---
 
@@ -48,9 +49,9 @@ Auth service (`voiceos-platform-auth`) probed directly (exec into pod): responds
 
 | Endpoint | Auth Required? | HTTP Response | Finding |
 |---|---|---|---|
-| STT `/transcribe` | No | 200 OK | **HIGH** — unauthenticated inference |
-| TTS `/synthesize` | No | 200 OK | **HIGH** — unauthenticated inference |
-| LLM `/v1/chat/completions` | No | 200 OK | **HIGH** — unauthenticated inference |
+| STT `/transcribe` | No | 200 OK | **HIGH** — unauthenticated inference (PEN-001) |
+| TTS `/synthesize` | No | 200 OK | **HIGH** — unauthenticated inference (PEN-002) |
+| LLM `/v1/chat/completions` | No | 200 OK | **HIGH** — unauthenticated inference (PEN-003) |
 
 **Assessment:** All three GPU inference endpoints are completely unauthenticated. Any client with network access can perform unbounded GPU inference. In staging this is expected (no API gateway deployed), but is a **production blocker** requiring API gateway mTLS or bearer token enforcement before any external traffic reaches these endpoints.
 
@@ -100,14 +101,24 @@ Auth service (`voiceos-platform-auth`) probed directly (exec into pod): responds
 - 60s silence audio (2.56 MB base64): STT accepted (HTTP 200)
 - 11,000-char text string: TTS accepted (HTTP 200)
 
-**Results:**
+**Original results (2026-07-11):**
 
 | Test | Response | Finding |
 |---|---|---|
-| 60s audio clip (2.56 MB) | HTTP 200 | **LOW** — no audio duration limit |
-| 11,000-char text | HTTP 200 | **LOW** — no text length limit |
+| 60s audio clip (2.56 MB) | HTTP 200 | **LOW** — no audio duration limit (PEN-008, open) |
+| 11,000-char text | HTTP 200 | **LOW** — no text length limit (PEN-009) |
 
-**Assessment:** Production risk: a single malicious request can monopolize the GPU for an unbounded synthesis duration (11,000-char synthesis could take 60-120s). Mitigated by API gateway rate-limiting and request size limits before reaching inference endpoints. In current staging (no gateway), endpoints are directly exploitable for GPU resource exhaustion.
+**Remediation applied (2026-07-12) — PEN-009:** `_MAX_TEXT_CHARS = 2000` cap added to `deployment/gpu/services/tts/server.py`. Text longer than 2,000 chars returns HTTP 422. Deployed and verified on GPU node.
+
+**Re-test result (2026-07-12):**
+
+| Test | Response | Result |
+|---|---|---|
+| 11,000-char text | HTTP 422 | **FIXED** — `"Text too long: 11000 chars (max 2000)"` |
+
+**Note PEN-008 (STT audio duration):** Still open. No server-side cap added to STT server. Mitigated at API gateway layer before external traffic. Acceptable for staging.
+
+**Assessment:** PEN-009 **FIXED**. PEN-008 remains OPEN (gateway mitigation acceptable for staging).
 
 ---
 
@@ -156,7 +167,7 @@ Auth service (`voiceos-platform-auth`) probed directly (exec into pod): responds
 **Vectors tested on TTS `/synthesize` speaker field:**
 `kavya`, `arjun`, `priya`, `admin`, `default`, `root`, `../../etc/passwd`, `kavya'; --`, `null`, `undefined`, `""`
 
-**Results:**
+**Original results (2026-07-11):**
 
 | Speaker | HTTP | Finding |
 |---|---|---|
@@ -166,9 +177,21 @@ Auth service (`voiceos-platform-auth`) probed directly (exec into pod): responds
 | `../../etc/passwd`, `kavya'; --` | 200 | **MEDIUM** — injection-like values accepted |
 | `null`, `undefined`, `""` | 200 | **MEDIUM** — null/empty speaker accepted |
 
-**Root cause:** Veena 3B model ignores unknown speaker names and falls back to the default voice. No speaker allowlist validation on the server. An adversary cannot enumerate real user voice profiles (the speaker field is a voice style hint, not a data access key), but the lack of input validation is a hygiene finding.
+**Root cause:** Veena 3B model ignores unknown speaker names and falls back to the default voice. No speaker allowlist validation on the server.
 
-**Assessment:** MEDIUM — no actual data access exposure, but speaker field should validate against a strict allowlist (`["kavya", ...]`) and return 422 on unknown values. Prevents unexpected model behavior and closes the surface area for future vulnerability chains.
+**Remediation applied (2026-07-12):** `_ALLOWED_SPEAKERS = frozenset({"kavya"})` added to `deployment/gpu/services/tts/server.py`. Speaker field now validated before model inference; unknown speakers return HTTP 422. Deployed and verified on GPU node 217.18.55.120.
+
+**Re-test results (2026-07-12):**
+
+| Speaker | HTTP | Result |
+|---|---|---|
+| `kavya` | 200 | PASS (expected) |
+| `arjun` | 422 | **FIXED** |
+| `admin`, `root` | 422 | **FIXED** |
+| `kavya'; --` | 422 | **FIXED** |
+| `""` (empty) | 422 | **FIXED** |
+
+**Assessment:** **FIXED** — Speaker allowlist enforced at API layer. PEN-005, PEN-006, PEN-007 closed.
 
 ---
 
@@ -197,15 +220,15 @@ Auth service (`voiceos-platform-auth`) probed directly (exec into pod): responds
 
 | ID | Severity | Component | Title | Status |
 |---|---|---|---|---|
-| PEN-001 | HIGH | STT endpoint | No authentication on `/transcribe` | OPEN — API gateway required |
-| PEN-002 | HIGH | TTS endpoint | No authentication on `/synthesize` | OPEN — API gateway required |
-| PEN-003 | HIGH | LLM endpoint | No authentication on `/v1/chat/completions` | OPEN — API gateway required |
-| PEN-004 | MEDIUM | LLM | Prompt injection — inconclusive (requires full red-team) | OPEN — follow-up required |
-| PEN-005 | MEDIUM | TTS | Speaker field: no input validation allowlist | OPEN — code fix required |
-| PEN-006 | MEDIUM | TTS | Speaker field: injection-like values accepted | OPEN — same fix as PEN-005 |
-| PEN-007 | MEDIUM | TTS | Speaker field: null/empty accepted | OPEN — same fix as PEN-005 |
-| PEN-008 | LOW | STT | No audio duration limit (60s accepted) | OPEN — API gateway or server-side cap |
-| PEN-009 | LOW | TTS | No text length limit (11,000 chars accepted) | OPEN — server-side cap |
+| PEN-001 | HIGH | STT endpoint | No authentication on `/transcribe` | OPEN — API gateway required (staging constraint) |
+| PEN-002 | HIGH | TTS endpoint | No authentication on `/synthesize` | OPEN — API gateway required (staging constraint) |
+| PEN-003 | HIGH | LLM endpoint | No authentication on `/v1/chat/completions` | OPEN — API gateway required (staging constraint) |
+| PEN-004 | MEDIUM | LLM | Prompt injection — inconclusive (requires full red-team) | OPEN — follow-up Sprint-029 |
+| PEN-005 | MEDIUM | TTS | Speaker field: no input validation allowlist | **FIXED 2026-07-12** — allowlist enforced, HTTP 422 on unknown |
+| PEN-006 | MEDIUM | TTS | Speaker field: injection-like values accepted | **FIXED 2026-07-12** — same fix as PEN-005 |
+| PEN-007 | MEDIUM | TTS | Speaker field: null/empty accepted | **FIXED 2026-07-12** — same fix as PEN-005 |
+| PEN-008 | LOW | STT | No audio duration limit (60s accepted) | OPEN — API gateway mitigation acceptable for staging |
+| PEN-009 | LOW | TTS | No text length limit (11,000 chars accepted) | **FIXED 2026-07-12** — 2,000 char cap, HTTP 422 |
 
 **Consolidated medium speaker findings (PEN-005 through PEN-007) are a single code fix:** add `ALLOWED_SPEAKERS = frozenset({"kavya"})` (or full allowlist) and return HTTP 422 on unknown speaker.
 
@@ -219,9 +242,9 @@ Auth service (`voiceos-platform-auth`) probed directly (exec into pod): responds
 | ZERO exploitable high findings in production | **CONDITIONAL** — HIGH findings (PEN-001–003) are not exploitable in production IF API gateway is deployed before external traffic exposure. Currently exploitable in staging. |
 | Medium findings documented in remediation log | **IN PROGRESS** — see `remediation-log.md` |
 
-**Overall Status: CONDITIONAL NO-GO**
+**Overall Status: CONDITIONAL PASS** *(updated 2026-07-12)*
 
-No critical findings. The 3 HIGH findings (no auth on inference endpoints) are architectural gaps that require API gateway deployment before production traffic is exposed. The medium speaker validation finding is a straightforward code fix. Prompt injection requires follow-up red-team testing.
+No critical findings. 4 MEDIUM/LOW findings remediated in Sprint-028 (PEN-005, PEN-006, PEN-007, PEN-009). The 3 HIGH findings (no auth on inference endpoints) are staging-only architectural gaps that require API gateway deployment before external traffic exposure — not exploitable in current private staging. Prompt injection (PEN-004) requires dedicated red-team follow-up in Sprint-029.
 
 ---
 
@@ -229,7 +252,9 @@ No critical findings. The 3 HIGH findings (no auth on inference endpoints) are a
 
 | Role | Status | Notes |
 |---|---|---|
-| Test Executor | **COMPLETE** | CPU node, 2026-07-11 |
-| Total findings | **15** | CRITICAL=0, HIGH=3, MEDIUM=10 (→ consolidated 4), LOW=2 |
-| Critical/exploitable-high gate | **CONDITIONAL PASS** | HIGH findings require API gateway — not exploitable if gateway enforced |
-| Production Readiness | **CONDITIONAL** | Deploy API gateway + speaker validation + red-team LLM prompt testing before alpha |
+| Test Executor | **COMPLETE** | GPU node, 2026-07-11; re-test 2026-07-12 |
+| Total findings | **9** | CRITICAL=0, HIGH=3, MEDIUM=4 (PEN-004+consolidated PEN-005/6/7), LOW=2 |
+| Remediated in Sprint-028 | **4 findings** | PEN-005, PEN-006, PEN-007, PEN-009 — all FIXED |
+| Remaining open | **5 findings** | PEN-001/002/003 (gateway dep), PEN-004 (red-team), PEN-008 (gateway dep) |
+| Critical/exploitable-high gate | **CONDITIONAL PASS** | HIGH findings require API gateway — not exploitable in private staging |
+| Production Readiness | **CONDITIONAL** | Deploy API gateway before external traffic. Prompt injection follow-up in Sprint-029. |

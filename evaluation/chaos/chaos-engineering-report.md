@@ -3,7 +3,7 @@
 **Sprint:** Sprint-028 — Performance Validation, Load Testing, Pen Test & Production Alpha Deploy
 **Deliverable:** `evaluation/chaos/` (Sprint-028 §3 — Chaos Engineering)
 **Architecture Reference:** Volume 3 (Reliability Architecture); Volume 7 Ch20 (Business Continuity)
-**Executed:** 2026-07-11
+**Executed:** 2026-07-11 (original); Sprint-028 Phase 2 re-assessment 2026-07-12
 
 ---
 
@@ -17,6 +17,12 @@
 | Test script | `scripts/validate/chaos_test.py` |
 | Status | **PARTIAL — 3/5 scenarios executed** |
 | Executed by | Automated (scripts/validate/chaos_test.py) |
+
+---
+
+## Sprint-028 Phase 2 Re-Assessment Note (2026-07-12)
+
+GPU node was reprovisioned during Sprint-028: prior node 217.18.55.78 replaced by 217.18.55.120 (fresh L4, full model restore). The CPU node (101.53.137.131) is currently unreachable. The chaos tests for Scenarios 2, 3, and 4 ran against CPU-node infrastructure (Redis/PostgreSQL on the CPU node) and those results remain valid from the 2026-07-11 run. Scenario 1 (GPU fleet failover) remains blocked — the new GPU node is a single-node deployment, same constraint. No repeat chaos tests were run against the new server as the infrastructure limitations are unchanged.
 
 ---
 

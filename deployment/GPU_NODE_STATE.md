@@ -2,12 +2,12 @@
 
 > **Living document.** Updated after every sprint that introduces GPU changes. Always describes the **complete current state** of the GPU node — not just the latest changes. Use this document to recreate the GPU node from scratch on any fresh server.
 
-**Last updated:** Sprint-028 (2026-07-11) — Two GPU-side changes deployed:
+**Last updated:** Sprint-028 Phase 2 (2026-07-12) — GPU node restored to new server (217.18.55.120); security fixes deployed (PEN-005/006/007, PEN-009); bootstrap.sh ffmpeg dependency documented. Previously: Sprint-028 (2026-07-11) — Two GPU-side changes deployed:
 1. **vLLM `--gpu-memory-utilization` reduced 0.55 → 0.45** (`voiceos-llm.service` ExecStart updated, service reloaded). Root cause: at 0.55 vLLM reserved 12,628 MiB, leaving only 569 MiB free on the L4. ctranslate2 (Whisper backend) lazily allocates its CUDA encoder workspace on the first real `model.encode()` call — not at model load time. This lazy allocation (~600 MiB) failed with CUDA OOM on every real STT inference request. At 0.45 vLLM takes 10,388 MiB (KV cache ≈ 6,200 MiB @ max_model_len=4096), freeing 2,263 extra MiB. STT OOM eliminated. KV cache reduction is acceptable for sequential calls. VRAM now: **20,289 MiB used / 2,745 MiB free**.
 2. **STT server mandatory CUDA warmup added** (`deployment/gpu/services/stt/server.py` updated, service restarted). During `_load_model()`, immediately after loading the WhisperModel, a 0.5s silence transcription is run before `_model_ready` is set True. This forces ctranslate2 to pre-allocate and retain its CUDA workspace buffer so all subsequent real requests succeed without any additional large allocation. Warmup time: ~323ms. Service now also has a 300s startup timeout (`TimeoutStartSec=300` in the systemd unit).
 Previously: Sprint-027 (2026-07-08) — documentation-only touch: **no GPU deployment/service change this sprint, and the GPU node was not accessed this session** (per the standing "ask first" rule — the user was asked and confirmed no GPU-side work was needed for this sprint's own scope). `monitoring/gpu_fleet/` (`GPUFleetHealthMonitor`, `ModelWarmupOrchestrator`, `FleetVRAMBudget`) is fleet-level *operational overlay* tooling validated against simulated multi-node fixtures (Sprint-027.md's own Phase 1 scope) — it does not run on, or require changes to, this GPU node itself; today's fleet is still the single node described below. OTel trace export from the GPU-side STT/LLM/TTS services to the CPU node's new OTel Collector (`http://<cpu-node>:<nodeport-or-tunnel>/v1/traces`) is **not wired this sprint** — those services never had an OTel SDK integration to begin with (same class of gap as the `/metrics` binding gap noted in `CPU_NODE_STATE.md` §13.5), and wiring it would require touching this node's service code, which was out of scope without a specific need to do so. Previously: Sprint-026 Phase 2 (2026-07-07) — **GPU node accessed this session with explicit user approval** (the standing "ask first" rule was honored — access was requested and approved before any SSH connection). Context: the CPU node was migrated to a new, genuinely unrestricted VM (`101.53.141.75`, see `CPU_NODE_STATE.md`) which now runs a real `kubeadm`+Calico Kubernetes cluster. To complete real K8S-2 GPU-taint/toleration validation, this GPU node was joined to that cluster via `kubeadm join` (after the user approved opening the CPU VM's firewall on port 6443 and regenerating its apiserver certificate with a public SAN). **The join itself succeeded** — `kubelet`/`containerd` were installed here (§17.1 below) and this node briefly appeared in the cluster as `jl-vm-440830`. However, Calico could not complete its own in-cluster bootstrap: the control plane's advertised address (`10.0.2.2`) is NAT-internal to the CPU VM's hypervisor and unroutable from this GPU node's (different cloud provider's) network — a structural "no shared VPC between the two providers" limitation. Real-time iptables DNAT/route/MASQUERADE patches (each individually user-approved) got direct reachability to `10.0.2.2:6443` working, but the identical problem recurred for the next Service ClusterIP (`10.96.0.1`, the in-cluster `kubernetes` service itself) — not a single fixable bug. Rather than keep layering ad-hoc NAT rules on this live GPU inference node, **the join was cleanly reverted**: `kubeadm reset` removed all Kubernetes state, `kubelet` was stopped and disabled, and every iptables/route change was undone. **STT/LLM/TTS were verified healthy (via `systemctl is-active`) before every step, after every step, and at the very end — no inference service was ever restarted, reconfigured, or interrupted.** Filed as `implementation/BACKLOG.md`'s **TT-015**. K8S-2 (GPU taint/toleration) remains validated by real Helm chart/Deployment-spec inspection (`gpu-scheduler` is the only chart requesting the `gpu` node pool + tolerating `nvidia.com/gpu`) and by this real, successful (if reverted) `kubeadm join` — but not by a fully `Ready`, permanently-joined GPU node running a scheduled tainted pod. See TT-015 for the full evidence trail and what a future attempt would need (a VPN/mesh between the two providers). No GPU model/service/systemd-unit configuration was touched. Previously: Sprint-025 Part-3 (2026-07-07) — documentation-only touch: **no GPU deployment/service change** — Part-3's schema extension (migration `0025`) and cross-platform wiring (`ConversationEngine.resolve_runtime_config()`, `CampaignService`/`WebhookService`/`RateLimitMiddleware`/`APIKeyLifecycleService`) is explicitly CPU-side only. Deep STT/LLM/TTS adapter rewiring was considered and deliberately declined — see `implementation/adrs/ADR-002-sprint025-scope-expansion.md` §9 — precisely because it would require its own GPU-side latency-budget validation pass (same class of work as ADR-001), which is out of scope here. Previously: Sprint-025 (2026-07-06) — documentation-only touch: **no GPU deployment/service change this sprint** — Sprint-025.md's own scope explicitly states "GPU node is not required during this sprint; previously deployed GPU services remain running unchanged" (Admin Portal/AI Configuration/Integration Platform/API Platform are pure CPU-side services with no GPU-adapter surface). Note: Sprint-024 (Billing/Metering/Analytics/Reporting/BI Platform) also never updated this file with its own entry — same gap, also a pure-CPU-side sprint, not backfilled here. Previously: Sprint-023 (2026-07-06) — documentation-only touch: **no GPU deployment/service change this sprint** — Sprint-023.md's own scope explicitly states "GPU node is not required during this sprint; previously deployed GPU services remain running unchanged" (Campaign Management/Contact Center/HITL are pure CPU-side services with no GPU-adapter surface). Previously: Sprint-022 (2026-07-06) — documentation-only touch: **no GPU deployment/service change this sprint** — Sprint-022.md's own scope explicitly states "GPU node is not required during this sprint; previously deployed GPU services remain running unchanged" (CRM/Collections are pure CPU-side services with no GPU-adapter surface). Previously: Sprint-021 (2026-07-06) — documentation-only touch: **no GPU deployment/service change this sprint** — Sprint-021.md's own scope explicitly states "GPU node is not required during this sprint; previously deployed GPU services remain running unchanged" (Tenant/Org/User Management are pure CPU-side services with no GPU-adapter surface). Previously: Post-Sprint-020 reproducibility audit (2026-07-06) — `deployment/gpu/validate_latency.py` written for real (TT-009: `restore.sh`/`model_manifest.yaml` had referenced this script since Sprint-009, but it never existed anywhere in the repo) and deployed + run against this live node for the first time. Node re-verified live: GPU UUID, all three systemd services (`voiceos-{stt,llm,tts}`) active, all three `/health*` endpoints ready, models/venv/vLLM version all match this document's prior claims. **New finding (TT-010, implementation/BACKLOG.md):** three direct `/synthesize` calls measured TTS time-to-first-chunk at 914–2974ms — well above both `model_manifest.yaml`'s 300ms target and this document's own previously-recorded 873ms Sprint-012 Phase 3 server-level TTFA p95, with the GPU otherwise idle (0% utilization, no contending processes) at measurement time. Not root-caused this session (out of a reproducibility audit's scope; flagged for follow-up, not fixed). Also observed: `/opt/voiceos-gpu/deployment/` on the live node contains only `healthcheck.sh` — `bootstrap.sh`/`restore.sh`/`model_manifest.yaml`/`download_models.py` were never copied there (this node was provisioned once, by hand, and never rebuilt — unlike the CPU-side gap, the GPU `restore.sh` and everything it references genuinely exist and are internally consistent in the repo; they simply haven't needed to be re-run against this already-running node). A stray, unused `models/whisper-large-v3-turbo-fp8/` directory (not in any doc) was also observed — harmless, likely an abandoned early experiment given FP8 isn't supported by this node's CTranslate2 version (see §8, restore.sh comments). Previously: Sprint-019 (2026-07-05) — documentation-only touch: added reserved `VAULT_ADDR`/`VAULT_TOKEN` env var rows (§12) and a secrets-rotation-grace-window note (§16) ahead of a future sprint's GPU-side secrets wiring. **No GPU deployment/service change this sprint** — Sprint-019.md's own scope explicitly states "GPU node is not required during this sprint; previously deployed GPU services remain running unchanged." The last actual GPU deployment remains Sprint-012 Phase 3 (2026-07-04) — TTS serving layer replaced with vLLM streaming (ADR-001). Backfilled into this document during the Sprint-013 TT-003 documentation cleanup (2026-07-04) — the deployment happened 2026-07-04 but this file was not updated at the time; see CHANGELOG.md's Sprint-012 entry and `implementation/adrs/ADR-001-vllm-tts-streaming.md` for the original record this backfill is sourced from.
 **Node identity:** GPU-2ba0ea2a-d4bf-d29d-e152-8d352c727524 (NVIDIA L4 — stable UUID)
-**Node access address:** 217.18.55.96 (⚠️ ephemeral — the SSH access IP rotates as the port-forward link is reissued; prior IPs were .19, .78, .74, and .129. Identify the node by its GPU UUID, not the IP. Also note: this session's `hostname` reported `jl-vm-440830`, differing from the `n-ac357110-...`-style hostname pattern seen on the old CPU node — this is expected, GPU and CPU nodes are provisioned differently and were never the same hostname family.)
+**Node access address:** 217.18.55.120 (⚠️ ephemeral — the SSH access IP rotates as the port-forward link is reissued; prior IPs were .19, .78, .74, .96, and .129. Current server (restored 2026-07-12) is a fresh NVIDIA L4 node at .120. Identify the node by its GPU UUID, not the IP.)
 **Access key:** `~/.ssh/temporary.pem` (EC2-style PEM; relocated 2026-07-08 out of the repo root during a production-readiness audit — TT-020 — since a real private key sitting in the project working tree is a credential-hygiene risk once the repo goes under version control)
 **Access user:** ubuntu
 **SSH:** `ssh -i ~/.ssh/temporary.pem -o StrictHostKeyChecking=no ubuntu@<current-ip>`
@@ -492,6 +492,64 @@ python3.12 -m venv /opt/voiceos-gpu/venv
 **Thermal throttling:** L4 hits 72W TDP after ~110s continuous inference → clocks drop from 2040MHz to ~1000MHz → all three models double in latency. Cold GPU (first ~18 calls): p95=933ms intra-DC. Sustained: p95=1950ms.
 
 **Architectural constraint:** Sum of model minimums (Whisper ~600ms + Qwen ~220ms + Veena TTFA ~660ms) = ~1480ms before any network overhead. The 1500ms gate requires sub-5ms network latency from call ingress to all three GPU services — achievable only with a GPU fleet where models are pre-loaded and calls are routed to idle nodes. ADR required to revise V1 Ch23 TTS budget (250ms specified; 660ms minimum achievable).
+
+---
+
+---
+
+## 19. Sprint-028 Phase 2 Changes (2026-07-12)
+
+### 19.1 GPU Node Restoration to New Server (217.18.55.120)
+
+Prior node (217.18.55.78) was decommissioned. Fresh NVIDIA L4 server provisioned at 217.18.55.120. Full restore completed via `bootstrap.sh` + manual model downloads.
+
+**Key difference from prior restore:** `bootstrap.sh` was missing `ffmpeg` from apt-get package list. PyTorch 2.11.0+cu128 installs `torchcodec 0.14.0` as a transitive dependency, which requires `libavutil.so.56` from FFmpeg. Without it, vLLM fails at import: `RuntimeError: Could not load libtorchcodec. OSError: libavutil.so.56: cannot open shared object file`. Fixed: `ffmpeg` added to `bootstrap.sh` apt-get install block (committed).
+
+**Post-restore validation (2026-07-12):**
+
+| Service | Health Endpoint | Status |
+|---|---|---|
+| STT (Whisper :8100) | `/health/ready` | ✅ READY |
+| LLM (vLLM :8000) | `/health` | ✅ OK |
+| TTS (Veena :8200) | `/health/ready` | ✅ READY |
+
+Real inference: STT→LLM→TTS first_audio = 1,032ms (cold GPU, single call). PASS.
+
+**VRAM post-restore (measured):**
+
+| Model | Measured (MiB) |
+|---|---|
+| Whisper large-v3-turbo | ~1,324 |
+| Qwen2.5-7B-FP8 @ 0.45 util | ~10,590 |
+| Veena 3B BF16 + SNAC 24kHz | ~7,964 |
+| **Total** | **~19,878 MiB / 23,034 MiB** |
+
+### 19.2 TTS Server Security Fixes
+
+**PEN-005/006/007 — Speaker Allowlist Enforcement**
+- Added `_ALLOWED_SPEAKERS = frozenset({"kavya"})` to `deployment/gpu/services/tts/server.py`
+- Speaker field validated before model inference; HTTP 422 on unknown speaker
+- Re-test verified: `kavya` → 200; `arjun`, `admin`, injection-like values → 422
+
+**PEN-009 — Text Length Cap**
+- Added `_MAX_TEXT_CHARS = 2000` to `deployment/gpu/services/tts/server.py`
+- HTTP 422 `"Text too long: N chars (max 2000)"` on oversize text
+- Prevents single-request GPU monopolization via long synthesis
+
+### 19.3 Latency Run D (Intra-Server Localhost, 2026-07-12)
+
+| Stage | p50 | p95 | p99 | Budget | Gate |
+|---|---|---|---|---|---|
+| STT (Whisper) | 202ms | 205ms | 542ms* | 300ms | PASS (p99 inflated by restart) |
+| LLM TTFT | 549ms | 655ms | 688ms | 500ms | FAIL |
+| TTS TTFA | 695ms | 699ms | 725ms | 750ms | PASS |
+| **FIRST-AUDIO** | **1446ms** | **1556ms** | **1559ms** | **1500ms** | **FAIL** |
+
+*Run D contaminated: 14 errors (TTS restart mid-test), call 27 STT=542ms (post-restart anomaly). p99 STT is contamination artifact.
+
+Root cause of FAIL: LLM TTFT p50=549ms. When LLM spikes to 600-688ms (~15% of calls), first_audio exceeds 1500ms. At `--gpu-memory-utilization 0.45`, smaller KV cache → more cache evictions → variable TTFT.
+
+Run E (clean, no interruptions) in progress at time of writing.
 
 ---
 

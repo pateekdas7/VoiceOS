@@ -172,7 +172,7 @@ models:
     endpoints: ["/health/live", "/health/ready", "/synthesize"]
     health_check: "curl -sf http://localhost:8200/health/ready"
     latency_target_ms:
-      first_clause_p95: 300
+      first_clause_p95: 750         # ADR-004: revised from 300ms (V1 Ch23 original 250ms); Veena 3B minimum is 21 tok × 32.7ms = 642ms
     measured_rtf_warm: 2.3         # autoregressive; mitigated by clause-level streaming
     streaming: true                # clause-level (Veena has no within-clause token streaming)
 
