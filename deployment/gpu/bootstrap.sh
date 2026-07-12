@@ -35,7 +35,8 @@ apt-get install -y \
   ca-certificates gnupg lsb-release \
   net-tools htop iotop \
   software-properties-common \
-  pciutils
+  pciutils \
+  ffmpeg
 
 # ── 2. NVIDIA Driver (pre-installed on most GPU cloud VMs) ───────────────────
 log "Checking NVIDIA driver..."
