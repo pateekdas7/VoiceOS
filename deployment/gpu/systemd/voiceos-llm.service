@@ -9,13 +9,19 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/opt/voiceos-gpu
 EnvironmentFile=-/opt/voiceos-gpu/.env
-# vLLM serves the LLM on port 8000. --gpu-memory-utilization 0.55 leaves room for
-# Whisper (~1.2 GB) and Veena 3B BF16 + SNAC (~8 GB) on the 23 GB L4.
+# vLLM serves the LLM on port 8000.
+# --gpu-memory-utilization 0.45: vLLM takes ~10,365 MiB of the 23,034 MiB L4.
+# Remaining budget: Veena 3B BF16+SNAC (~8,558 MiB) + Whisper (~1,260 MiB model
+# + ~600 MiB ctranslate2 CUDA workspace peak) = ~10,418 MiB → total ~20,783 MiB,
+# leaving ~2,251 MiB free. The extra headroom vs 0.55 (which left only ~570 MiB)
+# is required for Whisper's encoder working buffers during first inference;
+# without it the STT server OOMs on every transcription request.
+# KV cache at 0.45 ≈ 6,200 MiB @ max_model_len=4096 — adequate for sequential calls.
 ExecStart=/opt/voiceos-gpu/venv/bin/vllm serve /opt/voiceos-gpu/models/qwen2.5-7b-fp8 \
   --dtype auto \
   --port 8000 \
   --max-model-len 4096 \
-  --gpu-memory-utilization 0.55 \
+  --gpu-memory-utilization 0.45 \
   --served-model-name qwen2.5-7b-instruct-fp8
 Restart=on-failure
 RestartSec=10

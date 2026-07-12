@@ -9,7 +9,13 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/opt/voiceos-gpu
 EnvironmentFile=-/opt/voiceos-gpu/.env
-# Whisper FastAPI server on port 8100, int8_float16 compute type (~1.2 GB VRAM).
+# Whisper FastAPI server on port 8100, int8_float16 compute type.
+# server.py runs a mandatory CUDA warmup transcription during startup (before setting
+# _model_ready=True). This pre-allocates ctranslate2's ~600 MiB CUDA encoder workspace.
+# Without warmup, the first real transcription OOMs if VRAM is tight post-load.
+# VRAM: ~1,260 MiB model + ~600 MiB ctranslate2 workspace = ~1,860 MiB total.
+# After=voiceos-llm.service: vLLM must start first so it claims its 0.45-util allocation
+# before STT warmup runs — otherwise remaining VRAM might appear larger than it is.
 ExecStart=/opt/voiceos-gpu/venv/bin/python3 /opt/voiceos-gpu/services/stt/server.py \
   --model-path /opt/voiceos-gpu/models/whisper-large-v3-turbo \
   --compute-type int8_float16 \

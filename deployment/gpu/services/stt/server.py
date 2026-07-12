@@ -17,7 +17,11 @@ Usage (matches restore.sh):
         --port 8100
 
 Architecture: V1 Ch8 (STT); Sprint-009 spec Phase 2.
-VRAM: ~900 MB (Whisper large-v3-turbo, int8_float16).
+VRAM: ~1400 MB (Whisper large-v3-turbo int8_float16 model + ctranslate2 CUDA
+      workspace pre-allocated at warmup). The GPU node's vLLM service must use
+      --gpu-memory-utilization 0.45 (not 0.55) to leave sufficient VRAM headroom
+      for the Whisper encoder's working buffers (~600 MB peak during inference).
+      With 0.55, only ~570 MB is free post-load and OOM occurs on first real inference.
 """
 
 from __future__ import annotations
@@ -212,7 +216,17 @@ def _pcm16le_to_float32(pcm_bytes: bytes) -> np.ndarray:  # type: ignore[type-ar
 
 
 def _load_model(model_path: str, compute_type: str) -> None:
-    """Load the Whisper model into global state."""
+    """Load the Whisper model into global state, then run a warmup inference.
+
+    The warmup is mandatory. ctranslate2 does not pre-allocate its CUDA workspace
+    buffers at model load time — it allocates them lazily on the first call to
+    model.encode(). If the first real inference request arrives when VRAM is
+    already tight (as it is on this L4 with vLLM + Veena co-resident), the lazy
+    allocation fails with CUDA OOM. Running a warmup transcription immediately
+    after model load forces ctranslate2 to allocate and retain its workspace in
+    the pre-allocated VRAM pool, so all subsequent real requests succeed without
+    any additional large allocation. Observed warmup time: ~1-2s.
+    """
     global _model, _model_ready, _model_name
 
     logger.info("Loading Whisper model from %s (compute_type=%s)...", model_path, compute_type)
@@ -227,10 +241,25 @@ def _load_model(model_path: str, compute_type: str) -> None:
         num_workers=1,
     )
     _model_name = "whisper-large-v3-turbo"
-    _model_ready = True
 
     elapsed = (time.monotonic() - t0) * 1000
-    logger.info("Whisper model loaded in %.0f ms", elapsed)
+    logger.info("Whisper model loaded in %.0f ms. Running CUDA warmup...", elapsed)
+
+    # Warmup: 0.5s silence forces ctranslate2 to allocate its CUDA encoder workspace.
+    # This must succeed before _model_ready is set True; if it fails (VRAM), we
+    # crash at startup rather than serving 500s on every real request.
+    t_warmup = time.monotonic()
+    _silence = np.zeros(8000, dtype=np.float32)  # 0.5s at 16kHz
+    try:
+        segs, _info = _model.transcribe(_silence, language="hi", beam_size=1, word_timestamps=False)
+        list(segs)  # consume generator to trigger actual encoder execution
+    except Exception:
+        logger.exception("CUDA warmup failed — likely VRAM OOM. Check GPU memory allocations.")
+        raise
+
+    warmup_ms = (time.monotonic() - t_warmup) * 1000
+    logger.info("CUDA warmup complete in %.0f ms. STT ready.", warmup_ms)
+    _model_ready = True
 
 
 def main() -> None:

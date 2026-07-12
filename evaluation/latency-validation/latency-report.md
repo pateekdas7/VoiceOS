@@ -60,6 +60,32 @@ Before Phase 2 validation, two critical TTS bugs were identified and fixed:
 
 ---
 
+## Sprint-028 Phase 2 Session Fixes (2026-07-11)
+
+Two additional root-cause fixes were applied during this session, enabling the latency test to complete for the first time:
+
+### Fix 5 — STT CUDA OOM (ctranslate2 lazy workspace allocation)
+
+**Symptom:** All 100 calls returned HTTP 500 from STT endpoint.
+
+**Root cause:** ctranslate2 (Whisper backend) lazily allocates its CUDA encoder workspace on the first call to `model.encode()`. With vLLM at `--gpu-memory-utilization 0.55` (12,628 MiB), only 569 MiB remained free. Workspace requires ~600 MiB → OOM on every real transcription.
+
+**Two-part fix:**
+1. Reduced vLLM to `--gpu-memory-utilization 0.45` → frees 2,263 extra MiB (20,289 MiB used, 2,745 MiB free)
+2. Added mandatory warmup transcription in `_load_model()` (0.5s silence) before setting `_model_ready = True` — forces ctranslate2 to pre-allocate and retain its workspace; observed warmup time: 323ms
+
+**Deployed:** Updated `voiceos-llm.service` + `deployment/gpu/services/stt/server.py`, restarted both services.
+
+### Fix 6 — httpx Keepalive Stale Connection Retry
+
+**Symptom:** 6 of 100 calls errored with "Server disconnected without sending a response."
+
+**Root cause:** httpx connection pool reuses TCP connections. After each 5-6s TTS drain, the LLM connection goes idle, vLLM closes it server-side (keepalive timeout), and the next LLM request hits the stale socket.
+
+**Fix:** Added 1-retry logic in `measure_llm_ttft()` on `httpx.RemoteProtocolError` — on stale-socket errors, retries immediately on a new connection.
+
+---
+
 ## Measurement Run A — Termux Mobile → GPU Cloud Path
 
 **Path:** Termux (mobile device, 106.219.155.x) → GPU server (217.18.55.78)
@@ -120,6 +146,31 @@ The test reveals a bimodal performance profile:
 **Cold-GPU path (would PASS on properly rested GPU or first-call-after-idle):**
 - STT p95: ~165ms, LLM p95: ~43ms, TTS TTFA p95: ~725ms
 - First-audio p95: ~933ms — well within 1500ms gate
+
+---
+
+## Measurement Run C — Termux Path (Post-Fix, Session 2 — 2026-07-11)
+
+**Path:** Termux (mobile, 4G) → GPU server (217.18.55.78)  
+**Fixes applied:** STT CUDA OOM (Fix 5) + Keepalive retry (Fix 6)  
+**Script:** `scripts/validate/latency_validation_phase2.py` — 100 calls, 6 keepalive errors (before retry fix applied to this run; retry fix was applied but test was rerun on a subsequently hung GPU)
+
+**Test run results (94 successful calls, 6 keepalive errors at calls 6/8/70/82/88/99):**
+
+| Stage | p50 (ms) | p95 (ms) | min | Notes |
+|---|---|---|---|---|
+| STT (Whisper) | ~822 | ~1000 | 589 | STT CUDA OOM eliminated by Fix 5; server-side warmup now pre-allocates workspace |
+| LLM TTFT (Qwen2.5-7B) | ~279 | ~490 | 224 | Prefix cache hit rate 71% after 100 calls |
+| TTS TTFA (Veena 3B) | ~857 | ~1100 | 773 | Server-side TTFA 660-730ms; client adds ~100-200ms network RTT |
+| **FIRST-AUDIO (gate)** | **~1981** | **~2300** | **1670** | **GATE FAIL** — target 1500ms |
+
+**Key finding:** Minimum observed first_audio = 1670ms (at call 22: STT=589ms + LLM=278ms + TTS=803ms). Even under ideal conditions this node cannot achieve <1500ms due to architectural model latency floor.
+
+**GPU thermal state during test:** No throttling observed in first ~18 calls (first_audio ~1700ms). Gradually rising after that as GPU warms toward TDP. No hard thermal cliff observed during 100-call run (unlike Run B's sharp throttle at call 23) — the 0.45 utilization may have slightly reduced GPU power draw.
+
+**Session notes:**
+- The GPU kernel hung after the test completed (STT stuck on a transcription for 14+ minutes, `nvidia-smi` unresponsive, SIGKILL ineffective). Root cause: likely CUDA kernel deadlock triggered when the test client disconnected mid-inference (processes killed via SIGKILL but GPU context remained allocated). Recovery requires GPU server reboot.
+- Architectural minimum first_audio (no network overhead): STT ~600ms + LLM ~220ms + TTS ~660ms = **~1480ms** — within 20ms of the 1500ms gate. Gate is on the edge of achievable with the current model set, requires optimized intra-DC network path (<5ms RTT) AND no thermal throttling.
 
 ---
 

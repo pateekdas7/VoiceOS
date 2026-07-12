@@ -33,9 +33,12 @@
 #        Sprint-009 Phase 2 switched to the public repo. Weights are BF16, NOT FP16.
 #        The TTS server needs --snac-path pointing at the local SNAC codec.
 #
-#   GPU util: vLLM runs at --gpu-memory-utilization 0.55 (reduced from 0.70) so the
-#        Veena 3B BF16 model (~7,980 MB) fits alongside on the 23 GB L4.
-#        Measured total with all three services: 21,850 MB used / 695 MB free.
+#   GPU util: vLLM runs at --gpu-memory-utilization 0.45 (reduced from 0.55 in Sprint-028).
+#        At 0.55, only 569 MiB remained free after all models loaded; ctranslate2's lazy
+#        CUDA encoder workspace allocation (~600 MiB) OOM-ed on the first real STT request.
+#        At 0.45: vLLM 10,388 MiB + Veena 8,558 MiB + Whisper 1,260 MiB + ctranslate2 ~600 MiB
+#        = 20,289 MiB used / 2,745 MiB free on 23,034 MiB L4.
+#        DO NOT raise above 0.45 without first verifying STT VRAM headroom.
 # ==============================================================================
 
 set -euo pipefail
@@ -120,7 +123,7 @@ else
     --dtype auto \
     --port "${LLM_SERVICE_PORT:-8000}" \
     --max-model-len 4096 \
-    --gpu-memory-utilization "${GPU_MEMORY_FRACTION:-0.55}" \
+    --gpu-memory-utilization "${GPU_MEMORY_FRACTION:-0.45}" \
     --served-model-name "qwen2.5-7b-instruct-fp8" \
     >> "${VOICEOS_GPU_HOME}/logs/llm.log" 2>&1 < /dev/null &
   echo $! > /tmp/voiceos-llm.pid

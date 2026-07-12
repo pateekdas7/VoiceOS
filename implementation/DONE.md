@@ -1,11 +1,67 @@
 # VoiceOS v2 — Completed Sprints
 
-**Last Updated:** 2026-07-08  
-**Completed Sprints:** 27 / 34 (plus TT-002 infrastructure hardening task, resolved 2026-07-04; plus TT-009 reproducibility audit, resolved 2026-07-06) — **Milestone M-6 (SaaS Platform Complete) reached; Epic E6 (SaaS Platform) closed; Epic E7 (Production Alpha) in progress with Sprint-027 complete**
+**Last Updated:** 2026-07-11  
+**Completed Sprints:** 28 / 34 (EXECUTED, NO-GO verdict — plus TT-002 infrastructure hardening task, resolved 2026-07-04; plus TT-009 reproducibility audit, resolved 2026-07-06) — **Milestone M-6 (SaaS Platform Complete) reached; Epic E6 (SaaS Platform) closed; Epic E7 (Production Alpha) in progress; Sprint-028 executed but M-7 NOT achieved**
 
 ---
 
 ## Completed Sprint Log
+
+## Sprint-028 — Performance Validation, Load Testing, Pen Test & Production Alpha Deploy
+
+**Executed:** 2026-07-11  
+**Epic:** E7 — Production Alpha  
+**Verdict:** NO-GO — M-7 Production Alpha milestone not achieved. All evaluation gates executed against real infrastructure.
+
+### What Was Delivered
+
+**Phase 1 — Code:**
+- `src/libs/performance_engineering/` — `profiler.py` (`Profiler`/`ProfilerContext`/`LatencySummary`), `benchmarks.py` (`BenchmarkSuite`/`BenchmarkResult`/`BenchmarkConfig`), `regression_gate.py` (`RegressionGate`/`RegressionResult`), `optimization.py` (`OptimizationEngine`/`OptimizationOpportunity`). 38 tests, 100% module coverage.
+- `docs/security/threat-model.md` — 6 STRIDE categories (Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, Elevation of Privilege).
+- `docs/security/threat-registry.md` — 32 entries (≥22 required).
+- `.github/workflows/ci.yml` Stage 7 — performance regression gate.
+
+**Phase 2 — Evaluation Reports (all committed to `evaluation/`):**
+- `evaluation/latency-validation/latency-report.md` — 3 measurement runs; GATE FAIL (p95=1950ms intra-DC, limit 1500ms); thermal throttling root-caused; cold-GPU path (p95=933ms) passes but not sustained.
+- `evaluation/load-testing/load-test-report.md` — 10-user first_audio p95=16,524ms (TTS serialization); 500-user NOT EXECUTED (GPU fleet required).
+- `evaluation/chaos/chaos-engineering-report.md` — 2/5 PASS; 1/5 PARTIAL; 2/5 BLOCKED.
+- `evaluation/security/pen-test-report.md` — 0 critical; 3 HIGH (PEN-001/002/003: unauthenticated inference endpoints).
+- `evaluation/security/remediation-log.md` — 5 medium findings with remediation plans.
+- `evaluation/compliance/compliance-validation-report.md` — 15/15 pass; CONDITIONAL (audit infrastructure gaps).
+- `evaluation/production-alpha-report.md` — canary NOT EXECUTED (no Argo Rollouts); 7 blocking gaps for M-7 documented.
+
+### What Was Found and Fixed
+
+1. **TTS sliding window 28→21 tokens** — TTFA 856ms → 640ms (`deployment/gpu/services/tts/server.py:80`).
+2. **`torch.compile` removed** — prevented catastrophic 856ms → 15,544ms regression (CUDA graph shape mismatch per autoregressive step).
+3. **CUDA JIT warm-up in `_load_model()`** — prevents 1,610ms first-call spike; `_model_ready = True` set only after warm-up completes.
+4. **Orphaned synthesis thread drain** — prevents 3-5 concurrent orphaned threads from causing 15-17s TTFA under sequential test load.
+5. **STT CUDA OOM (two-part)** — vLLM `--gpu-memory-utilization 0.55 → 0.45` (frees 2,263 MiB; VRAM budget: 20,289 MiB used / 2,745 MiB free) + mandatory warmup transcription in `_load_model()` (323ms; forces ctranslate2 to pre-allocate its ~600 MiB CUDA workspace before first real call).
+6. **httpx keepalive stale socket** — 1-retry on `httpx.RemoteProtocolError` in `measure_llm_ttft()` (prevents "Server disconnected" errors when LLM keepalive connection expires during TTS drain).
+
+### GPU Deployment Documentation Updated
+
+- `deployment/GPU_NODE_STATE.md` — §18 Sprint-028 Changes (VRAM budget, STT warmup, thermal findings, validated performance table)
+- `deployment/gpu/restore.sh` — `GPU_MEMORY_FRACTION` default 0.55 → 0.45
+- `deployment/gpu/systemd/voiceos-llm.service` — `--gpu-memory-utilization 0.45`; VRAM budget comment
+- `deployment/gpu/systemd/voiceos-stt.service` — warmup requirement and ordering dependency documented
+- `deployment/gpu/services/stt/server.py` — mandatory warmup transcription in `_load_model()`
+
+### New Tracking Issues Filed
+
+- **TT-024**: STT CUDA kernel hang — `async def transcribe()` runs blocking ctranslate2 directly in event loop; when client is killed mid-kernel, CUDA context enters unrecoverable deadlock; `nvidia-smi --gpu-reset` not supported on L4; server reboot required. Action (Sprint-029): run in `ThreadPoolExecutor` + timeout + circuit breaker.
+
+### 7 Blocking Gaps for M-7 (Production Alpha)
+
+1. GPU fleet (V7 Ch6) — single L4 thermal throttling prevents sustained p95 ≤ 1.5s
+2. TTS architecture budget ADR — V1 Ch23 250ms unachievable; minimum is 642ms (21 tokens × 32.7ms)
+3. RI-8 unblocked (TT-015) — cross-provider NAT prevents GPU node K8s join
+4. API gateway with auth — PEN-001/002/003 HIGH findings; inference endpoints open
+5. K8s canary mechanism — Argo Rollouts or Flagger required for traffic splitting
+6. Audit durability — append-only sink outside Postgres required for hash chain integrity
+7. Load test at 500 concurrent — blocked by GPU fleet requirement
+
+---
 
 ## Sprint-027 — Monitoring, Alerting, Logging, Tracing & Disaster Recovery
 

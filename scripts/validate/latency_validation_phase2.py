@@ -108,7 +108,12 @@ def measure_stt(client: httpx.Client, stt_url: str) -> float:
 
 
 def measure_llm_ttft(client: httpx.Client, llm_url: str, text: str) -> float:
-    """Stream vLLM /v1/chat/completions. Returns time-to-first-token ms."""
+    """Stream vLLM /v1/chat/completions. Returns time-to-first-token ms.
+
+    Retries once on RemoteProtocolError (stale keepalive connection) — vLLM
+    closes idle connections after ~5s; the httpx pool may hand back a stale
+    socket that fails on first use.
+    """
     payload = {
         "model": "qwen2.5-7b-instruct-fp8",
         "messages": [
@@ -118,26 +123,33 @@ def measure_llm_ttft(client: httpx.Client, llm_url: str, text: str) -> float:
         "stream": True,
         "max_tokens": 48,
     }
-    t0 = time.perf_counter()
-    ttft_ms = 0.0
-    with client.stream("POST", f"{llm_url}/v1/chat/completions", json=payload, timeout=30.0) as resp:
-        resp.raise_for_status()
-        for line in resp.iter_lines():
-            line = line.strip()
-            if not line or line == "data: [DONE]":
-                continue
-            if line.startswith("data:"):
-                try:
-                    chunk = json.loads(line[5:].strip())
-                    delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                    if delta:
-                        ttft_ms = (time.perf_counter() - t0) * 1000
-                        break
-                except (json.JSONDecodeError, IndexError):
-                    continue
-    if ttft_ms == 0.0:
-        ttft_ms = (time.perf_counter() - t0) * 1000
-    return ttft_ms
+    for attempt in range(2):
+        t0 = time.perf_counter()
+        ttft_ms = 0.0
+        try:
+            with client.stream("POST", f"{llm_url}/v1/chat/completions", json=payload, timeout=30.0) as resp:
+                resp.raise_for_status()
+                for line in resp.iter_lines():
+                    line = line.strip()
+                    if not line or line == "data: [DONE]":
+                        continue
+                    if line.startswith("data:"):
+                        try:
+                            chunk = json.loads(line[5:].strip())
+                            delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                            if delta:
+                                ttft_ms = (time.perf_counter() - t0) * 1000
+                                break
+                        except (json.JSONDecodeError, IndexError):
+                            continue
+            if ttft_ms == 0.0:
+                ttft_ms = (time.perf_counter() - t0) * 1000
+            return ttft_ms
+        except httpx.RemoteProtocolError:
+            if attempt == 1:
+                raise
+            # stale keepalive socket — retry immediately on a fresh connection
+            continue
 
 
 def measure_tts_ttfa(client: httpx.Client, tts_url: str, text: str) -> float:
