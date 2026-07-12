@@ -123,3 +123,7 @@ This threat model is the design-time input to the penetration test scope (`evalu
 This threat model and the accompanying `threat-registry.md`, `dfd-level0.svg`, and `dfd-level1.svg` have been produced against the VoiceOS v2 architecture as of Sprint-028 (Production Alpha). Per the Sprint-028 acceptance criteria, this document requires human sign-off before the pen test / canary rollout phase proceeds.
 
 Reviewed and approved by: <engineering lead name/date>
+
+---
+
+**Pre-Sprint-029 Phase 2 Status (2026-07-12):** This document is **awaiting human sign-off**. The threat-registry findings from Sprint-028 pen testing (PEN-005/006/007/009 — all FIXED as of 2026-07-12; see `evaluation/security/remediation-log.md`) have been reflected in this document. Security exposure audit confirmed: inference ports 8000/8100/8200 on the GPU node are internet-reachable from external networks (verified 2026-07-12). This is a known, accepted staging configuration — the inference services have no authentication and are protected only by the PEN-005/007 speaker whitelist (TTS) and PEN-009 text-length cap (TTS). Sprint-029 Phase 2 founder validation must not begin until this document is signed off by the engineering lead.

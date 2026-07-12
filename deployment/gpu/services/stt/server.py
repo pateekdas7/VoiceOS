@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Whisper STT Inference Server — Sprint-009 GPU deployment.
 
-Runs on the GPU node (217.18.55.19). Loads Whisper large-v3-turbo via
+Runs on the GPU node (IP ephemeral; see GPU_NODE_STATE.md). Loads Whisper large-v3-turbo via
 faster-whisper with int8_float16 compute type. Exposes a FastAPI HTTP server
 on port 8100 for the CPU-side WhisperAdapter to call.
 
@@ -18,10 +18,10 @@ Usage (matches restore.sh):
 
 Architecture: V1 Ch8 (STT); Sprint-009 spec Phase 2.
 VRAM: ~1400 MB (Whisper large-v3-turbo int8_float16 model + ctranslate2 CUDA
-      workspace pre-allocated at warmup). The GPU node's vLLM service must use
-      --gpu-memory-utilization 0.45 (not 0.55) to leave sufficient VRAM headroom
-      for the Whisper encoder's working buffers (~600 MB peak during inference).
-      With 0.55, only ~570 MB is free post-load and OOM occurs on first real inference.
+      workspace pre-allocated at warmup). The GPU node's vLLM service must leave
+      ≥1400 MiB VRAM free for ctranslate2 encoder buffers; tight VRAM (<1000 MiB
+      free) causes CUDA allocator fragmentation and periodic STT latency spikes.
+      See GPU_NODE_STATE.md for the validated gpu-memory-utilization setting.
 """
 
 from __future__ import annotations
@@ -31,13 +31,14 @@ import asyncio
 import concurrent.futures
 import logging
 import struct
+import threading
 import time
 from typing import Any
 
 import numpy as np
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 logging.basicConfig(
@@ -45,6 +46,25 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 logger = logging.getLogger("voiceos.stt.server")
+
+# ---------------------------------------------------------------------------
+# Prometheus metrics (thread-safe counters; no external dependency)
+# ---------------------------------------------------------------------------
+
+_metrics_lock = threading.Lock()
+_metrics: dict[str, float] = {
+    "requests_success": 0.0,
+    "requests_error": 0.0,
+    "requests_timeout": 0.0,
+    "latency_sum_ms": 0.0,
+    "latency_count": 0.0,
+}
+
+
+def _inc(key: str, value: float = 1.0) -> None:
+    with _metrics_lock:
+        _metrics[key] += value
+
 
 # ---------------------------------------------------------------------------
 # Global model state
@@ -106,7 +126,7 @@ class TranscribeResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Health endpoints
+# Health and metrics endpoints
 # ---------------------------------------------------------------------------
 
 
@@ -114,6 +134,38 @@ class TranscribeResponse(BaseModel):
 async def liveness() -> JSONResponse:
     """Liveness probe — always returns 200 if the process is alive."""
     return JSONResponse({"status": "alive", "service": "voiceos-stt"})
+
+
+@app.get("/metrics")
+async def metrics() -> Response:
+    """Prometheus text-format metrics endpoint (TT-017)."""
+    with _metrics_lock:
+        m = dict(_metrics)
+    ready = 1 if _model_ready else 0
+    avg_ms = (m["latency_sum_ms"] / m["latency_count"]) if m["latency_count"] > 0 else 0.0
+    lines = [
+        "# HELP voiceos_stt_requests_total Total STT transcription requests",
+        "# TYPE voiceos_stt_requests_total counter",
+        f'voiceos_stt_requests_total{{status="success"}} {int(m["requests_success"])}',
+        f'voiceos_stt_requests_total{{status="error"}} {int(m["requests_error"])}',
+        f'voiceos_stt_requests_total{{status="timeout"}} {int(m["requests_timeout"])}',
+        "# HELP voiceos_stt_model_ready Whether the STT model is loaded and ready (1=ready)",
+        "# TYPE voiceos_stt_model_ready gauge",
+        f"voiceos_stt_model_ready {ready}",
+        "# HELP voiceos_stt_latency_ms_sum Sum of successful transcription latencies (ms)",
+        "# TYPE voiceos_stt_latency_ms_sum counter",
+        f"voiceos_stt_latency_ms_sum {m['latency_sum_ms']:.1f}",
+        "# HELP voiceos_stt_latency_ms_count Number of completed transcriptions",
+        "# TYPE voiceos_stt_latency_ms_count counter",
+        f"voiceos_stt_latency_ms_count {int(m['latency_count'])}",
+        "# HELP voiceos_stt_latency_ms_avg Average transcription latency (ms)",
+        "# TYPE voiceos_stt_latency_ms_avg gauge",
+        f"voiceos_stt_latency_ms_avg {avg_ms:.1f}",
+    ]
+    return Response(
+        content="\n".join(lines) + "\n",
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
 
 
 @app.get("/health/ready")
@@ -174,13 +226,18 @@ async def transcribe(request: TranscribeRequest) -> TranscribeResponse:
     try:
         all_segments, info = await asyncio.wait_for(future, timeout=_TRANSCRIPTION_TIMEOUT_S)
     except asyncio.TimeoutError as exc:
+        _inc("requests_timeout")
         logger.error("Whisper transcription timed out after %.0fs", _TRANSCRIPTION_TIMEOUT_S)
         raise HTTPException(status_code=504, detail="Transcription timed out") from exc
     except Exception as exc:
+        _inc("requests_error")
         logger.exception("Whisper transcription failed")
         raise HTTPException(status_code=500, detail=f"Transcription error: {exc}") from exc
 
     latency_ms = (time.monotonic() - t_start) * 1000
+    _inc("requests_success")
+    _inc("latency_sum_ms", latency_ms)
+    _inc("latency_count")
 
     words: list[WordResult] = []
     total_words = sum(len(seg.words or []) for seg in all_segments)

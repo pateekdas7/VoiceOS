@@ -33,6 +33,7 @@ import argparse
 import asyncio
 import logging
 import queue
+import threading
 import time
 from collections.abc import AsyncIterator, Iterator
 from threading import Thread
@@ -42,7 +43,7 @@ import numpy as np
 import torch  # type: ignore[import-not-found]
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 logging.basicConfig(
@@ -50,6 +51,24 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 logger = logging.getLogger("voiceos.tts.server")
+
+# ---------------------------------------------------------------------------
+# Prometheus metrics (thread-safe counters; no external dependency)
+# ---------------------------------------------------------------------------
+
+_metrics_lock = threading.Lock()
+_metrics: dict[str, float] = {
+    "requests_success": 0.0,
+    "requests_error": 0.0,
+    "ttfa_sum_ms": 0.0,
+    "ttfa_count": 0.0,
+}
+
+
+def _inc(key: str, value: float = 1.0) -> None:
+    with _metrics_lock:
+        _metrics[key] += value
+
 
 # ---------------------------------------------------------------------------
 # Global model state
@@ -130,6 +149,37 @@ async def liveness() -> JSONResponse:
     return JSONResponse({"status": "alive", "service": "voiceos-tts"})
 
 
+@app.get("/metrics")
+async def metrics() -> Response:
+    """Prometheus text-format metrics endpoint (TT-017)."""
+    with _metrics_lock:
+        m = dict(_metrics)
+    ready = 1 if _model_ready else 0
+    avg_ms = (m["ttfa_sum_ms"] / m["ttfa_count"]) if m["ttfa_count"] > 0 else 0.0
+    lines = [
+        "# HELP voiceos_tts_requests_total Total TTS synthesis requests",
+        "# TYPE voiceos_tts_requests_total counter",
+        f'voiceos_tts_requests_total{{status="success"}} {int(m["requests_success"])}',
+        f'voiceos_tts_requests_total{{status="error"}} {int(m["requests_error"])}',
+        "# HELP voiceos_tts_model_ready Whether the TTS model is loaded and ready (1=ready)",
+        "# TYPE voiceos_tts_model_ready gauge",
+        f"voiceos_tts_model_ready {ready}",
+        "# HELP voiceos_tts_ttfa_ms_sum Sum of time-to-first-audio latencies (ms)",
+        "# TYPE voiceos_tts_ttfa_ms_sum counter",
+        f"voiceos_tts_ttfa_ms_sum {m['ttfa_sum_ms']:.1f}",
+        "# HELP voiceos_tts_ttfa_ms_count Number of completed synthesis requests",
+        "# TYPE voiceos_tts_ttfa_ms_count counter",
+        f"voiceos_tts_ttfa_ms_count {int(m['ttfa_count'])}",
+        "# HELP voiceos_tts_ttfa_ms_avg Average time-to-first-audio latency (ms)",
+        "# TYPE voiceos_tts_ttfa_ms_avg gauge",
+        f"voiceos_tts_ttfa_ms_avg {avg_ms:.1f}",
+    ]
+    return Response(
+        content="\n".join(lines) + "\n",
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
+
+
 @app.get("/health/ready")
 async def readiness() -> JSONResponse:
     if not _model_ready:
@@ -198,21 +248,29 @@ async def synthesize(request: SynthesizeRequest) -> StreamingResponse:
                 return _done
 
         first_chunk = True
+        ttfa_recorded = False
         while True:
             result = await loop.run_in_executor(None, _next_chunk)
             if result is _done:
                 break
             chunk = cast(bytes, result)
             if first_chunk:
+                ttfa_ms = (time.monotonic() - t_start) * 1000
                 logger.info(
                     "First audio chunk: %d chars -> %d bytes @ %.0f ms | speaker=%s",
                     len(text),
                     len(chunk),
-                    (time.monotonic() - t_start) * 1000,
+                    ttfa_ms,
                     request.speaker,
                 )
+                _inc("requests_success")
+                _inc("ttfa_sum_ms", ttfa_ms)
+                _inc("ttfa_count")
                 first_chunk = False
+                ttfa_recorded = True
             yield chunk
+        if not ttfa_recorded:
+            _inc("requests_error")
         elapsed = (time.monotonic() - t_start) * 1000
         logger.info(
             "Stream done: %d chars in %.0f ms | speaker=%s",
