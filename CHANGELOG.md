@@ -28,6 +28,194 @@ TT-019 (needs load-test observation once metrics exist), TT-021's remaining half
 
 ---
 
+## [v2.0.29-phase1] — Sprint-029 Phase 1 — Founder Validation Suite (2026-07-12)
+
+> **Status: Phase 1 COMPLETE. Phase 2 PENDING infrastructure.**
+> All offline evaluation tooling implemented and tested. Phase 2 (AI calls + human review + production traces) blocked until CPU/GPU servers are available.
+
+### Added
+
+- **`tests/ai_eval/founder_validation_suite.py`** — Full evaluation harness for Sprint-029 Founder Validation gate:
+  - `LawOfAuthorityReplayChecker` — replays agent turns against `TranscriptCustomerContext`, detects invented amounts/dates/loan IDs (RI-5). Skips turns with `negotiation_offer_inr` set (those are handled by NegotiationEnvelopeChecker, not LoA).
+  - `RBIComplianceChecker` — checks calling hours (8:00–20:00), frequency (< 3 calls/day), no abusive/threatening language in agent turns.
+  - `NegotiationEnvelopeChecker` — validates all agent settlement offers within `[floor, ceiling]` where `floor = minimum_settlement_pct × outstanding`.
+  - `IntentAccuracyEvaluator` — replays customer turns through `IntentEngine` (keyword mode when no ONNX model) vs. human-labeled intents; gate ≥ 90%.
+  - `FounderValidationSuite` — orchestrator with `load_transcripts()`, `evaluate_call()`, `run()`.
+  - `FounderValidationReport` — aggregate result; Phase-2 fields (`tone_empathy_score`, `language_naturalness_score`, `audio_mos_score`, `first_audio_p95_ms`, `call_completion_rate`, `founder_signed_off`) all `None`/`False` — not populated until real infrastructure execution.
+
+- **`evaluation/call-samples/synthetic/`** — 5 synthetic call transcript fixtures:
+  - `good_call_001.json` — 0 violations (all automated checks pass)
+  - `loa_violation_001.json` — 2 LoA violations (agent invents Rs. 75,000; actual Rs. 50,000)
+  - `rbi_calling_hours_violation_001.json` — 1 RBI violation (call at 07:xx)
+  - `rbi_frequency_violation_001.json` — 1 RBI violation (calls_today_count=3 at maximum)
+  - `negotiation_floor_violation_001.json` — 1 negotiation violation (offer Rs. 10,000 below floor Rs. 25,000)
+
+- **`tests/unit/ai_eval/test_founder_validation_suite.py`** — 81 unit tests across 8 test classes:
+  - `TestCallTranscriptFromJson` — loading and error handling
+  - `TestLawOfAuthorityReplayChecker` — 11 tests incl. floor-as-authoritative, neg-offer-skip
+  - `TestRBIComplianceChecker` — 12 tests incl. boundary hours (7/8/19/20) and frequency (2/3)
+  - `TestNegotiationEnvelopeChecker` — 9 tests incl. exact floor/ceiling boundary passes
+  - `TestIntentAccuracyEvaluator` — 9 tests, marked `@requires_pydantic_v2`
+  - `TestFounderValidationSuite` — integration tests with stub evaluator
+  - `TestFounderValidationReportPhase2Pending` — 10 regression guards against accidental Phase-2 fabrication
+  - `TestCallEvalResult`, `TestFounderValidationReportProperties` — property tests
+  - 72 pass locally (pydantic v1 Termux environment); 9 skipped (`@requires_pydantic_v2`, pass in CI)
+
+- **`evaluation/founder-validation-report.md`** — Report template with Phase 1 check tables, Phase 2 human-review rubrics, and founder sign-off checklist.
+
+- **`tests/unit/ai_eval/__init__.py`** — Package marker for test discovery.
+
+### Changed
+
+- `tests/ai_eval/founder_validation_suite.py`:
+  - `IntentAccuracyEvaluator.__init__` accepts optional `model: IntentModel | None` for deterministic unit testing.
+  - `FounderValidationSuite.__init__` accepts optional `intent_evaluator: IntentAccuracyEvaluator | None` for test injection.
+  - Pydantic-v2 imports (`IntentEngine`, `TurnInput`, `TurnRole`, `UtteranceSegment`) deferred to method bodies — checkers are importable without pydantic v2.
+  - `CallTranscript.from_json` wraps all parse errors in `ValueError("Failed to load transcript …")`.
+  - `LawOfAuthorityReplayChecker` skips agent turns with `negotiation_offer_inr is not None` (offer amounts are not factual claims; NegotiationEnvelopeChecker handles bounds).
+
+### Phase 2 Pending (BLOCKED until servers available)
+
+- Run suite against ≥ 50 real call transcripts
+- OTel-trace first-audio p95 (gate ≤ 1,500ms — dependent on Sprint-028 AC-1)
+- Human reviewer Tone & Empathy score (gate ≥ 3.5/5)
+- Human reviewer Language Naturalness score (gate ≥ 3.5/5)
+- Audio MOS from Veena 3B output (gate ≥ 3.5/5)
+- Call Completion Rate ≥ 90%
+- Founder sign-off
+
+---
+
+## [v2.0.28] — Sprint-028 — Performance Validation, Load Testing, Pen Test & Production Alpha Deploy (2026-07-11)
+
+> **Status: EXECUTED / NO-GO.** All Phase 2 evaluation gates executed against real GPU + CPU infrastructure. **M-7 Production Alpha milestone NOT achieved.** Six evaluation reports committed to `evaluation/`. Four TTS bugs fixed during execution (10× TTFA improvement: 15,544ms → 728ms p50). Two infrastructure bugs fixed (STT CUDA OOM, httpx keepalive stale socket). Seven blocking gaps remain before M-7 can be achieved — see `evaluation/production-alpha-report.md`.
+
+### Phase 1 — Performance Engineering Library and Security Deliverables
+
+**`src/libs/performance_engineering/`** — `profiler.py` (`Profiler`, `ProfilerContext`, per-stage latency capture, `LatencySummary` p50/p95/p99), `benchmarks.py` (`BenchmarkSuite`, `BenchmarkResult`, `BenchmarkConfig`, configurable `run_benchmarks()`), `regression_gate.py` (`RegressionGate`, per-metric threshold comparison, `RegressionResult`), `optimization.py` (`OptimizationEngine`, bottleneck identification, `OptimizationOpportunity`). 38 unit tests, 100% module coverage (test run executed on CPU node — pydantic-core compilation unavailable on Termux/ARM).
+
+**`docs/security/threat-model.md`** — All 6 STRIDE categories documented (Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, Elevation of Privilege).
+
+**`docs/security/threat-registry.md`** — 32 entries (≥22 required), covering cross-layer threat surface from audio ingestion to LLM inference to data persistence.
+
+**`.github/workflows/ci.yml`** — Stage 7: Performance Regression Gate wired (`scripts/check_performance_regression.py`), blocking CI on latency regressions.
+
+### Phase 2 — Latency Validation (GPU node: 217.18.55.78, NVIDIA L4 24GB)
+
+**Stage: Whisper-large-v3-turbo (STT) + Qwen2.5-7B-FP8 (LLM) + Veena 3B BF16 (TTS).**
+
+**Run A — Termux mobile → GPU cloud path (100 calls):**
+
+| Stage | p50 (ms) | p95 (ms) | p99 (ms) | Budget | Status |
+|---|---|---|---|---|---|
+| STT (Whisper) | 344 | 1356 | 2194 | 300ms | OVER (mobile path) |
+| LLM TTFT | 63 | 130 | 389 | 350ms | **PASS** |
+| TTS TTFA | 728 | 860 | 952 | 250ms | OVER (architecture) |
+| **first_audio** | **1177** | **2357** | **3301** | **≤1500ms** | **FAIL** |
+
+STT spikes at p95 caused by TCP keepalive reconnect from mobile client (mobile artifact, not GPU/application issue).
+
+**Run B — Intra-DC CPU node → GPU path (100 calls, production-representative):**
+
+| Stage | p50 (ms) | p95 (ms) | min | Status |
+|---|---|---|---|---|
+| STT (Whisper) | 380 | 393 | 157 | OVER |
+| LLM TTFT | 78 | 82 | 41 | **PASS** |
+| TTS TTFA | 1436 | 1480 | 718 | OVER |
+| **first_audio** | **1897** | **1950** | **915** | **FAIL** |
+
+Bimodal profile: cold-GPU (calls 1–22) first_audio ~920ms **(PASS)**; throttled-GPU (calls 23–100, after 110s continuous inference) first_audio ~1900ms **(FAIL)**. The L4 hit its 72W TDP ceiling after ~110s, reducing clocks from 2040 MHz to ~1000 MHz (~49% of boost) — all three models simultaneously doubled in latency.
+
+**Run C — Post-fix path (94/100 calls, 6 keepalive errors before retry fix applied):**
+
+- first_audio p50~1981ms, p95~2300ms, min=1670ms
+- Architectural minimum: STT ~600ms + LLM ~220ms + TTS ~660ms = **~1480ms** — within 20ms of gate. Gate is achievable only with fully-cooled GPU and intra-DC path (<5ms RTT).
+
+**TTS architecture budget gap (requires ADR):** V1 Ch23 allocates 250ms for TTS first-clause. Veena 3B BF16 + SNAC 24kHz minimum is 21 tokens × 32.7ms/tok = **642ms** — physically unachievable within 250ms budget. Budget revision (250ms → ~750ms) requires an ADR.
+
+### Phase 2 — Load Testing (scripts/load_test/locust_voice_call.py)
+
+- **10-user concurrent:** STT p95=394ms, LLM TTFT p95=85ms, TTS TTFA p95=15,941ms, first_audio p95=**16,524ms**. Root cause: TTS serializes all synthesis on single L4 — one 5-6s generation blocks all others.
+- **500-user test:** NOT EXECUTED. Single L4 saturates at 10 concurrent calls. A GPU fleet (V7 Ch6) is required.
+- `evaluation/load-testing/load-test-report.md` committed.
+
+### Phase 2 — Chaos Engineering (2/5 PASS, 1/5 PARTIAL, 2/5 BLOCKED)
+
+| Scenario | Gate | Result |
+|---|---|---|
+| STT pod restart | Recovery < 3s | **PARTIAL** (recovered in 2,385ms warmup but test harness connection gap) |
+| Redis failure | 0 data loss, calls continue | **PASS** (3,255ms recovery, 0 PTP row loss) |
+| Postgres failure | 0 duplicate PTPs | **PASS** (5,420ms recovery, idempotency held) |
+| GPU node failure (fleet failover) | ≤5 calls dropped | **BLOCKED** (single node, no fleet failover target) |
+| Stub pod scaling | HPA scales under load | **BLOCKED** (stub pods, no real scaling path) |
+
+`evaluation/chaos/chaos-engineering-report.md` committed.
+
+### Phase 2 — Security Pen Test
+
+- **Critical findings:** 0
+- **HIGH findings:** 3 (PEN-001/002/003 — STT, LLM, TTS endpoints expose no authentication; direct HTTP access allows unauthenticated inference; exploitability conditional on API gateway deployment)
+- **MEDIUM findings:** 5 (tracked in remediation log with plans)
+- **Verdict:** CONDITIONAL PASS — inference endpoints must be placed behind API gateway with JWT/mTLS before production exposure.
+- `evaluation/security/pen-test-report.md` + `evaluation/security/remediation-log.md` committed.
+
+### Phase 2 — Compliance Validation
+
+- 15/15 RBI/DPDP enforcement tests pass (consent gate, call-time restrictions, data-retention TTL, audit read-back, PII redaction in logs).
+- CONDITIONAL: audit hash chain and policy-logging gaps (audit trail requires immutable-sink append, currently in-Postgres only; policy violation log relies on Prometheus, no guaranteed durability for audit).
+- `evaluation/compliance/compliance-validation-report.md` committed.
+
+### Phase 2 — Production Alpha Deploy Verdict
+
+**NO-GO.** M-7 Production Alpha milestone not achieved.
+
+**Canary infrastructure absent:** `FleetRolloutManager` exists as Python ring-assignment logic but K8s traffic splitting (Argo Rollouts, Flagger, or weighted ingress) is not deployed. 5%→25%→50%→100% canary cannot execute.
+
+**7 blocking gaps for M-7:**
+1. GPU fleet deployment (V7 Ch6) — single L4 cannot sustain p95 ≤ 1.5s under continuous load (thermal throttling)
+2. TTS architecture budget ADR — V1 Ch23 250ms budget unachievable; requires 750ms revision
+3. RI-8 (GPU Scheduler) unblocked — TT-015 cross-provider NAT prevents K8s cluster join
+4. API gateway with auth — PEN-001/002/003 HIGH findings; inference endpoints currently open
+5. K8s canary mechanism — Argo Rollouts or Flagger required
+6. Audit durability gap — hash chain append-only sink outside of Postgres needed
+7. Load test at 500 concurrent — cannot be run until GPU fleet exists
+
+### Bugs Found and Fixed
+
+**TTS fixes (pre-Phase 2 validation, enabling testing to proceed):**
+
+1. **Sliding window 28→21 tokens (`deployment/gpu/services/tts/server.py:80`)** — `_SLIDING_WINDOW_TOKENS` changed from 28 (4 SNAC frames) to 21 (3 SNAC frames, middle frame clean). TTFA baseline: 856ms → 640ms.
+2. **`torch.compile` removed** — `mode="reduce-overhead"` caused TTFA to jump 856ms → 15,544ms (17× regression). Root cause: CUDA graph shape mismatch per autoregressive step as KV cache and sequence length change each token. Removed entirely.
+3. **CUDA JIT warm-up added in `_load_model()`** — without warm-up, first-call TTFA was 1,610ms (Triton/HuggingFace JIT compiles CUDA kernels on first use). Fixed by running `_stream_synthesis_sync("hello", ...)` to completion before setting `_model_ready = True`.
+4. **Orphaned synthesis thread drain in test harness** — `measure_tts_ttfa()` broke after first audio chunk, leaving background Veena threads running; with 100 sequential calls, 3-5 concurrent orphaned threads caused 15-17s TTFA. Fixed by draining the full response before returning.
+
+**Phase 2 session fixes (enabling latency test to complete):**
+
+5. **STT CUDA OOM (`deployment/gpu/services/stt/server.py` + `deployment/gpu/systemd/voiceos-llm.service`)** — ctranslate2 lazily allocates ~600 MiB CUDA encoder workspace on first `model.encode()`; vLLM at `--gpu-memory-utilization 0.55` left only 569 MiB free → OOM on every STT request. Two-part fix: (a) vLLM reduced to `--gpu-memory-utilization 0.45` (frees 2,263 extra MiB, leaving 2,745 MiB free); (b) mandatory warmup transcription (0.5s silence) added to `_load_model()` before setting `_model_ready = True` — forces ctranslate2 to pre-allocate and retain its workspace. Warmup time: 323ms.
+6. **httpx keepalive stale socket retry (`scripts/validate/latency_validation_phase2.py`)** — after each 5-6s TTS drain, the LLM connection goes idle and vLLM closes it server-side; next LLM call hits the stale socket → `httpx.RemoteProtocolError`. Fixed by adding 1-retry on `RemoteProtocolError` in `measure_llm_ttft()`.
+
+### GPU Deployment Documentation Updated
+
+- **`deployment/GPU_NODE_STATE.md`** — New §18 Sprint-028 Changes: §18.1 vLLM 0.55→0.45 root cause and fix, §18.2 STT mandatory CUDA warmup (323ms, `_model_ready` only after warmup succeeds), §18.3 validated performance table. VRAM budget table updated (Qwen 12,628 MiB → 10,388 MiB; total 20,289 MiB / 2,745 MiB free). Thermal throttling explained, architectural constraint noted.
+- **`deployment/gpu/restore.sh`** — `GPU_MEMORY_FRACTION` default changed 0.55 → 0.45; warning comment added ("DO NOT raise above 0.45 without verifying STT VRAM headroom").
+- **`deployment/gpu/systemd/voiceos-llm.service`** — `--gpu-memory-utilization 0.45` (changed from 0.55); VRAM budget comment block added.
+- **`deployment/gpu/systemd/voiceos-stt.service`** — 7-line comment added explaining warmup requirement, VRAM details, ordering dependency on voiceos-llm.
+- **`deployment/gpu/services/stt/server.py`** — Mandatory warmup transcription in `_load_model()` (0.5s silence, `_model_ready = True` only after warmup succeeds).
+
+### New Tracking Issues
+
+- **TT-024**: STT service hangs GPU kernel when transcription is aborted mid-call. Root causes: (a) `async def transcribe()` calls blocking `_model.transcribe()` (ctranslate2) directly in the event loop with no timeout; (b) when the client process is killed mid-CUDA-kernel, the kernel deadlocks; existing CUDA contexts degrade (LLM TTFT: 270ms → 6018ms); zombie STT process survives SIGKILL; `nvidia-smi --gpu-reset` not supported on L4 — server reboot required. Action: run `_model.transcribe()` in `ThreadPoolExecutor`, add timeout, add circuit breaker (Sprint-029).
+
+### Verification
+
+**Phase 1 (CPU node):** 38 performance-engineering tests pass, 100% module coverage. Threat model + registry verified (6 STRIDE categories, 32 registry entries).
+
+**Phase 2 (GPU node + CPU node):** Six evaluation reports committed to `evaluation/`. Latency validation completed (100 calls across 3 measurement runs). Load test completed at 10-user concurrency; 500-user blocked by single-GPU saturation. Chaos engineering: 2/5 PASS, 1/5 PARTIAL, 2/5 BLOCKED. Security pen test: 0 critical, 3 conditional HIGH. Compliance: 15/15 pass. Canary NOT EXECUTED (K8s mechanism absent).
+
+**Production Alpha:** NO-GO. M-7 milestone NOT achieved. 7 blocking gaps documented in `evaluation/production-alpha-report.md`.
+
+---
+
 ## [v2.0.27] — Sprint-027 — Monitoring, Alerting, Logging, Tracing & Disaster Recovery (2026-07-08)
 
 > **Status: COMPLETE.** Phase 1 (local code + tests) and Phase 2 (real deployment + validation on the CPU node) are both done. The full production observability stack is deployed for real into the `voiceos-ops` namespace, alongside `CostOptimizerService`/`OpsAnalyticsService` and the fleet-level GPU operational tooling. A real Postgres failover DR drill completed with zero data loss.
