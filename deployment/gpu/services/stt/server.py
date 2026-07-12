@@ -27,6 +27,8 @@ VRAM: ~1400 MB (Whisper large-v3-turbo int8_float16 model + ctranslate2 CUDA
 from __future__ import annotations
 
 import argparse
+import asyncio
+import concurrent.futures
 import logging
 import struct
 import time
@@ -56,7 +58,14 @@ _model_name: str = "large-v3-turbo"
 # FastAPI app
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="VoiceOS STT Service", version="0.9.0")
+app = FastAPI(title="VoiceOS STT Service", version="0.9.1")
+
+# Thread pool dedicated to Whisper inference so ctranslate2 CUDA calls never
+# block uvicorn's async event loop. A single worker serializes requests, which
+# matches ctranslate2's own single-GPU-context design; add workers here only
+# if a multi-GPU configuration is introduced.
+_TRANSCRIPTION_TIMEOUT_S = 30.0
+_stt_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="stt-worker")
 
 
 # ---------------------------------------------------------------------------
@@ -151,13 +160,22 @@ async def transcribe(request: TranscribeRequest) -> TranscribeResponse:
     t_start = time.monotonic()
     lang = request.language or None  # None triggers auto-detect
 
-    try:
-        segments, info = _model.transcribe(
+    def _run_transcribe() -> tuple[Any, Any]:
+        segs, inf = _model.transcribe(
             audio_f32,
             language=lang,
             beam_size=request.beam_size,
             word_timestamps=True,
         )
+        return list(segs), inf  # materialise generator inside the thread
+
+    loop = asyncio.get_running_loop()
+    future = loop.run_in_executor(_stt_executor, _run_transcribe)
+    try:
+        all_segments, info = await asyncio.wait_for(future, timeout=_TRANSCRIPTION_TIMEOUT_S)
+    except asyncio.TimeoutError as exc:
+        logger.error("Whisper transcription timed out after %.0fs", _TRANSCRIPTION_TIMEOUT_S)
+        raise HTTPException(status_code=504, detail="Transcription timed out") from exc
     except Exception as exc:
         logger.exception("Whisper transcription failed")
         raise HTTPException(status_code=500, detail=f"Transcription error: {exc}") from exc
@@ -165,7 +183,6 @@ async def transcribe(request: TranscribeRequest) -> TranscribeResponse:
     latency_ms = (time.monotonic() - t_start) * 1000
 
     words: list[WordResult] = []
-    all_segments = list(segments)
     total_words = sum(len(seg.words or []) for seg in all_segments)
     word_count = 0
     for seg in all_segments:

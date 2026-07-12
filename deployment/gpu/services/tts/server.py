@@ -89,7 +89,12 @@ _SNAC_MAX_TOKEN = _AUDIO_CODE_BASE_OFFSET + _TOKENS_PER_FRAME * _SNAC_CODEBOOK_S
 # FastAPI app
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="VoiceOS TTS Service", version="1.0.0")
+app = FastAPI(title="VoiceOS TTS Service", version="1.0.1")
+
+# Allowlist of speaker IDs whose voice models are loaded on this node (PEN-005).
+# Rejecting unknown speakers at the API boundary prevents prompt-injection via
+# the speaker field and avoids speculative model loads that would OOM on L4.
+_ALLOWED_SPEAKERS: frozenset[str] = frozenset({"kavya"})
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +161,12 @@ async def synthesize(request: SynthesizeRequest) -> StreamingResponse:
     """
     if not _model_ready:
         raise HTTPException(status_code=503, detail="Model not ready")
+
+    if request.speaker not in _ALLOWED_SPEAKERS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown speaker '{request.speaker}'. Allowed: {sorted(_ALLOWED_SPEAKERS)}",
+        )
 
     text = request.text.strip()
     if not text:
