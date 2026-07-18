@@ -109,22 +109,29 @@ models:
       # No --dtype or --quantization flags: vLLM auto-detects compressed-tensors FP8
       # from the model's quantization_config in config.json.
       # --dtype auto reads torch_dtype=bfloat16 from model config (non-quantized ops).
+      # --gpu-memory-utilization 0.32: calibrated for A6000 (46,068 MiB) on 2026-07-18.
+      #   Weights: 8.17 GiB | CUDA graphs: 0.51 GiB | KV cache: 5.72 GiB
+      #   26 concurrent sessions at max 4096 tokens; 79 at typical 1,350 tokens.
+      #   Freed ~10.2 GiB vs 0.55 with no TTFT or throughput impact.
       command: >
         /opt/voiceos-gpu/venv/bin/vllm serve /opt/voiceos-gpu/models/qwen2.5-7b-fp8/
           --dtype auto
           --port 8000
           --max-model-len 4096
-          --gpu-memory-utilization 0.55
+          --gpu-memory-utilization 0.32
           --served-model-name qwen2.5-7b-instruct-fp8
 
-    # NOTE: --gpu-memory-utilization reduced 0.70 → 0.55 and --max-model-len 8192 → 4096
-    # in Sprint-009 Phase 2 to fit Veena 3B BF16 (7,980 MB) alongside on the 23 GB L4.
-    vram_mb: 16384                 # scheduler reservation; measured footprint 12,628 MB @0.55
+    # NOTE: --gpu-memory-utilization history:
+    #   0.70 → 0.55: Sprint-009 Phase 2, to fit Veena 3B BF16 on 23 GB L4.
+    #   0.55 → 0.32: 2026-07-18, A6000 (46 GB). At 0.55 vLLM claimed 25 GB (15.9 GB KV
+    #               cache, 72× concurrency) — overprovisioned for VoiceOS voice workload.
+    #               0.32 gives 5.72 GB KV cache (26× @ 4096 tok), sufficient and measured.
+    vram_mb: 10240                 # scheduler reservation; actual ~14,742 MiB total (weights+KV+graphs)
     port: 8000
     health_check: "curl -sf http://localhost:8000/health"
     latency_target_ms:
       ttft_p95: 500
-    measured_ttft_ms: 208          # Sprint-009 Phase 2
+    measured_ttft_ms: 57           # Phase 0 A6000 measurement (was 208ms on L4)
     streaming: true
 
   # ── TTS: Veena (3B BF16) + SNAC 24 kHz codec ───────────────────────────────

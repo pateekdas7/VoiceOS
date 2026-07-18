@@ -12,15 +12,30 @@ EnvironmentFile=-/opt/voiceos-gpu/.env
 # CUDA 13.0 forward compatibility (see voiceos-stt.service for full note).
 Environment=LD_LIBRARY_PATH=/usr/local/cuda-13.0/compat:/usr/local/cuda-13.0/lib64
 # vLLM serves the LLM on port 8000.
-# --gpu-memory-utilization 0.55: on the A6000 (46 GB) this allocates ~25 GB to Qwen,
-# leaving ~21 GB for Veena 3B BF16+SNAC (~8 GB) + Whisper (~1.9 GB) with headroom.
-# On the old L4 (23 GB) use 0.45 to avoid OOM during Whisper's CUDA warmup.
-# KV cache at 0.55 ≈ 18,000 MiB @ max_model_len=4096 on A6000.
+#
+# --gpu-memory-utilization 0.32 (reduced from 0.55, 2026-07-18):
+#
+# Measured at 0.55 on A6000 (46,068 MiB):
+#   Weights:     8.17 GiB  (exact, from vLLM startup log model_runner.py:302)
+#   CUDA graphs: 0.51 GiB  (captured at startup)
+#   KV cache:   15.91 GiB  (kv_cache_dtype=auto → FP8; 297,936 token slots; 72.74× concurrency)
+#   Total:      ~25,300 MiB reserved — 72 concurrent sessions at 4096 tokens
+#
+# VoiceOS production workload (measured):
+#   default_max_tokens = 150; typical turn context ≈ 1,350 tokens
+#   Per-slot KV cost: 1,350 tok × 54.6 KB/tok (FP8, 28 layers) = 73.7 MB
+#
+# At 0.32 (14,742 MiB total):
+#   KV cache:    5.72 GiB  → 26 concurrent @ max 4096 tok / 79 concurrent @ typical 1350 tok
+#   Freed:      ~10.2 GiB reclaimed for Qwen2.5-Omni or other co-resident models
+#
+# TTFT is unaffected: prefill is compute-bound through 28 transformer layers,
+# not KV cache size bound. Streaming decode speed is also unchanged.
 ExecStart=/opt/voiceos-gpu/venv/bin/vllm serve /opt/voiceos-gpu/models/qwen2.5-7b-fp8 \
   --dtype auto \
   --port 8000 \
   --max-model-len 4096 \
-  --gpu-memory-utilization 0.55 \
+  --gpu-memory-utilization 0.32 \
   --served-model-name qwen2.5-7b-instruct-fp8
 Restart=on-failure
 RestartSec=10
