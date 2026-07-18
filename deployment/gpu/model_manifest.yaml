@@ -183,13 +183,53 @@ models:
     measured_rtf_warm: 2.3         # autoregressive; mitigated by clause-level streaming
     streaming: true                # clause-level (Veena has no within-clause token streaming)
 
+  # ── FOUNDER EVALUATOR: Qwen2.5-Omni-7B (NOT production — Sprint-029 only) ──────
+  - name: qwen2.5-omni-7b-evaluator
+    purpose: Founder Audio Evaluation — Sprint-029 Founder Validation ONLY
+    isolation: ISOLATED — not part of production STT/LLM/TTS pipeline. Never called by any production service. Port 8300 is internal only.
+    introduced_in: Sprint-029
+
+    local_path: /opt/voiceos-gpu/models/qwen2.5-omni-7b/
+    cache_path: /opt/voiceos-gpu/cache/hf/
+
+    download:
+      method: huggingface
+      repo_id: Qwen/Qwen2.5-Omni-7B
+      precision: bfloat16
+      format: safetensors
+      download_size_gb: 21           # 5 safetensor shards + tokenizer + config
+      ignore_patterns:
+        - "*.msgpack"
+        - "*.h5"
+        - "flax_model*"
+
+    startup:
+      # enable_audio_output=False: disables the speech decoder (~1.5 GiB saved).
+      # We only need audio-in (listening/evaluation), not audio-out (TTS).
+      # device_map=auto: fills A6000 GPU first, then CPU offload if needed.
+      command: >
+        /opt/voiceos-gpu/venv/bin/python3 /opt/voiceos-gpu/services/evaluator/server.py
+
+    vram_mb: 15360                 # ~14.5 GiB language model + ~0.8 GiB audio encoder (BF16, TTS decoder disabled)
+    port: 8300
+    server_script: /opt/voiceos-gpu/services/evaluator/server.py
+    endpoints: ["/health/live", "/health/ready", "/evaluate"]
+    health_check: "curl -sf http://localhost:8300/health/ready"
+    additional_packages:
+      - qwen-omni-utils>=0.0.9
+      - soundfile>=0.14.0
+      - librosa>=0.11.0
+    latency_target_ms:
+      evaluation_p95: 60000        # model inference for audio review; not latency-critical
+
 # ── Startup order ──────────────────────────────────────────────────────────────
 # vLLM startup takes ~90s (start first). Whisper ~7s. Veena + SNAC ~28s.
-# Launch each with `setsid ... < /dev/null` so it survives SSH disconnect.
+# Evaluator loads last (~3–5 min, not time-critical).
 startup_order:
   - qwen2.5-7b-instruct-fp8       # vLLM ~90s startup — start first
   - whisper-large-v3-turbo        # 1,242 MB loaded — ~7s start
   - veena-tts                     # Veena 3B + SNAC — ~28s start
+  - qwen2.5-omni-7b-evaluator     # Founder evaluator — ~3–5 min cold start (not production-critical)
 
 # ── Post-restore validation ────────────────────────────────────────────────────
 post_restore_validation:
@@ -200,3 +240,4 @@ post_restore_validation:
     - "/opt/voiceos-gpu/venv/bin/python deployment/validate_latency.py --test stt"
     - "/opt/voiceos-gpu/venv/bin/python deployment/validate_latency.py --test llm"
     - "/opt/voiceos-gpu/venv/bin/python deployment/validate_latency.py --test tts"
+    - "curl -sf http://localhost:8300/health/ready && echo 'Evaluator: OK'"
