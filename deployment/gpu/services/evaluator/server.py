@@ -284,13 +284,15 @@ def _run_evaluation(audio_path: str) -> str:
     with torch.no_grad():
         output_ids = _model.generate(
             **inputs,
-            max_new_tokens=2048,
+            generation_mode="text",     # text-only output; skip talker (not initialized)
+            thinker_max_new_tokens=2048,
             do_sample=False,
-            temperature=1.0,
             repetition_penalty=1.1,
         )
 
-    generated = output_ids[:, inputs["input_ids"].shape[1]:]
+    # output_ids is just the thinker's token output (generation_mode="text")
+    prompt_len = inputs["input_ids"].shape[1]
+    generated  = output_ids[:, prompt_len:]
     return _processor.batch_decode(generated, skip_special_tokens=True)[0].strip()
 
 

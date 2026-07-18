@@ -31,7 +31,7 @@ from pathlib import Path
 
 import numpy as np
 
-EVALUATOR_URL = os.environ.get("EVALUATOR_URL", "http://185.216.21.53:8300")
+EVALUATOR_URL = os.environ.get("EVALUATOR_URL", "http://127.0.0.1:8300")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
