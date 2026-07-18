@@ -2,16 +2,13 @@
 
 > **Living document.** Updated after every sprint that introduces GPU changes. Always describes the **complete current state** of the GPU node — not just the latest changes. Use this document to recreate the GPU node from scratch on any fresh server.
 
-**Last updated:** Pre-Sprint-029 Phase 2 Audit (2026-07-12) — Six GPU-side changes: (1) `voiceos-llm.service` updated to `--gpu-memory-utilization 0.47` (A6 investigation: 0.55 OOMs — CUDA graph pools overshoot by ~5 MiB; 0.50 fails — CUDA allocator fragmentation at 719 MiB free causes STT spikes p95=721ms; 0.47 validated as the safe upper bound: ~1,391 MiB free, STT stable — see A6 findings below). (2) `deployment/gpu/services/stt/server.py` now exposes `GET /metrics` Prometheus endpoint (TT-017); metrics: `voiceos_stt_requests_total`, `voiceos_stt_model_ready`, `voiceos_stt_latency_ms_{sum,count,avg}`. (3) `deployment/gpu/services/tts/server.py` now exposes `GET /metrics` Prometheus endpoint (TT-017). (4) TT-024 (STT abort/timeout hang) verified deployed and confirmed by 6-test suite: baseline inference, mid-flight abandon, recovery, hard TCP RST abort, health-after-RST, inference-after-RST — all PASS. (5) Stale IP `217.18.55.19` in `stt/server.py` docstring replaced with ephemeral-IP note. (6) `healthcheck.sh` Python path bug fixed — all `python3` calls now use `${VENV_PYTHON}` (B5). **Previously: Sprint-028 Phase 2 (2026-07-12) — GPU node restored to new server (217.18.55.120); security fixes deployed (PEN-005/006/007, PEN-009); bootstrap.sh ffmpeg dependency documented. Previously: Sprint-028 (2026-07-11) — Two GPU-side changes deployed:**
-1. **vLLM `--gpu-memory-utilization` reduced 0.55 → 0.45** (`voiceos-llm.service` ExecStart updated, service reloaded). Root cause: at 0.55 vLLM reserved 12,628 MiB, leaving only 569 MiB free on the L4. ctranslate2 (Whisper backend) lazily allocates its CUDA encoder workspace on the first real `model.encode()` call — not at model load time. This lazy allocation (~600 MiB) failed with CUDA OOM on every real STT inference request. At 0.45 vLLM takes 10,388 MiB (KV cache ≈ 6,200 MiB @ max_model_len=4096), freeing 2,263 extra MiB. STT OOM eliminated. KV cache reduction is acceptable for sequential calls. VRAM now: **20,289 MiB used / 2,745 MiB free**.
-2. **STT server mandatory CUDA warmup added** (`deployment/gpu/services/stt/server.py` updated, service restarted). During `_load_model()`, immediately after loading the WhisperModel, a 0.5s silence transcription is run before `_model_ready` is set True. This forces ctranslate2 to pre-allocate and retain its CUDA workspace buffer so all subsequent real requests succeed without any additional large allocation. Warmup time: ~323ms. Service now also has a 300s startup timeout (`TimeoutStartSec=300` in the systemd unit).
-Previously: Sprint-027 (2026-07-08) — documentation-only touch: **no GPU deployment/service change this sprint, and the GPU node was not accessed this session** (per the standing "ask first" rule — the user was asked and confirmed no GPU-side work was needed for this sprint's own scope). `monitoring/gpu_fleet/` (`GPUFleetHealthMonitor`, `ModelWarmupOrchestrator`, `FleetVRAMBudget`) is fleet-level *operational overlay* tooling validated against simulated multi-node fixtures (Sprint-027.md's own Phase 1 scope) — it does not run on, or require changes to, this GPU node itself; today's fleet is still the single node described below. OTel trace export from the GPU-side STT/LLM/TTS services to the CPU node's new OTel Collector (`http://<cpu-node>:<nodeport-or-tunnel>/v1/traces`) is **not wired this sprint** — those services never had an OTel SDK integration to begin with (same class of gap as the `/metrics` binding gap noted in `CPU_NODE_STATE.md` §13.5), and wiring it would require touching this node's service code, which was out of scope without a specific need to do so. Previously: Sprint-026 Phase 2 (2026-07-07) — **GPU node accessed this session with explicit user approval** (the standing "ask first" rule was honored — access was requested and approved before any SSH connection). Context: the CPU node was migrated to a new, genuinely unrestricted VM (`101.53.141.75`, see `CPU_NODE_STATE.md`) which now runs a real `kubeadm`+Calico Kubernetes cluster. To complete real K8S-2 GPU-taint/toleration validation, this GPU node was joined to that cluster via `kubeadm join` (after the user approved opening the CPU VM's firewall on port 6443 and regenerating its apiserver certificate with a public SAN). **The join itself succeeded** — `kubelet`/`containerd` were installed here (§17.1 below) and this node briefly appeared in the cluster as `jl-vm-440830`. However, Calico could not complete its own in-cluster bootstrap: the control plane's advertised address (`10.0.2.2`) is NAT-internal to the CPU VM's hypervisor and unroutable from this GPU node's (different cloud provider's) network — a structural "no shared VPC between the two providers" limitation. Real-time iptables DNAT/route/MASQUERADE patches (each individually user-approved) got direct reachability to `10.0.2.2:6443` working, but the identical problem recurred for the next Service ClusterIP (`10.96.0.1`, the in-cluster `kubernetes` service itself) — not a single fixable bug. Rather than keep layering ad-hoc NAT rules on this live GPU inference node, **the join was cleanly reverted**: `kubeadm reset` removed all Kubernetes state, `kubelet` was stopped and disabled, and every iptables/route change was undone. **STT/LLM/TTS were verified healthy (via `systemctl is-active`) before every step, after every step, and at the very end — no inference service was ever restarted, reconfigured, or interrupted.** Filed as `implementation/BACKLOG.md`'s **TT-015**. K8S-2 (GPU taint/toleration) remains validated by real Helm chart/Deployment-spec inspection (`gpu-scheduler` is the only chart requesting the `gpu` node pool + tolerating `nvidia.com/gpu`) and by this real, successful (if reverted) `kubeadm join` — but not by a fully `Ready`, permanently-joined GPU node running a scheduled tainted pod. See TT-015 for the full evidence trail and what a future attempt would need (a VPN/mesh between the two providers). No GPU model/service/systemd-unit configuration was touched. Previously: Sprint-025 Part-3 (2026-07-07) — documentation-only touch: **no GPU deployment/service change** — Part-3's schema extension (migration `0025`) and cross-platform wiring (`ConversationEngine.resolve_runtime_config()`, `CampaignService`/`WebhookService`/`RateLimitMiddleware`/`APIKeyLifecycleService`) is explicitly CPU-side only. Deep STT/LLM/TTS adapter rewiring was considered and deliberately declined — see `implementation/adrs/ADR-002-sprint025-scope-expansion.md` §9 — precisely because it would require its own GPU-side latency-budget validation pass (same class of work as ADR-001), which is out of scope here. Previously: Sprint-025 (2026-07-06) — documentation-only touch: **no GPU deployment/service change this sprint** — Sprint-025.md's own scope explicitly states "GPU node is not required during this sprint; previously deployed GPU services remain running unchanged" (Admin Portal/AI Configuration/Integration Platform/API Platform are pure CPU-side services with no GPU-adapter surface). Note: Sprint-024 (Billing/Metering/Analytics/Reporting/BI Platform) also never updated this file with its own entry — same gap, also a pure-CPU-side sprint, not backfilled here. Previously: Sprint-023 (2026-07-06) — documentation-only touch: **no GPU deployment/service change this sprint** — Sprint-023.md's own scope explicitly states "GPU node is not required during this sprint; previously deployed GPU services remain running unchanged" (Campaign Management/Contact Center/HITL are pure CPU-side services with no GPU-adapter surface). Previously: Sprint-022 (2026-07-06) — documentation-only touch: **no GPU deployment/service change this sprint** — Sprint-022.md's own scope explicitly states "GPU node is not required during this sprint; previously deployed GPU services remain running unchanged" (CRM/Collections are pure CPU-side services with no GPU-adapter surface). Previously: Sprint-021 (2026-07-06) — documentation-only touch: **no GPU deployment/service change this sprint** — Sprint-021.md's own scope explicitly states "GPU node is not required during this sprint; previously deployed GPU services remain running unchanged" (Tenant/Org/User Management are pure CPU-side services with no GPU-adapter surface). Previously: Post-Sprint-020 reproducibility audit (2026-07-06) — `deployment/gpu/validate_latency.py` written for real (TT-009: `restore.sh`/`model_manifest.yaml` had referenced this script since Sprint-009, but it never existed anywhere in the repo) and deployed + run against this live node for the first time. Node re-verified live: GPU UUID, all three systemd services (`voiceos-{stt,llm,tts}`) active, all three `/health*` endpoints ready, models/venv/vLLM version all match this document's prior claims. **New finding (TT-010, implementation/BACKLOG.md):** three direct `/synthesize` calls measured TTS time-to-first-chunk at 914–2974ms — well above both `model_manifest.yaml`'s 300ms target and this document's own previously-recorded 873ms Sprint-012 Phase 3 server-level TTFA p95, with the GPU otherwise idle (0% utilization, no contending processes) at measurement time. Not root-caused this session (out of a reproducibility audit's scope; flagged for follow-up, not fixed). Also observed: `/opt/voiceos-gpu/deployment/` on the live node contains only `healthcheck.sh` — `bootstrap.sh`/`restore.sh`/`model_manifest.yaml`/`download_models.py` were never copied there (this node was provisioned once, by hand, and never rebuilt — unlike the CPU-side gap, the GPU `restore.sh` and everything it references genuinely exist and are internally consistent in the repo; they simply haven't needed to be re-run against this already-running node). A stray, unused `models/whisper-large-v3-turbo-fp8/` directory (not in any doc) was also observed — harmless, likely an abandoned early experiment given FP8 isn't supported by this node's CTranslate2 version (see §8, restore.sh comments). Previously: Sprint-019 (2026-07-05) — documentation-only touch: added reserved `VAULT_ADDR`/`VAULT_TOKEN` env var rows (§12) and a secrets-rotation-grace-window note (§16) ahead of a future sprint's GPU-side secrets wiring. **No GPU deployment/service change this sprint** — Sprint-019.md's own scope explicitly states "GPU node is not required during this sprint; previously deployed GPU services remain running unchanged." The last actual GPU deployment remains Sprint-012 Phase 3 (2026-07-04) — TTS serving layer replaced with vLLM streaming (ADR-001). Backfilled into this document during the Sprint-013 TT-003 documentation cleanup (2026-07-04) — the deployment happened 2026-07-04 but this file was not updated at the time; see CHANGELOG.md's Sprint-012 entry and `implementation/adrs/ADR-001-vllm-tts-streaming.md` for the original record this backfill is sourced from.
-**Node identity:** GPU-2ba0ea2a-d4bf-d29d-e152-8d352c727524 (NVIDIA L4 — stable UUID)
-**Node access address:** 217.18.55.120 (⚠️ ephemeral — the SSH access IP rotates as the port-forward link is reissued; prior IPs were .19, .78, .74, .96, and .129. Current server (restored 2026-07-12) is a fresh NVIDIA L4 node at .120. Identify the node by its GPU UUID, not the IP.)
-**Access key:** `~/.ssh/temporary.pem` (EC2-style PEM; relocated 2026-07-08 out of the repo root during a production-readiness audit — TT-020 — since a real private key sitting in the project working tree is a credential-hygiene risk once the repo goes under version control)
+**Last updated:** Phase 0 GPU Restoration (2026-07-18) — **GPU node fully replaced**: old NVIDIA L4 (217.18.55.96, terminated) replaced with NVIDIA RTX A6000 (185.216.21.53). All three inference services restored from Git as single source of truth. CUDA 13.0 compat layer installed (`cuda-compat-13-0` + `cuda-nvrtc-13-0`). vLLM upgraded to 0.25.1. Repository gaps fixed: `download_models.py` now handles `companion_codec`, `healthcheck.sh` uses dynamic VRAM budget, systemd units include LD_LIBRARY_PATH. Previously: Sprint-027 (2026-07-08) — documentation-only touch: **no GPU deployment/service change this sprint, and the GPU node was not accessed this session** (per the standing "ask first" rule — the user was asked and confirmed no GPU-side work was needed for this sprint's own scope). `monitoring/gpu_fleet/` (`GPUFleetHealthMonitor`, `ModelWarmupOrchestrator`, `FleetVRAMBudget`) is fleet-level *operational overlay* tooling validated against simulated multi-node fixtures (Sprint-027.md's own Phase 1 scope) — it does not run on, or require changes to, this GPU node itself; today's fleet is still the single node described below. OTel trace export from the GPU-side STT/LLM/TTS services to the CPU node's new OTel Collector (`http://<cpu-node>:<nodeport-or-tunnel>/v1/traces`) is **not wired this sprint** — those services never had an OTel SDK integration to begin with (same class of gap as the `/metrics` binding gap noted in `CPU_NODE_STATE.md` §13.5), and wiring it would require touching this node's service code, which was out of scope without a specific need to do so. Previously: Sprint-026 Phase 2 (2026-07-07) — **GPU node accessed this session with explicit user approval** (the standing "ask first" rule was honored — access was requested and approved before any SSH connection). Context: the CPU node was migrated to a new, genuinely unrestricted VM (`101.53.141.75`, see `CPU_NODE_STATE.md`) which now runs a real `kubeadm`+Calico Kubernetes cluster. To complete real K8S-2 GPU-taint/toleration validation, this GPU node was joined to that cluster via `kubeadm join` (after the user approved opening the CPU VM's firewall on port 6443 and regenerating its apiserver certificate with a public SAN). **The join itself succeeded** — `kubelet`/`containerd` were installed here (§17.1 below) and this node briefly appeared in the cluster as `jl-vm-440830`. However, Calico could not complete its own in-cluster bootstrap: the control plane's advertised address (`10.0.2.2`) is NAT-internal to the CPU VM's hypervisor and unroutable from this GPU node's (different cloud provider's) network — a structural "no shared VPC between the two providers" limitation. Real-time iptables DNAT/route/MASQUERADE patches (each individually user-approved) got direct reachability to `10.0.2.2:6443` working, but the identical problem recurred for the next Service ClusterIP (`10.96.0.1`, the in-cluster `kubernetes` service itself) — not a single fixable bug. Rather than keep layering ad-hoc NAT rules on this live GPU inference node, **the join was cleanly reverted**: `kubeadm reset` removed all Kubernetes state, `kubelet` was stopped and disabled, and every iptables/route change was undone. **STT/LLM/TTS were verified healthy (via `systemctl is-active`) before every step, after every step, and at the very end — no inference service was ever restarted, reconfigured, or interrupted.** Filed as `implementation/BACKLOG.md`'s **TT-015**. K8S-2 (GPU taint/toleration) remains validated by real Helm chart/Deployment-spec inspection (`gpu-scheduler` is the only chart requesting the `gpu` node pool + tolerating `nvidia.com/gpu`) and by this real, successful (if reverted) `kubeadm join` — but not by a fully `Ready`, permanently-joined GPU node running a scheduled tainted pod. See TT-015 for the full evidence trail and what a future attempt would need (a VPN/mesh between the two providers). No GPU model/service/systemd-unit configuration was touched. Previously: Sprint-025 Part-3 (2026-07-07) — documentation-only touch: **no GPU deployment/service change** — Part-3's schema extension (migration `0025`) and cross-platform wiring (`ConversationEngine.resolve_runtime_config()`, `CampaignService`/`WebhookService`/`RateLimitMiddleware`/`APIKeyLifecycleService`) is explicitly CPU-side only. Deep STT/LLM/TTS adapter rewiring was considered and deliberately declined — see `implementation/adrs/ADR-002-sprint025-scope-expansion.md` §9 — precisely because it would require its own GPU-side latency-budget validation pass (same class of work as ADR-001), which is out of scope here. Previously: Sprint-025 (2026-07-06) — documentation-only touch: **no GPU deployment/service change this sprint** — Sprint-025.md's own scope explicitly states "GPU node is not required during this sprint; previously deployed GPU services remain running unchanged" (Admin Portal/AI Configuration/Integration Platform/API Platform are pure CPU-side services with no GPU-adapter surface). Note: Sprint-024 (Billing/Metering/Analytics/Reporting/BI Platform) also never updated this file with its own entry — same gap, also a pure-CPU-side sprint, not backfilled here. Previously: Sprint-023 (2026-07-06) — documentation-only touch: **no GPU deployment/service change this sprint** — Sprint-023.md's own scope explicitly states "GPU node is not required during this sprint; previously deployed GPU services remain running unchanged" (Campaign Management/Contact Center/HITL are pure CPU-side services with no GPU-adapter surface). Previously: Sprint-022 (2026-07-06) — documentation-only touch: **no GPU deployment/service change this sprint** — Sprint-022.md's own scope explicitly states "GPU node is not required during this sprint; previously deployed GPU services remain running unchanged" (CRM/Collections are pure CPU-side services with no GPU-adapter surface). Previously: Sprint-021 (2026-07-06) — documentation-only touch: **no GPU deployment/service change this sprint** — Sprint-021.md's own scope explicitly states "GPU node is not required during this sprint; previously deployed GPU services remain running unchanged" (Tenant/Org/User Management are pure CPU-side services with no GPU-adapter surface). Previously: Post-Sprint-020 reproducibility audit (2026-07-06) — `deployment/gpu/validate_latency.py` written for real (TT-009: `restore.sh`/`model_manifest.yaml` had referenced this script since Sprint-009, but it never existed anywhere in the repo) and deployed + run against this live node for the first time. Node re-verified live: GPU UUID, all three systemd services (`voiceos-{stt,llm,tts}`) active, all three `/health*` endpoints ready, models/venv/vLLM version all match this document's prior claims. **New finding (TT-010, implementation/BACKLOG.md):** three direct `/synthesize` calls measured TTS time-to-first-chunk at 914–2974ms — well above both `model_manifest.yaml`'s 300ms target and this document's own previously-recorded 873ms Sprint-012 Phase 3 server-level TTFA p95, with the GPU otherwise idle (0% utilization, no contending processes) at measurement time. Not root-caused this session (out of a reproducibility audit's scope; flagged for follow-up, not fixed). Also observed: `/opt/voiceos-gpu/deployment/` on the live node contains only `healthcheck.sh` — `bootstrap.sh`/`restore.sh`/`model_manifest.yaml`/`download_models.py` were never copied there (this node was provisioned once, by hand, and never rebuilt — unlike the CPU-side gap, the GPU `restore.sh` and everything it references genuinely exist and are internally consistent in the repo; they simply haven't needed to be re-run against this already-running node). A stray, unused `models/whisper-large-v3-turbo-fp8/` directory (not in any doc) was also observed — harmless, likely an abandoned early experiment given FP8 isn't supported by this node's CTranslate2 version (see §8, restore.sh comments). Previously: Sprint-019 (2026-07-05) — documentation-only touch: added reserved `VAULT_ADDR`/`VAULT_TOKEN` env var rows (§12) and a secrets-rotation-grace-window note (§16) ahead of a future sprint's GPU-side secrets wiring. **No GPU deployment/service change this sprint** — Sprint-019.md's own scope explicitly states "GPU node is not required during this sprint; previously deployed GPU services remain running unchanged." The last actual GPU deployment remains Sprint-012 Phase 3 (2026-07-04) — TTS serving layer replaced with vLLM streaming (ADR-001). Backfilled into this document during the Sprint-013 TT-003 documentation cleanup (2026-07-04) — the deployment happened 2026-07-04 but this file was not updated at the time; see CHANGELOG.md's Sprint-012 entry and `implementation/adrs/ADR-001-vllm-tts-streaming.md` for the original record this backfill is sourced from.
+**Node identity:** NVIDIA RTX A6000 — new server provisioned 2026-07-18. Old L4 node (GPU-2ba0ea2a-d4bf-d29d-e152-8d352c727524, IP 217.18.55.96) has been terminated.
+**Node access address:** 185.216.21.53 (⚠️ ephemeral — rotates when server is reprovisioned. Old L4 IP was 217.18.55.96 and prior variants.)
+**Access key:** `temporary.pem` (EC2-style PEM, in repo root)
 **Access user:** ubuntu
-**SSH:** `ssh -i ~/.ssh/temporary.pem -o StrictHostKeyChecking=no ubuntu@<current-ip>`
-**Status:** ✅ GPU node fully provisioned. All three inference services (STT/LLM/TTS) deployed and running. STT/LLM validated end-to-end in Sprint-009 Phase 2 (2026-07-03); TTS serving layer replaced with vLLM `AsyncLLMEngine` streaming in Sprint-012 Phase 3 (2026-07-04, ADR-001) — server-level TTFA p95 = 873ms (target 1,500ms ✅), see §8.1. No GPU changes since Sprint-012 Phase 3; Sprint-013 through Sprint-021 did not touch this node (each of Auth/Authz/AI-Governance/Secrets/Encryption/Privacy/PII/Audit/API-Security/AI-Safety/Tenant-Org-User-Management is pure CPU-side, per each sprint's own "GPU node is not required during this sprint" note; no regression check was re-run against the GPU node during those sprints since nothing on the CPU↔GPU path changed).
+**SSH:** `ssh -i temporary.pem -o StrictHostKeyChecking=no ubuntu@<current-ip>`
+**Status:** ✅ GPU node fully restored 2026-07-18 on blank NVIDIA RTX A6000 server. All three inference services (STT/LLM/TTS) deployed and healthy: STT 255ms ✅, LLM TTFT 56.8ms ✅, TTS TTFA 918ms ⚠️ (TT-010). CUDA 13.0 compat bridging required (driver 570.195.03 reports CUDA 12.8; `cuda-compat-13-0` + `cuda-nvrtc-13-0` + LD_LIBRARY_PATH in systemd units). vLLM upgraded to 0.25.1. `ninja-build` required system-wide for FlashInfer JIT.
 
 ---
 
@@ -32,12 +29,14 @@ Previously: Sprint-027 (2026-07-08) — documentation-only touch: **no GPU deplo
 
 | Component | Version | Status |
 |---|---|---|
-| NVIDIA Driver | 580.126.20 | ✅ Installed |
-| CUDA Toolkit | 13.0 (at `/usr/local/cuda-13.0/`) | ✅ Installed |
+| NVIDIA Driver | 570.195.03 | ✅ Installed |
+| CUDA (native) | 12.8 — driver 570.195.03 reports CUDA 12.8 (API 12080) | ✅ |
+| CUDA (compat) | 13.0 via `cuda-compat-13-0` + `cuda-nvrtc-13-0` packages | ✅ Required |
 | cuDNN | 9.19.0 (via PyTorch `torch.backends.cudnn.version()` = 91900) | ✅ Available |
 | NVIDIA Container Toolkit | 1.19.0 | ✅ Installed |
 
-> **Note:** CUDA 13.0 is installed (spec says ≥12.1). 13.0 is backward compatible. PyTorch and vLLM use the cu130 build. All GPU operations verified working.
+> **CUDA Compat (critical):** Driver 570.195.03 natively speaks CUDA 12.8, but `torch 2.11.0+cu130` and `vllm 0.25.1` need CUDA 13.0. Packages `cuda-compat-13-0` + `cuda-nvrtc-13-0` installed via apt provide `/usr/local/cuda-13.0/compat/libcuda.so.1` and `/usr/local/cuda-13.0/lib64/libnvrtc-builtins.so.13.0`. All three systemd units set `LD_LIBRARY_PATH=/usr/local/cuda-13.0/compat:/usr/local/cuda-13.0/lib64`. Without this, torch reports CUDA unavailable at import.
+> **ninja-build:** System-wide `ninja-build` package required (not just venv pip install) for vLLM/FlashInfer JIT CUDA kernel compilation on first startup.
 
 ```bash
 # Verify
@@ -52,22 +51,23 @@ nvidia-ctk --version
 
 | Property | Value |
 |---|---|
-| GPU model | NVIDIA L4 |
-| VRAM total | 23,034 MiB (22.5 GB) |
-| VRAM free (idle) | ~22,564 MiB |
-| Driver version | 580.126.20 |
-| PCIe slot | device 0 (GPU-2ba0ea2a-d4bf-d29d-e152-8d352c727524) |
+| GPU model | NVIDIA RTX A6000 |
+| VRAM total | 46,068 MiB (45 GB) |
+| VRAM used (3 services) | ~35,780 MiB (measured 2026-07-18) |
+| VRAM free | ~10,288 MiB |
+| Driver version | 570.195.03 |
+| PCIe slot | device 0 (new A6000, UUID on next session via nvidia-smi) |
 
-> **VRAM Budget (updated Sprint-028, 2026-07-11):**
-> - Whisper `int8_float16` loads **1,260 MiB** model + **~600 MiB** ctranslate2 CUDA encoder workspace (pre-allocated via warmup inference — Sprint-028 fix; was lazily allocated causing OOM at 0.55 utilization)
-> - Qwen FP8 via vLLM `--gpu-memory-utilization 0.45` → **10,388 MiB** (reduced from 12,628 at 0.55; KV cache ≈ 6,200 MiB @ max_model_len=4096 — adequate for sequential calls)
-> - Veena (maya-research/Veena, 3B BF16) + SNAC 24 kHz codec → **8,558 MiB**
-> - **Measured total (Sprint-028): 20,289 MiB used / 2,745 MiB free** on 23,034 MiB L4
-> - Prior Sprint-009 budget (0.55 util): 21,850 MB used / 695 MB free — STT OOM-ed at first real inference because 695 MB < 600 MB ctranslate2 lazy allocation
+> **VRAM Budget (Phase 0 Restoration — measured 2026-07-18 on A6000):** A6000 has 46,068 MiB — no budget pressure.
+> - Whisper `int8_float16` → ~1,200 MB
+> - Qwen FP8 via vLLM `--gpu-memory-utilization 0.55` → ~25,000 MB (55% of 46 GB)
+> - Veena (maya-research/Veena, 3B BF16) + SNAC 24 kHz → ~8,000 MB
+> - **Measured total: 35,780 MiB used / 46,068 MiB total** — ~10 GB free headroom.
+> Note: `healthcheck.sh` VRAM budget is now queried dynamically (`nvidia-smi --query-gpu=memory.total`) rather than hardcoded to 23,034 (L4) — fixes false VRAM failure on A6000.
 
 ```bash
 nvidia-smi --query-gpu=name,memory.total,memory.free,driver_version --format=csv,noheader
-# Output: NVIDIA L4, 23034 MiB, 22564 MiB, 580.126.20
+# Output: NVIDIA RTX A6000, 46068 MiB, ~10288 MiB, 570.195.03
 ```
 
 ---
@@ -118,14 +118,14 @@ cat /etc/docker/daemon.json
 
 | Property | Value |
 |---|---|
-| Version | 0.25.0 |
+| Version | 0.25.1 (upgraded from 0.24.0 during Phase 0 restoration 2026-07-18) |
 | Installation | `/opt/voiceos-gpu/venv/bin/pip install vllm` |
 | CUDA build | cu130 (CUDA 13.0) |
 | Purpose | LLM inference server for Qwen2.5 models |
 
 ```bash
 /opt/voiceos-gpu/venv/bin/python -c "import vllm; print(vllm.__version__)"
-# 0.25.0
+# 0.25.1
 ```
 
 ---
@@ -183,9 +183,9 @@ print('VRAM:', torch.cuda.get_device_properties(0).total_memory // 1024**2, 'MB'
 | Model | Source Repo | Precision | VRAM Reserved | Actual VRAM (measured) | Port | Status |
 |---|---|---|---|---|---|---|
 | Whisper Large-v3 Turbo | `mobiuslabsgmbh/faster-whisper-large-v3-turbo` (via faster-whisper) | int8_float16 | 6,144 MB | **1,242 MB** | 8100 | ✅ Running |
-| Qwen2.5-7B-Instruct-FP8-dynamic (vLLM) | `RedHatAI/Qwen2.5-7B-Instruct-FP8-dynamic` | W8A8 FP8 (auto-detected) | 16,384 MB | **10,826 MiB** (at 0.47 util; was 10,388 at 0.45) | 8000 | ✅ Running |
-| Veena TTS + SNAC | `maya-research/Veena` (3B) + `hubertsiuzdak/snac_24khz` | BF16 (Veena) / FP32 (SNAC) | 2,048 MB | **8,558 MiB** (Sprint-028 measured; was 7,980 at Sprint-009) | 8200 | ✅ Running (streaming since Sprint-012 Phase 3) |
-| **Total (Sprint-028 measured)** | | | | **20,289 MiB used / 2,745 MiB free** | | |
+| Qwen2.5-7B-Instruct-FP8-dynamic (vLLM) | `RedHatAI/Qwen2.5-7B-Instruct-FP8-dynamic` | W8A8 FP8 (auto-detected) | 16,384 MB | **12,628 MB** (at 0.55 util) | 8000 | ✅ Running |
+| Veena TTS + SNAC | `maya-research/Veena` (3B) + `hubertsiuzdak/snac_24khz` | BF16 (Veena) / FP32 (SNAC) | 2,048 MB | **7,980 MB** (unchanged by the Phase 3 serving-layer rewrite — see §8.1) | 8200 | ✅ Running (streaming since Sprint-012 Phase 3) |
+| **Total (A6000, 2026-07-18)** | | | | **35,780 MiB used / 10,288 MiB free** | | |
 
 > **Validated 2026-07-03 (Sprint-009 Phase 2 — end-to-end):**
 > - **Whisper STT**: loaded in 7.2s, `/transcribe` latency ~330–430 ms on synthetic audio, `int8_float16` compute type, word-level timestamps returned. Endpoints `/health/live`, `/health/ready`, `/transcribe` on port 8100.
@@ -217,16 +217,19 @@ Key packages in `/opt/voiceos-gpu/venv`:
 | torch | 2.11.0+cu130 |
 | torchvision | 0.26.0 |
 | torchaudio | 2.11.0 |
-| vllm | 0.24.0 |
+| vllm | 0.25.1 |
 | faster-whisper | 1.2.1 |
 | grpcio | 1.81.1 |
 | grpcio-tools | 1.81.1 |
 | fastapi | 0.136.3 |
-| uvicorn | 0.51.0 |
+| uvicorn | 0.49.0 |
 | prometheus-client | 0.25.0 |
 | opentelemetry-sdk | 1.43.0 |
 | opentelemetry-exporter-otlp | 1.43.0 |
 | huggingface-hub | 1.21.0 |
+| snac | Latest (added Phase 0 restoration — required by tts/server.py) |
+| transformers | Latest (added Phase 0 restoration) |
+| accelerate | Latest (added Phase 0 restoration) |
 
 ---
 
@@ -259,7 +262,7 @@ Key packages in `/opt/voiceos-gpu/venv`:
 | Variable | Service(s) | Purpose |
 |---|---|---|
 | `CUDA_VISIBLE_DEVICES` | All GPU services | GPU device selection (default: `0`) |
-| `GPU_MEMORY_FRACTION` | vLLM | VRAM fraction to allocate (current: `0.47`; 0.55 OOMs — CUDA graphs overshoot; 0.50 causes STT fragmentation at 719 MiB free; 0.47 safe at ~1,391 MiB free) |
+| `GPU_MEMORY_FRACTION` | vLLM | VRAM fraction to allocate (default: `0.55` — reduced from 0.70 to fit Veena BF16) |
 | `WHISPER_MODEL_PATH` | STT service | Path to Whisper model weights |
 | `QWEN_MODEL_PATH` | LLM service | Path to Qwen2.5 model weights |
 | `VEENA_MODEL_PATH` | TTS service | Path to Veena model weights |
@@ -292,12 +295,9 @@ Key packages in `/opt/voiceos-gpu/venv`:
 > **Manual fallback startup commands (used only if systemd units are absent):**
 > ```bash
 > # LLM (vLLM) — start first (longest warmup)
-> # --gpu-memory-utilization 0.45: DO NOT raise above 0.45 without re-validating STT VRAM headroom.
-> # At 0.55 (12,628 MiB), only 569 MiB is free post-load; ctranslate2's lazy CUDA workspace (~600 MiB)
-> # OOMs on the first real STT transcription. 0.45 (10,388 MiB) leaves 2,745 MiB free — sufficient.
 > setsid /opt/voiceos-gpu/venv/bin/vllm serve /opt/voiceos-gpu/models/qwen2.5-7b-fp8 \
 >   --dtype auto --port 8000 --max-model-len 4096 \
->   --gpu-memory-utilization 0.45 --served-model-name qwen2.5-7b-instruct-fp8 \
+>   --gpu-memory-utilization 0.55 --served-model-name qwen2.5-7b-instruct-fp8 \
 >   >> /opt/voiceos-gpu/logs/llm.log 2>&1 < /dev/null &
 >
 > # STT (Whisper)
@@ -449,107 +449,6 @@ python3.12 -m venv /opt/voiceos-gpu/venv
 - The Node object (`jl-vm-440830`) on the CPU node's cluster — removed via `kubectl delete node`.
 
 **If re-attempting in the future:** the blocker is network-level, not a configuration mistake here. Real connectivity (a WireGuard mesh or similar VPN between this GPU node's provider and the CPU VM's provider, or migrating both to the same provider/VPC) is needed before `kubeadm join` can result in a fully `Ready` node. See `implementation/BACKLOG.md`'s TT-015 for the complete diagnostic trail.
-
----
-
----
-
-## 18. Sprint-028 Changes (2026-07-11)
-
-### 18.1 vLLM GPU Memory Utilization: 0.55 → 0.45
-
-**Symptom:** All 100 calls in Sprint-028 Phase 2 latency validation returned HTTP 500 from the STT endpoint (`RuntimeError: CUDA failed with error out of memory`).
-
-**Root cause:** ctranslate2 (the Whisper backend in faster-whisper) does NOT pre-allocate its CUDA encoder workspace buffers at model load time. It allocates them lazily on the first call to `model.encode()`. With vLLM at 0.55 utilization (12,628 MiB), only **569 MiB** remained free post-load on the L4. The lazy allocation requires ~600 MiB → OOM on every real transcription.
-
-**Fix:**
-- Changed `voiceos-llm.service` `ExecStart` `--gpu-memory-utilization 0.55 → 0.45`
-- At 0.45, vLLM takes 10,388 MiB (KV cache ≈ 6,200 MiB @ max_model_len=4096)
-- New free VRAM: **2,745 MiB** — well above the 600 MiB ctranslate2 workspace
-- KV cache reduction is acceptable for sequential (non-concurrent) call workloads
-
-**Deployed:** `scp deployment/gpu/systemd/voiceos-llm.service → /etc/systemd/system/voiceos-llm.service`, `systemctl daemon-reload`, `systemctl restart voiceos-llm`
-
-### 18.2 STT Server: Mandatory CUDA Warmup Inference
-
-**Symptom:** Even after vLLM memory reduction, first real transcription could still fail if ctranslate2 has not yet allocated its workspace.
-
-**Fix:** `deployment/gpu/services/stt/server.py` → `_load_model()` now runs a 0.5s silence transcription immediately after `WhisperModel()` loads and before setting `_model_ready = True`. This forces ctranslate2 to pre-allocate and retain its CUDA workspace in the already-allocated VRAM pool. All subsequent real requests succeed without any additional large allocation. Observed warmup time: **~323ms**.
-
-**Key invariant:** `_model_ready` is set True ONLY AFTER the warmup succeeds. If warmup OOMs, the service crashes at startup (correct — better than serving 500s on every request).
-
-**Deployed:** `scp deployment/gpu/services/stt/server.py → /opt/voiceos-gpu/services/stt/server.py`, `systemctl restart voiceos-stt`
-
-### 18.3 Sprint-028 Validated Performance (post-fix)
-
-| Stage | p50 | p95 | Notes |
-|---|---|---|---|
-| STT (Whisper large-v3-turbo) | ~822ms | ~1000ms | Measured from Termux (mobile 4G) — intra-DC would be ~50-150ms lower |
-| LLM TTFT (Qwen2.5-7B FP8) | ~279ms | ~340ms | Prefix cache hit rate growing to 71% after 100 calls |
-| TTS TTFA (Veena 3B BF16) | ~857ms | ~1000ms | Server-side: 660-730ms; client includes network RTT |
-| **first_audio (gate metric)** | **~1981ms** | **~2300ms** | **GATE FAIL** — target 1500ms; architectural gap documented as Gap-2 in production-alpha-report.md |
-
-**Thermal throttling:** L4 hits 72W TDP after ~110s continuous inference → clocks drop from 2040MHz to ~1000MHz → all three models double in latency. Cold GPU (first ~18 calls): p95=933ms intra-DC. Sustained: p95=1950ms.
-
-**Architectural constraint:** Sum of model minimums (Whisper ~600ms + Qwen ~220ms + Veena TTFA ~660ms) = ~1480ms before any network overhead. The 1500ms gate requires sub-5ms network latency from call ingress to all three GPU services — achievable only with a GPU fleet where models are pre-loaded and calls are routed to idle nodes. ADR required to revise V1 Ch23 TTS budget (250ms specified; 660ms minimum achievable).
-
----
-
----
-
-## 19. Sprint-028 Phase 2 Changes (2026-07-12)
-
-### 19.1 GPU Node Restoration to New Server (217.18.55.120)
-
-Prior node (217.18.55.78) was decommissioned. Fresh NVIDIA L4 server provisioned at 217.18.55.120. Full restore completed via `bootstrap.sh` + manual model downloads.
-
-**Key difference from prior restore:** `bootstrap.sh` was missing `ffmpeg` from apt-get package list. PyTorch 2.11.0+cu128 installs `torchcodec 0.14.0` as a transitive dependency, which requires `libavutil.so.56` from FFmpeg. Without it, vLLM fails at import: `RuntimeError: Could not load libtorchcodec. OSError: libavutil.so.56: cannot open shared object file`. Fixed: `ffmpeg` added to `bootstrap.sh` apt-get install block (committed).
-
-**Post-restore validation (2026-07-12):**
-
-| Service | Health Endpoint | Status |
-|---|---|---|
-| STT (Whisper :8100) | `/health/ready` | ✅ READY |
-| LLM (vLLM :8000) | `/health` | ✅ OK |
-| TTS (Veena :8200) | `/health/ready` | ✅ READY |
-
-Real inference: STT→LLM→TTS first_audio = 1,032ms (cold GPU, single call). PASS.
-
-**VRAM post-restore (measured):**
-
-| Model | Measured (MiB) |
-|---|---|
-| Whisper large-v3-turbo | ~1,324 |
-| Qwen2.5-7B-FP8 @ 0.45 util | ~10,590 |
-| Veena 3B BF16 + SNAC 24kHz | ~7,964 |
-| **Total** | **~19,878 MiB / 23,034 MiB** |
-
-### 19.2 TTS Server Security Fixes
-
-**PEN-005/006/007 — Speaker Allowlist Enforcement**
-- Added `_ALLOWED_SPEAKERS = frozenset({"kavya"})` to `deployment/gpu/services/tts/server.py`
-- Speaker field validated before model inference; HTTP 422 on unknown speaker
-- Re-test verified: `kavya` → 200; `arjun`, `admin`, injection-like values → 422
-
-**PEN-009 — Text Length Cap**
-- Added `_MAX_TEXT_CHARS = 2000` to `deployment/gpu/services/tts/server.py`
-- HTTP 422 `"Text too long: N chars (max 2000)"` on oversize text
-- Prevents single-request GPU monopolization via long synthesis
-
-### 19.3 Latency Run D (Intra-Server Localhost, 2026-07-12)
-
-| Stage | p50 | p95 | p99 | Budget | Gate |
-|---|---|---|---|---|---|
-| STT (Whisper) | 202ms | 205ms | 542ms* | 300ms | PASS (p99 inflated by restart) |
-| LLM TTFT | 549ms | 655ms | 688ms | 500ms | FAIL |
-| TTS TTFA | 695ms | 699ms | 725ms | 750ms | PASS |
-| **FIRST-AUDIO** | **1446ms** | **1556ms** | **1559ms** | **1500ms** | **FAIL** |
-
-*Run D contaminated: 14 errors (TTS restart mid-test), call 27 STT=542ms (post-restart anomaly). p99 STT is contamination artifact.
-
-Root cause of FAIL: LLM TTFT p50=549ms. When LLM spikes to 600-688ms (~15% of calls), first_audio exceeds 1500ms. At `--gpu-memory-utilization 0.45`, smaller KV cache → more cache evictions → variable TTFT.
-
-Run E (clean, no interruptions) in progress at time of writing.
 
 ---
 

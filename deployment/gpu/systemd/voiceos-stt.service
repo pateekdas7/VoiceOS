@@ -9,12 +9,16 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/opt/voiceos-gpu
 EnvironmentFile=-/opt/voiceos-gpu/.env
+# CUDA 13.0 forward compatibility: driver 570.x supports CUDA 12.8 natively;
+# cuda-compat-13-0 + cuda-nvrtc-13-0 packages provide the CUDA 13.0 runtime libraries
+# required by torch 2.11.0+cu130 and vLLM 0.25.1.
+Environment=LD_LIBRARY_PATH=/usr/local/cuda-13.0/compat:/usr/local/cuda-13.0/lib64
 # Whisper FastAPI server on port 8100, int8_float16 compute type.
 # server.py runs a mandatory CUDA warmup transcription during startup (before setting
 # _model_ready=True). This pre-allocates ctranslate2's ~600 MiB CUDA encoder workspace.
 # Without warmup, the first real transcription OOMs if VRAM is tight post-load.
 # VRAM: ~1,260 MiB model + ~600 MiB ctranslate2 workspace = ~1,860 MiB total.
-# After=voiceos-llm.service: vLLM must start first so it claims its 0.45-util allocation
+# After=voiceos-llm.service: vLLM must start first so it claims its allocation
 # before STT warmup runs — otherwise remaining VRAM might appear larger than it is.
 ExecStart=/opt/voiceos-gpu/venv/bin/python3 /opt/voiceos-gpu/services/stt/server.py \
   --model-path /opt/voiceos-gpu/models/whisper-large-v3-turbo \
