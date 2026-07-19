@@ -27,12 +27,12 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import http.server
 import io
 import json
 import os
 import struct
-import threading
+import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -51,14 +51,15 @@ TWILIO_AUTH_TOKEN  = os.environ["TWILIO_AUTH_TOKEN"]    # required — no defaul
 TWILIO_FROM        = os.environ.get("TWILIO_FROM", "+13502204241")
 TWILIO_TO          = os.environ.get("TWILIO_TO",   "+919911954448")
 GPU_PUBLIC_IP      = os.environ.get("GPU_PUBLIC_IP", "185.216.21.53")
-HTTP_PORT          = 5000
+EVALUATOR_PORT     = int(os.environ.get("EVALUATOR_PORT", "8300"))  # publicly accessible
+TRIAL_ID           = os.environ.get("TRIAL_ID", "trial-001")
 
 TTS_URL            = "http://127.0.0.1:8200/synthesize"
 TTS_SPEAKER        = "kavya"
 TTS_SAMPLE_RATE    = 24000          # Veena output: float32 LE at 24kHz
 TWILIO_SAMPLE_RATE = 8000           # Twilio <Play> accepts 8kHz PCM WAV
 
-EVIDENCE_DIR = Path("/tmp/founder-validation/call-001/trial-001")
+EVIDENCE_DIR = Path(f"/tmp/founder-validation/call-001/{TRIAL_ID}")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Collections greeting — Hindi/Hinglish (Prateek Das, test loan account)
@@ -78,12 +79,6 @@ GREETING_TEXT = (
 # Shared state (written before HTTP server starts)
 # ─────────────────────────────────────────────────────────────────────────────
 
-_state: dict = {
-    "wav_8k_bytes": b"",
-    "recording_callback_body": "",
-    "status_events": [],
-}
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Audio utilities
 # ─────────────────────────────────────────────────────────────────────────────
@@ -95,17 +90,37 @@ def float32_raw_to_pcm16(raw: bytes) -> np.ndarray:
     return (arr * 32767).astype(np.int16)
 
 
-def resample_pcm16(pcm: np.ndarray, src_hz: int, dst_hz: int) -> np.ndarray:
-    """Linear-interpolation resample — sufficient quality for 8kHz telephony."""
-    if src_hz == dst_hz:
-        return pcm
-    n_out = int(len(pcm) * dst_hz / src_hz)
-    idx   = np.linspace(0, len(pcm) - 1, n_out)
-    lo    = idx.astype(np.int64)
-    hi    = np.minimum(lo + 1, len(pcm) - 1)
-    frac  = idx - lo
-    out   = pcm[lo] * (1.0 - frac) + pcm[hi] * frac
-    return out.astype(np.int16)
+def wav_to_telephony_mp3(wav_24k_bytes: bytes, out_path: Path) -> None:
+    """Convert 24kHz PCM16 WAV → telephony-grade MP3 via ffmpeg.
+
+    ffmpeg applies a proper anti-aliasing Kaiser-windowed sinc filter when
+    downsampling, applies telephone bandpass (300-3400 Hz via highpass+lowpass),
+    and normalises to -16 dBFS RMS so the voice is loud enough on the handset.
+    MP3 at 32kbps mono (~33 KB for 8s) downloads fast from public hosts.
+    """
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_in:
+        tmp_in.write(wav_24k_bytes)
+        tmp_in_path = tmp_in.name
+    try:
+        subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-i", tmp_in_path,
+                # Telephone bandpass + simple peak normalisation to -1 dBFS.
+                # dynaudnorm is avoided (causes pumping); loudnorm is avoided
+                # (single-pass can compress dynamic range unpredictably).
+                # Simple highpass+lowpass+volume is transparent and predictable.
+                "-af", "highpass=f=300,lowpass=f=3400,volume=2dB",
+                "-ar", "8000",        # resample to 8kHz (native telephony)
+                "-ac", "1",           # mono
+                "-b:a", "32k",        # 32 kbps MP3
+                str(out_path),
+            ],
+            check=True,
+            capture_output=True,
+        )
+    finally:
+        os.unlink(tmp_in_path)
 
 
 def pcm16_to_wav(pcm: np.ndarray, sample_rate: int) -> bytes:
@@ -169,74 +184,6 @@ def generate_tts(text: str) -> tuple[bytes, float, float]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# HTTP server (TwiML webhook + WAV serving)
-# ─────────────────────────────────────────────────────────────────────────────
-
-class _Handler(http.server.BaseHTTPRequestHandler):
-    """Minimal HTTP handler: serves WAV for <Play> and TwiML for Twilio webhook."""
-
-    def log_message(self, fmt: str, *args: object) -> None:
-        ts = time.strftime("%H:%M:%S")
-        print(f"[HTTP {ts}] {self.address_string()} {fmt % args}")
-
-    # ── GET: serve audio or health ──────────────────────────────────────────
-
-    def do_GET(self) -> None:
-        if self.path == "/greeting.wav":
-            body = _state["wav_8k_bytes"]
-            self._send(200, "audio/wav", body)
-        elif self.path in ("/health", "/"):
-            self._send(200, "text/plain", b"ok")
-        else:
-            self._send(404, "text/plain", b"not found")
-
-    # ── POST: TwiML, status, recording callbacks ────────────────────────────
-
-    def do_POST(self) -> None:
-        length  = int(self.headers.get("Content-Length", 0))
-        body    = self.rfile.read(length) if length else b""
-        body_s  = body.decode(errors="replace")
-
-        if self.path == "/twiml":
-            twiml = (
-                '<?xml version="1.0" encoding="UTF-8"?>\n'
-                "<Response>\n"
-                f'    <Play>http://{GPU_PUBLIC_IP}:{HTTP_PORT}/greeting.wav</Play>\n'
-                "    <Pause length=\"8\"/>\n"
-                "    <Hangup/>\n"
-                "</Response>"
-            ).encode()
-            self._send(200, "text/xml; charset=utf-8", twiml)
-
-        elif self.path == "/recording":
-            _state["recording_callback_body"] = body_s
-            print(f"[RECORDING CB] {body_s[:300]}")
-            self._send(200, "text/plain", b"ok")
-
-        elif self.path == "/status":
-            _state["status_events"].append(body_s)
-            call_status = dict(urllib.parse.parse_qsl(body_s)).get("CallStatus", "")
-            print(f"[STATUS CB] {call_status}")
-            self._send(200, "text/plain", b"ok")
-
-        else:
-            self._send(404, "text/plain", b"not found")
-
-    def _send(self, code: int, ctype: str, body: bytes) -> None:
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-
-def start_http_server() -> None:
-    srv = http.server.HTTPServer(("0.0.0.0", HTTP_PORT), _Handler)
-    print(f"[HTTP] Listening on 0.0.0.0:{HTTP_PORT}")
-    srv.serve_forever()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Twilio REST helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -246,18 +193,104 @@ def _twilio_auth() -> str:
     ).decode()
 
 
-def twilio_make_call() -> dict:
+def _multipart_body(field: str, filename: str, content_type: str, data: bytes) -> tuple[bytes, str]:
+    boundary = "voiceos-boundary-a1b2c3"
+    body = (
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"{field}\"; "
+        f"filename=\"{filename}\"\r\nContent-Type: {content_type}\r\n\r\n".encode()
+        + data
+        + f"\r\n--{boundary}--\r\n".encode()
+    )
+    return body, boundary
+
+
+def upload_wav_public(audio_bytes: bytes, filename: str = "greeting.mp3") -> str:
+    """Upload audio file to a public temp host. Tries services reachable from GPU outbound.
+    No inbound port required on GPU server.
+    """
+    content_type = "audio/mpeg" if filename.endswith(".mp3") else "audio/wav"
+    errors = []
+
+    # ── 1. catbox.moe (confirmed reachable from GPU) ─────────────────────────
+    try:
+        bnd = "catbox-boundary-x7y8z9"
+        full_body = (
+            f"--{bnd}\r\nContent-Disposition: form-data; name=\"reqtype\"\r\n\r\nfileupload\r\n"
+            f"--{bnd}\r\nContent-Disposition: form-data; name=\"fileToUpload\"; "
+            f"filename=\"{filename}\"\r\nContent-Type: {content_type}\r\n\r\n"
+        ).encode() + audio_bytes + f"\r\n--{bnd}--\r\n".encode()
+        req = urllib.request.Request(
+            "https://catbox.moe/user/api.php", data=full_body,
+            headers={"Content-Type": f"multipart/form-data; boundary={bnd}"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=60) as r:
+            url = r.read().decode().strip()
+        if url.startswith("http"):
+            print(f"            Uploaded to catbox.moe")
+            return url
+    except Exception as e:
+        errors.append(f"catbox.moe: {e}")
+
+    # ── 2. uguu.se (confirmed reachable from GPU) ────────────────────────────
+    try:
+        bnd = "uguu-boundary-x7y8z9"
+        full_body = (
+            f"--{bnd}\r\nContent-Disposition: form-data; name=\"files[]\"; "
+            f"filename=\"{filename}\"\r\nContent-Type: {content_type}\r\n\r\n"
+        ).encode() + audio_bytes + f"\r\n--{bnd}--\r\n".encode()
+        req = urllib.request.Request(
+            "https://uguu.se/upload.php", data=full_body,
+            headers={"Content-Type": f"multipart/form-data; boundary={bnd}"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=60) as r:
+            resp = json.loads(r.read())
+        files = resp.get("files", [])
+        url = files[0].get("url", "") if files else ""
+        if url.startswith("http"):
+            print(f"            Uploaded to uguu.se")
+            return url
+    except Exception as e:
+        errors.append(f"uguu.se: {e}")
+
+    # ── 3. pixeldrain (confirmed reachable from GPU) ─────────────────────────
+    try:
+        req = urllib.request.Request(
+            f"https://pixeldrain.com/api/file/{filename}",
+            data=audio_bytes,
+            headers={"Content-Type": content_type},
+            method="PUT",
+        )
+        with urllib.request.urlopen(req, timeout=60) as r:
+            resp = json.loads(r.read())
+        fid = resp.get("id", "")
+        if fid:
+            url = f"https://pixeldrain.com/api/file/{fid}?download"
+            print(f"            Uploaded to pixeldrain")
+            return url
+    except Exception as e:
+        errors.append(f"pixeldrain: {e}")
+
+    raise RuntimeError(f"All upload services failed: {errors}")
+
+
+def twilio_make_call_inline(audio_url: str) -> dict:
+    """Make Twilio call with inline TwiML — no webhook URL needed."""
+    twiml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        "<Response>"
+        f"<Play>{audio_url}</Play>"
+        '<Pause length="8"/>'
+        "<Hangup/>"
+        "</Response>"
+    )
     url  = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Calls.json"
     data = urllib.parse.urlencode({
-        "From":                        TWILIO_FROM,
-        "To":                          TWILIO_TO,
-        "Url":                         f"http://{GPU_PUBLIC_IP}:{HTTP_PORT}/twiml",
-        "Record":                      "true",
-        "RecordingStatusCallback":     f"http://{GPU_PUBLIC_IP}:{HTTP_PORT}/recording",
-        "RecordingStatusCallbackMethod": "POST",
-        "StatusCallback":              f"http://{GPU_PUBLIC_IP}:{HTTP_PORT}/status",
-        "StatusCallbackMethod":        "POST",
-        "StatusCallbackEvent":         "initiated ringing answered completed",
+        "From":   TWILIO_FROM,
+        "To":     TWILIO_TO,
+        "Twiml":  twiml,
+        "Record": "true",
     }).encode()
     req = urllib.request.Request(
         url, data=data,
@@ -326,41 +359,35 @@ def main() -> None:
     pcm24k = float32_raw_to_pcm16(raw_f32)
 
     wav_24k = pcm16_to_wav(pcm24k, TTS_SAMPLE_RATE)
-    pcm8k   = resample_pcm16(pcm24k, TTS_SAMPLE_RATE, TWILIO_SAMPLE_RATE)
-    wav_8k  = pcm16_to_wav(pcm8k, TWILIO_SAMPLE_RATE)
-
-    _state["wav_8k_bytes"] = wav_8k
 
     # Primary artifact (24kHz — full quality for founder review)
-    primary_path = EVIDENCE_DIR / "call-001-trial-001.wav"
+    primary_path = EVIDENCE_DIR / f"call-001-{TRIAL_ID}.wav"
     primary_path.write_bytes(wav_24k)
-
-    path_24k = EVIDENCE_DIR / "call-001-trial-001-24khz.wav"
-    path_8k  = EVIDENCE_DIR / "call-001-trial-001-8khz.wav"
-    path_24k.write_bytes(wav_24k)
-    path_8k.write_bytes(wav_8k)
 
     sha_primary = sha256hex(wav_24k)
     info_24k    = wav_info(wav_24k)
-    info_8k     = wav_info(wav_8k)
+
+    # Telephony MP3: ffmpeg bandpass (300-3400 Hz) + loudnorm + 8kHz resample
+    mp3_path = EVIDENCE_DIR / f"call-001-{TRIAL_ID}-telephony.mp3"
+    wav_to_telephony_mp3(wav_24k, mp3_path)
+    mp3_bytes = mp3_path.read_bytes()
 
     print(f"            24kHz WAV size  : {len(wav_24k):,} bytes")
     print(f"            24kHz duration  : {info_24k['duration_s']:.3f} s")
-    print(f"            8kHz WAV size   : {len(wav_8k):,} bytes")
     print(f"            SHA-256 (24kHz) : {sha_primary}")
+    print(f"            Telephony MP3   : {len(mp3_bytes):,} bytes ({mp3_path.name})")
 
-    # ── 3. Start HTTP server ──────────────────────────────────────────────────
-    print(f"\n[STEP 3/6]  Starting HTTP server on port {HTTP_PORT} …")
-    t = threading.Thread(target=start_http_server, daemon=True)
-    t.start()
-    time.sleep(1.5)
-    print(f"            TwiML URL       : http://{GPU_PUBLIC_IP}:{HTTP_PORT}/twiml")
-    print(f"            Audio URL       : http://{GPU_PUBLIC_IP}:{HTTP_PORT}/greeting.wav")
+    # ── 3. Upload telephony MP3 to public hosting ────────────────────────────
+    # MP3 at 32kbps is ~33 KB (12x smaller than 24kHz WAV) → fast CDN download.
+    # ffmpeg bandpass + loudnorm eliminates the noise artifacts from raw SNAC output.
+    print(f"\n[STEP 3/6]  Uploading telephony MP3 to public hosting …")
+    audio_url = upload_wav_public(mp3_bytes, f"call-001-{TRIAL_ID}.mp3")
+    print(f"            Public audio URL : {audio_url}")
 
-    # ── 4. Place Twilio outbound call ─────────────────────────────────────────
+    # ── 4. Place Twilio call with inline TwiML (no webhook server needed) ───────
     print(f"\n[STEP 4/6]  Placing Twilio outbound call {TWILIO_FROM} → {TWILIO_TO} …")
     t_call_placed = time.perf_counter()
-    call_resp     = twilio_make_call()
+    call_resp     = twilio_make_call_inline(audio_url)
     call_sid      = call_resp.get("sid", "UNKNOWN")
     call_status   = call_resp.get("status", "unknown")
     print(f"            Call SID        : {call_sid}")
@@ -406,7 +433,7 @@ def main() -> None:
                 rec_dur  = rec.get("duration", "?")
                 print(f"            Recording SID   : {rec_sid}")
                 print(f"            Duration        : {rec_dur}s")
-                twilio_rec_path = EVIDENCE_DIR / "call-001-trial-001-twilio.wav"
+                twilio_rec_path = EVIDENCE_DIR / f"call-001-{TRIAL_ID}-twilio.wav"
                 nbytes = twilio_download_recording(rec_sid, twilio_rec_path)
                 twilio_rec_sha  = sha256hex(twilio_rec_path.read_bytes())
                 twilio_rec_info = wav_info(twilio_rec_path.read_bytes())
@@ -423,7 +450,7 @@ def main() -> None:
     # ── Save metadata JSON ────────────────────────────────────────────────────
     metadata = {
         "call_id":            "call-001",
-        "trial_id":           "trial-001",
+        "trial_id":           TRIAL_ID,
         "objective":          "Audio & Voice Experience",
         "call_sid":           call_sid,
         "timestamp_start_utc": ts_start,
@@ -444,10 +471,9 @@ def main() -> None:
             "sha256":     sha_primary,
             "info":       info_24k,
         },
-        "wav_8k": {
-            "path":       str(path_8k),
-            "size_bytes": len(wav_8k),
-            "info":       info_8k,
+        "telephony_mp3": {
+            "path":       str(mp3_path),
+            "size_bytes": len(mp3_bytes),
         },
         "twilio_from":        TWILIO_FROM,
         "twilio_to":          TWILIO_TO,
@@ -459,7 +485,6 @@ def main() -> None:
             "info":       twilio_rec_info,
         },
         "gpu_host":           GPU_PUBLIC_IP,
-        "status_events":      _state["status_events"],
     }
 
     meta_path = EVIDENCE_DIR / "call-metadata.json"

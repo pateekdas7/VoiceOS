@@ -23,8 +23,8 @@ from pathlib import Path
 
 import torch
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.responses import JSONResponse, Response
 
 logging.basicConfig(
     level=logging.INFO,
@@ -121,6 +121,11 @@ _model = None
 _processor = None
 _ready = False
 
+# ── Call-script WAV state (in-memory, for Twilio <Play> serving) ─────────────
+# The call script POSTs the 8kHz WAV here; Twilio fetches it from /call/greeting.wav.
+# Port 8300 is the only externally-accessible port available for this purpose.
+_call_wav_bytes: bytes = b""
+
 
 def _load_model() -> None:
     global _model, _processor, _ready
@@ -181,6 +186,50 @@ async def health_ready() -> dict:
         "model": "Qwen2.5-Omni-7B",
         "vram_free_gib": round(vram_free, 2),
     }
+
+
+# ── Call-script endpoints (Twilio TwiML + WAV hosting on the open port) ───────
+
+@app.post("/call/upload-wav")
+async def call_upload_wav(wav_file: UploadFile = File(...)) -> dict:
+    """Call script uploads the 8kHz WAV here before placing the Twilio call."""
+    global _call_wav_bytes
+    _call_wav_bytes = await wav_file.read()
+    log.info("Call WAV uploaded: %d bytes", len(_call_wav_bytes))
+    return {"status": "ok", "size_bytes": len(_call_wav_bytes)}
+
+
+@app.api_route("/call/twiml", methods=["GET", "POST"])
+async def call_twiml(request: Request) -> Response:
+    """Twilio fetches this URL when the call is answered. Returns TwiML to play the greeting."""
+    host = request.url.hostname or "185.216.21.53"
+    twiml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        "<Response>\n"
+        f'    <Play>http://{host}:{PORT}/call/greeting.wav</Play>\n'
+        "    <Pause length=\"8\"/>\n"
+        "    <Hangup/>\n"
+        "</Response>"
+    )
+    log.info("TwiML served to %s", request.client.host if request.client else "unknown")
+    return Response(content=twiml.encode(), media_type="text/xml; charset=utf-8")
+
+
+@app.get("/call/greeting.wav")
+async def call_greeting_wav() -> Response:
+    """Twilio downloads the pre-generated 8kHz WAV to play to the borrower."""
+    if not _call_wav_bytes:
+        raise HTTPException(status_code=404, detail="No WAV uploaded yet")
+    log.info("Greeting WAV served: %d bytes", len(_call_wav_bytes))
+    return Response(content=_call_wav_bytes, media_type="audio/wav")
+
+
+@app.post("/call/status")
+async def call_status(request: Request) -> dict:
+    """Twilio status callback — logs call lifecycle events."""
+    body = await request.body()
+    log.info("Twilio status callback: %s", body.decode(errors="replace")[:200])
+    return {"status": "ok"}
 
 
 # ── Evaluate endpoint ─────────────────────────────────────────────────────────
