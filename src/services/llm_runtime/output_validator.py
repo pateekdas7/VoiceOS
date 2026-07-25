@@ -53,7 +53,11 @@ class ValidationResult:
     """plan_id used during validation (for audit/logging)."""
 
 
-_SAFE_FALLBACK = "Ek pal ke liye ruk jaiye, main aapki madad karne ki koshish kar raha hoon."
+_SAFE_FALLBACK = "Ek pal ke liye ruk jaiye, main aapki madad karne ki koshish kar rahi hoon."
+"""Feminine grammar ("kar rahi hoon") — spoken by the Kavya persona (a
+female agent, V2 Ch13); see ai_governance/verdict.py's SAFE_FALLBACK_RESPONSE
+for the full story on why this matters (same class of bug, same fix, found
+via Path-A Call-002 readiness validation)."""
 
 
 class OutputValidator:

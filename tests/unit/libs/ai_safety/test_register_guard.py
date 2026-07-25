@@ -248,3 +248,30 @@ class TestStripTrailingSir:
         out = strip_trailing_sir("sir")
 
         assert out == "sir"
+
+
+class TestSystemFallbackConstantsAreRegisterCompliant:
+    """Regression test for a real bug found via Path-A Call-002 readiness
+    validation (scripts/path_a_llm_fallback_validation.py): RegisterGuard
+    correctly rejected a real LLM-generated reply and TrueStreamingPipeline
+    substituted the system-wide "safe" fallback text in its place — but
+    that fallback constant was itself grammatically masculine (a
+    pre-Kavya-persona Sprint-018 default), so the substitution silently
+    reintroduced the exact class of violation it was meant to fix. Both
+    fallback constants in the codebase must pass RegisterGuard.check()
+    themselves, or a future edit to either could reintroduce this bug
+    without any other test catching it."""
+
+    def test_ai_governance_safe_fallback_response_is_clean(self) -> None:
+        from src.services.ai_governance.verdict import SAFE_FALLBACK_RESPONSE
+
+        result = RegisterGuard().check(SAFE_FALLBACK_RESPONSE)
+
+        assert result.clean is True, f"SAFE_FALLBACK_RESPONSE violates {result.violation}"
+
+    def test_output_validator_safe_fallback_is_clean(self) -> None:
+        from src.services.llm_runtime.output_validator import _SAFE_FALLBACK
+
+        result = RegisterGuard().check(_SAFE_FALLBACK)
+
+        assert result.clean is True, f"OutputValidator's _SAFE_FALLBACK violates {result.violation}"
