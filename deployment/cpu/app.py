@@ -310,6 +310,21 @@ def build_cil() -> object:
 
 
 # ---------------------------------------------------------------------------
+# Path-A Phase 6f/6g — the scripted-response golden path
+# ---------------------------------------------------------------------------
+
+
+def build_dialogue_response_engine() -> object:
+    """The deterministic scripted-response FSM (Path-A Phase 6f) that
+    drove Call-001 — zero-arg constructor, same pattern as build_cil()'s
+    engines: DialogueResponseEngine owns no I/O of its own, it only reads
+    ResponsePlan/CustomerContext/ConversationSessionState it's handed."""
+    from src.engines.dialogue_response.engine import DialogueResponseEngine
+
+    return DialogueResponseEngine()
+
+
+# ---------------------------------------------------------------------------
 # Top-level: build a fully-wired ConversationEngine
 # ---------------------------------------------------------------------------
 
@@ -362,6 +377,15 @@ def build_conversation_engine() -> object:
         promise_to_pay_service=build_promise_to_pay_service(
             build_postgres_connection(), idempotency_guard, policy_engine_service
         ),
+        # Path-A Phase 6g: the scripted golden path becomes the primary
+        # reply path for every turn once wired here (LLM path above stays
+        # built and available — engine.py falls back to it whenever
+        # dialogue_response is None, but on this composition root it never
+        # is). LENDER_NAME defaults to the founder-validation trial's own
+        # lender ("Rajat Finance") only because no multi-tenant lender
+        # registry exists yet — every real tenant must set this explicitly.
+        dialogue_response=build_dialogue_response_engine(),
+        lender_name=_env("LENDER_NAME", "Rajat Finance"),
     )
     return engine
 
