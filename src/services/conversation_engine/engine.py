@@ -21,8 +21,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Protocol, runtime_checkable
 
 from src.libs.ai_safety.prompt_injection import PromptInjectionDetector
@@ -32,7 +34,7 @@ from src.libs.contracts.decision import DecisionEnvelope
 from src.libs.contracts.models.ai_config import ModelConfig, PromptVersion
 from src.libs.contracts.primitives import CallId, CustomerId, TenantId
 from src.libs.contracts.response_plan import ResponsePlan, Snippet
-from src.libs.contracts.streaming import AudioClause
+from src.libs.contracts.streaming import AudioClause, TokenChunk
 from src.libs.contracts.turn import TurnInput
 from src.libs.idempotency.guard import IdempotencyGuard
 from src.libs.idempotency.key_builder import IdempotencyKeyBuilder
@@ -86,6 +88,19 @@ class RuntimeConfig:
     model_config: ModelConfig | None
 
 
+def _default_response_plan() -> ResponsePlan:
+    """A minimal, valid ResponsePlan for speak_scripted_text() calls that
+    have no real per-turn plan yet (the call-open greeting, the call-close
+    hangup — both spoken outside handle_turn()'s per-turn CIL pipeline)."""
+    return ResponsePlan(
+        plan_id=str(uuid.uuid4()),
+        version=1,
+        call_id="",
+        tenant_id="",
+        created_at=datetime.now(timezone.utc),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Protocol interfaces — allow injecting engine implementations without
 # importing from src/engines/ (check_boundaries Rule 1).
@@ -133,6 +148,42 @@ class OutputEvaluatorPort(Protocol):
         response_plan: ResponsePlan,
     ) -> Any:
         """Return a TurnQualityScore-like object."""
+        ...
+
+
+@runtime_checkable
+class DialogueTurnOutputPort(Protocol):
+    """Structural shape of DialogueResponseEngine's per-turn output.
+
+    Only the attribute this engine actually reads is declared — the real
+    return type (src.engines.dialogue_response.engine.DialogueTurnOutput,
+    Phase 6f) cannot be imported here (check_boundaries.py Rule 1).
+    """
+
+    reply_text: str
+
+
+@runtime_checkable
+class DialogueResponsePort(Protocol):
+    """Protocol for the scripted-response FSM (implemented by
+    DialogueResponseEngine, Path-A Phase 6f).
+
+    ``session`` is typed ``Any`` here rather than re-declaring
+    DialogueSessionState: ConversationEngine already owns the concrete
+    ConversationSessionState instance it passes in (same-package import,
+    not a boundary crossing) — the port only needs to describe what this
+    class receives *back*, not re-validate what it already has.
+    """
+
+    def generate_reply(
+        self,
+        session: Any,
+        response_plan: ResponsePlan,
+        context: CustomerContext | None,
+        user_text: str,
+        lender_name: str,
+    ) -> DialogueTurnOutputPort:
+        """Return the scripted reply (and routing/empathy metadata) for one turn."""
         ...
 
 
@@ -198,6 +249,20 @@ class ConversationEngine:
             the RI-4 DecisionEnvelope commit and before any LLM/TTS output —
             the durable commitment is recorded before the agent ever speaks a
             confirmation of it.
+        dialogue_response: DialogueResponsePort (Path-A Phase 6g — the
+            scripted-response FSM, DialogueResponseEngine). Optional — None
+            preserves pre-Phase-6 behavior (every turn goes through the LLM
+            streaming path, Step 5). When wired, it becomes the PRIMARY
+            reply path for every turn: the LLM/TTS token-streaming path is
+            not invoked at all for a call using this engine — the golden
+            path is deterministic end to end, matching what Call-001 proved
+            worked (V2 Ch13). The scripted reply still passes through
+            TrueStreamingPipeline (OutputValidator + AIGovernance + TTS +
+            playback) via :meth:`speak_scripted_text`, so no governance gate
+            is bypassed by using this path instead of the LLM.
+        lender_name: The tenant's lender/brand name spoken by the scripted
+            response engine (e.g. in kavya_persona templates). Only used
+            when ``dialogue_response`` is wired.
     """
 
     def __init__(
@@ -226,6 +291,8 @@ class ConversationEngine:
         model_config_service: ModelConfigService | None = None,
         prompt_versioning_service: PromptVersioningService | None = None,
         promise_to_pay_service: PromiseToPayService | None = None,
+        dialogue_response: DialogueResponsePort | None = None,
+        lender_name: str = "",
     ) -> None:
         self._cil = cil
         self._prompt_builder = prompt_builder
@@ -298,6 +365,12 @@ class ConversationEngine:
         # behavior (negotiation moves are computed and spoken but never
         # durably recorded — the exact gap the architecture audit found).
         self._promise_to_pay_service = promise_to_pay_service
+
+        # Path-A Phase 6g (V2 Ch13): the scripted-response FSM. Optional —
+        # None preserves pre-Phase-6 behavior (LLM streaming path for every
+        # turn). When wired, it replaces the LLM as the primary reply path.
+        self._dialogue_response = dialogue_response
+        self._lender_name = lender_name
 
     def start_call(
         self, tenant_id: TenantId, customer_id: str, call_id: str, campaign_id: str | None = None
@@ -568,25 +641,33 @@ class ConversationEngine:
         if self._snapshot_store is not None and session.turn_count % self._snapshot_every_n_turns == 0:
             self._snapshot_store.take_snapshot(session, TenantId(turn.tenant_id), CallId(turn.call_id))
 
-        # Step 5 — Stream LLM → validate → TTS → playback.
+        # Step 5 — Reply generation: scripted golden path (Phase 6g) when
+        # wired, else the LLM streaming path (Sprint-009-018) unchanged.
         all_clauses: list[AudioClause] = []
         full_output_text = ""
 
-        token_stream = await self._llm.generate_stream(
-            prompt=prompt_text,
-            response_plan=response_plan,
-            max_tokens=response_plan.delivery.max_response_tokens,
-        )
+        if self._dialogue_response is not None:
+            dialogue_output = self._dialogue_response.generate_reply(
+                session, response_plan, context, turn.transcript, self._lender_name
+            )
+            full_output_text = dialogue_output.reply_text
+            all_clauses.extend(await self.speak_scripted_text(full_output_text, playback, response_plan))
+        else:
+            token_stream = await self._llm.generate_stream(
+                prompt=prompt_text,
+                response_plan=response_plan,
+                max_tokens=response_plan.delivery.max_response_tokens,
+            )
 
-        clauses = await self._pipeline.run(
-            token_stream=token_stream,
-            response_plan=response_plan,
-            tts_service=self._tts,
-            validator=self._validator,
-            playback=playback,
-        )
-        all_clauses.extend(clauses)
-        full_output_text = " ".join(c.text for c in all_clauses)
+            clauses = await self._pipeline.run(
+                token_stream=token_stream,
+                response_plan=response_plan,
+                tts_service=self._tts,
+                validator=self._validator,
+                playback=playback,
+            )
+            all_clauses.extend(clauses)
+            full_output_text = " ".join(c.text for c in all_clauses)
 
         # Step 6 — Async quality scoring (fire-and-forget, non-blocking).
         # Sprint-016: dispatched through the bounded WorkerPool at LOW
@@ -618,6 +699,39 @@ class ConversationEngine:
                 plan_id=response_plan.plan_id,
             )
         return all_clauses
+
+    async def speak_scripted_text(
+        self,
+        text: str,
+        playback: PlaybackScheduler,
+        response_plan: ResponsePlan | None = None,
+    ) -> list[AudioClause]:
+        """Synthesize a fixed string (not an LLM stream) through the same
+        governance/validation/TTS/playback pipeline every LLM turn uses.
+
+        Used by the scripted-response golden path (Phase 6g) for per-turn
+        replies, and by callers outside handle_turn() (the WS entrypoint's
+        call-start/call-end handling) for the fixed greeting and hangup
+        lines (kavya_persona.build_greeting_text()/HANGUP_TEXT) — neither
+        of which has a real per-turn ResponsePlan yet, hence ``response_plan``
+        is optional and a minimal default is used when absent. Routing a
+        fixed string through a single-chunk TokenChunk stream reuses
+        TrueStreamingPipeline exactly as-is: OutputValidator and
+        AIGovernanceService still run, so no fixed string bypasses the
+        governance gate that every LLM turn is subject to.
+        """
+        plan = response_plan if response_plan is not None else _default_response_plan()
+
+        async def _single_chunk() -> AsyncIterator[TokenChunk]:
+            yield TokenChunk(text=text, token_id=0, finish_reason="stop")
+
+        return await self._pipeline.run(
+            token_stream=_single_chunk(),
+            response_plan=plan,
+            tts_service=self._tts,
+            validator=self._validator,
+            playback=playback,
+        )
 
     async def _persist_finalized_commitment(
         self,
