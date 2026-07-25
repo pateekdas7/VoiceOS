@@ -55,17 +55,59 @@ _SLANG = ("साला", "साली", "अबे", "भोसड़", "च�
 """Rude/slang words — never appropriate regardless of customer behavior."""
 
 _MASCULINE_GRAMMAR = (
-    "कर दूंगा", "दे दूंगा", "करूँगा", "करूंगा", "दूँगा", "दूंगा",
-    "बताऊँगा", "बताऊंगा", "लूँगा", "लूंगा", "सकूँगा", "सकूंगा",
-    "आया हूँ", "आया हूं", "गया हूँ", "गया हूं", "हुआ हूँ", "हुआ हूं",
-    "बैठा हूँ", "बैठा हूं", "आया था", "गया था", "बोला था",
-    "कर सकता", "बोल रहा हूँ", "बोल रहा हूं", "जा रहा हूँ", "जा रहा हूं",
-    "समझ सकता",
     "कर देगे", "कर देगा", "कर देंगा", "कर देगें",
     "कर देगे?", "कर देगा?", "कर देगे।",
     "पे payment कर देगे", "payment कर देगे",
+    "kar dega",
 )  # fmt: skip
-"""Masculine first-person verb forms — the persona is female; these must never appear."""
+"""Idiomatic masculine future-tense fragments that don't reduce to the
+regular suffix rules below (irregular/colloquial spellings, mostly ASR
+transcription artifacts ported from conv_server.py) — kept as a narrow
+literal list rather than generalized, since "-गा"/"-ega" endings are also
+legitimate in gender-neutral formal-plural forms (करेंगे/karenge) and a
+broad suffix rule here would over-match."""
+
+# ---------------------------------------------------------------------------
+# Masculine grammar — systematic suffix rules, not phrase enumeration.
+# ---------------------------------------------------------------------------
+# Hindi marks 1st-person subject gender on the verb through a small, closed
+# set of PRODUCTIVE suffix patterns — the same three rules generate every
+# masculine "मैं" self-reference regardless of which verb stem they attach
+# to, in both Devanagari and Roman transliteration:
+#
+#   1. continuous/perfective: <stem>ा + हूँ/हूं   ("stem"+a + hoon)
+#      कर रहा हूँ, आया हूँ, बैठा हूँ, गया था ...  /  kar raha hoon, aaya hoon ...
+#      (feminine "ी हूँ"/"i hoon" never matches — different vowel entirely)
+#   2. future:                <stem>ऊंगा/ऊँगा   (stem+unga)
+#      करूंगा, दूंगा, लूंगा, बताऊंगा, सकूंगा      /  karunga, dunga, lunga ...
+#      (feminine "ऊंगी"/"ungi" never matches)
+#   3. modal "able to":        सकता / sakta (a closed-class auxiliary word,
+#      not a stem+suffix compound — "सकता"/"sakta" alone already covers
+#      "कर सकता"/"kar sakta", "समझ सकता"/"samajh sakta", etc. regardless of
+#      the main verb preceding it)
+#
+# A phrase-enumeration approach (conv_server.py's original list, and this
+# module's own first pass) only ever covers the specific verbs someone
+# thought to type in — real LLM output was observed generating a masculine
+# form ("kar raha hoon") that neither list anticipated (Path-A Call-002
+# readiness validation, scripts/path_a_llm_fallback_validation.py). These
+# three regexes match on the grammatical suffix itself, so they generalize
+# to any verb stem, in either script, without enumeration.
+_MASCULINE_SUFFIX_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # NOTE: no trailing \b on the Devanagari patterns — Python's \w (and
+    # therefore \b) does not treat Devanagari combining vowel signs (Unicode
+    # category Mn/Mc, e.g. the "ा" matra every one of these endings finishes
+    # on) as word characters, so a \b placed right after one silently never
+    # matches (confirmed empirically: unicodedata.category("ा") == "Mc",
+    # re.match(r"\w", "ा") is None). The character sequences themselves
+    # (ूंगा/ऊंगा, सकता) are distinctive enough not to need a boundary anchor.
+    re.compile(r"[ऀ-ॿ]*ा\s+(?:हूँ|हूं|था)"),  # rule 1, Devanagari (हूँ/हूं/था)
+    re.compile(r"\b\w*a\s+(?:hoon|tha)\b", re.IGNORECASE),  # rule 1, Roman
+    re.compile(r"[ऀ-ॿ]*(?:ू|ऊ)(?:ं|ँ)गा"),  # rule 2, Devanagari
+    re.compile(r"\b\w*unga\b", re.IGNORECASE),  # rule 2, Roman
+    re.compile(r"सकता"),  # rule 3, Devanagari
+    re.compile(r"\bsakta\b", re.IGNORECASE),  # rule 3, Roman
+)
 
 _ACTION_HALLUCINATIONS = (
     "मैं बैंक", "बैंक जा", "system में देख", "अभी जाकर", "मैं system",
@@ -118,6 +160,14 @@ class RegisterGuard:
             for token in tokens:
                 if token in reply or token.lower() in lower:
                     return RegisterCheckResult(clean=False, violation=category)
+            if category == RegisterViolation.MASCULINE_GRAMMAR and any(
+                p.search(reply) for p in _MASCULINE_SUFFIX_PATTERNS
+            ):
+                # Systematic suffix rules (stem+ा+हूँ/था, stem+ऊंगा, सकता —
+                # and their Roman equivalents) generalize over any verb stem,
+                # checked right after the narrow literal-phrase list above
+                # so both catch masculine grammar at the same priority.
+                return RegisterCheckResult(clean=False, violation=category)
         return RegisterCheckResult(clean=True)
 
 

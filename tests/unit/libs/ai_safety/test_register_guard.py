@@ -44,6 +44,89 @@ class TestRegisterGuardCheck:
         assert result.clean is False
         assert result.violation == RegisterViolation.MASCULINE_GRAMMAR
 
+    def test_masculine_grammar_flagged_in_roman_script(self) -> None:
+        """Path-A Call-002 readiness: a real LLM was observed generating a
+        masculine verb form in Roman script that a Devanagari-only phrase
+        list never matched (scripts/path_a_llm_fallback_validation.py)."""
+        guard = RegisterGuard()
+
+        result = guard.check("Main is jaankari ki dobara pushti kar raha hoon.")
+
+        assert result.clean is False
+        assert result.violation == RegisterViolation.MASCULINE_GRAMMAR
+
+    def test_masculine_suffix_rule_generalizes_to_an_unlisted_verb_roman(self) -> None:
+        """The suffix regex (rule 1: <stem>a + hoon) must fire for a verb
+        stem never enumerated anywhere — proving this is a systematic
+        grammatical rule, not a phrase lookup table."""
+        guard = RegisterGuard()
+
+        result = guard.check("Main aapke liye naya loan account khareed raha hoon.")
+
+        assert result.clean is False
+        assert result.violation == RegisterViolation.MASCULINE_GRAMMAR
+
+    def test_masculine_suffix_rule_generalizes_to_an_unlisted_verb_devanagari(self) -> None:
+        guard = RegisterGuard()
+
+        result = guard.check("Main aapka record खरीद रहा हूँ अभी।")
+
+        assert result.clean is False
+        assert result.violation == RegisterViolation.MASCULINE_GRAMMAR
+
+    def test_masculine_future_suffix_rule_roman(self) -> None:
+        """Rule 2 (<stem>unga) generalizes over verb stems too — "khareedunga"
+        is not enumerated anywhere, matching only via the suffix pattern."""
+        guard = RegisterGuard()
+
+        result = guard.check("Main woh cheez khareedunga kal.")
+
+        assert result.clean is False
+        assert result.violation == RegisterViolation.MASCULINE_GRAMMAR
+
+    def test_masculine_modal_sakta_generalizes_roman(self) -> None:
+        guard = RegisterGuard()
+
+        result = guard.check("Main yeh kaam khud kar sakta hoon.")
+
+        assert result.clean is False
+        assert result.violation == RegisterViolation.MASCULINE_GRAMMAR
+
+    def test_feminine_continuous_form_is_clean(self) -> None:
+        guard = RegisterGuard()
+
+        result = guard.check("Main is jaankari ki dobara pushti kar rahi hoon.")
+
+        assert result.clean is True
+
+    def test_feminine_devanagari_continuous_form_is_clean(self) -> None:
+        guard = RegisterGuard()
+
+        result = guard.check("Main record खरीद रही हूँ अभी।")
+
+        assert result.clean is True
+
+    def test_feminine_future_form_is_clean(self) -> None:
+        guard = RegisterGuard()
+
+        result = guard.check("Main woh cheez khareedungi kal.")
+
+        assert result.clean is True
+
+    def test_feminine_modal_sakti_is_clean(self) -> None:
+        guard = RegisterGuard()
+
+        result = guard.check("Main yeh kaam khud kar sakti hoon.")
+
+        assert result.clean is True
+
+    def test_feminine_roman_grammar_is_clean(self) -> None:
+        guard = RegisterGuard()
+
+        result = guard.check("Main is jaankari ki dobara pushti kar rahi hoon.")
+
+        assert result.clean is True
+
     def test_action_hallucination_flagged(self) -> None:
         guard = RegisterGuard()
 
