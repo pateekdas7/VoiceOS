@@ -111,7 +111,27 @@ dependencies = [
     # Benefits: Minimal, standard ASGI server; no framework beyond Starlette.
     # Risks: New runtime surface, but self-contained (one entrypoint).
     # Maintenance: Active (Encode); BSD-3-Clause.
-    "uvicorn>=0.30",
+    # Path-A consolidation Phase 4 (src/services/media_gateway/twilio_ws_entrypoint.py):
+    # bare uvicorn has NO WebSocket protocol implementation -- Twilio Media
+    # Streams' WS upgrade request gets "Unsupported upgrade request" / a 404
+    # instead of a real connection, and the call has no audio path at all
+    # (found via a live Call-002 trial: the call connected for 6s then
+    # disconnected with the customer hearing nothing, since Twilio's
+    # <Connect><Stream> could never attach). No test in this repo catches
+    # this gap -- every WS integration test drives Starlette's in-process
+    # TestClient, which doesn't require a real network WebSocket stack.
+    # Purpose: uvicorn's own documented "standard" extras (websockets,
+    #          httptools, uvloop, python-dotenv, watchfiles) -- the
+    #          conventional production install, not just the bare minimum
+    #          websockets package, so this doesn't drift from upstream's
+    #          own recommended production configuration.
+    # Benefits: A real WS protocol handler is required, not optional --
+    #           this WS entrypoint IS the Twilio Media Streams transport.
+    # Risks: A handful of additional transitive C-extension dependencies
+    #        (uvloop, httptools); all already widely used, actively
+    #        maintained packages uvicorn itself recommends.
+    # Maintenance: Active (Encode); BSD-3-Clause / MIT (websockets).
+    "uvicorn[standard]>=0.30",
     # Sprint-016: Distributed tracing (src/libs/observability/tracer.py).
     # Purpose: opentelemetry-api/-sdk provide TracerProvider, spans, and W3C
     #          Trace Context propagation; opentelemetry-exporter-otlp-proto-http
