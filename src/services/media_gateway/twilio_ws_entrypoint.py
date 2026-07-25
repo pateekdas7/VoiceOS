@@ -316,6 +316,16 @@ class CallOrchestrator:
         if self._turn_active and self._current_turn_queue is not None:
             await self._current_turn_queue.put(None)
         self._closing = True
+        # Wake _run_turns: it blocks on `await self._turn_ready.wait()`, which
+        # is NOT cancelled by _closing flipping to True, so without this it
+        # waits forever for a turn that can never arrive (the carrier stream
+        # has ended). run()'s asyncio.wait(FIRST_EXCEPTION) then never
+        # returns, and release_adapter()/release_session() never run — a leak
+        # of one adapter + audio session per completed call. Only observable
+        # when a call ends *cleanly*: a call that ended by raising (e.g. the
+        # STT bug fixed alongside this) tripped FIRST_EXCEPTION and unwound
+        # normally, which is why it went unnoticed until a clean hangup.
+        self._turn_ready.set()
 
     async def _handle_vad_event(self, event: object) -> None:
         import asyncio
@@ -350,6 +360,8 @@ class CallOrchestrator:
         while not self._closing:
             await self._turn_ready.wait()
             self._turn_ready.clear()
+            if self._closing and not self._turn_active and self._current_turn_queue is None:
+                break  # woken purely to observe the close, not by a real turn
             await self._run_turns_one_iteration()
 
     async def _run_turns_one_iteration(self) -> None:

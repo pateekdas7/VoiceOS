@@ -41,9 +41,38 @@ TENANT_ID = os.environ.get("DEFAULT_TENANT_ID", "")
 CUSTOMER_ID = os.environ.get("CALL002_CUSTOMER_ID", "")
 
 
+CUSTOMER_WAV = os.environ.get("SMOKE_CUSTOMER_WAV", "")
+"""Optional path to a REAL captured customer-audio WAV (16kHz mono PCM16 --
+exactly what CallRecorder writes). Strongly preferred over the synthetic
+tone below: production's AudioPreprocessorService runs its full stage set
+(not the resample-only config the integration tests use), and a pure sine
+tone does not reliably survive it as 'speech' for VAD endpointing -- so a
+tone-driven test can pass the transport while still proving nothing about
+whether a real caller gets a reply."""
+
+
+def _real_speech_mulaw_frames() -> list[str]:
+    """Load real 16kHz customer speech and return it as 20ms 8kHz mu-law
+    frames, exactly as Twilio would deliver them."""
+    import wave
+
+    with wave.open(CUSTOMER_WAV, "rb") as w:
+        assert w.getnchannels() == 1, "expected mono"
+        assert w.getsampwidth() == 2, "expected PCM16"
+        pcm16_16k = w.readframes(w.getnframes())
+    pcm16_8k, _ = audioop.ratecv(pcm16_16k, 2, 1, w.getframerate(), 8000, None)
+
+    frames = []
+    frame_bytes = 160 * 2  # 20ms at 8kHz, PCM16
+    for off in range(0, len(pcm16_8k) - frame_bytes + 1, frame_bytes):
+        chunk = pcm16_8k[off : off + frame_bytes]
+        frames.append(base64.b64encode(audioop.lin2ulaw(chunk, 2)).decode())
+    return frames
+
+
 def _tone_mulaw_payload(num_samples: int = 160, freq_hz: float = 220.0, amplitude: int = 14000) -> str:
     """One 20ms frame of loud 8kHz tone, mu-law encoded + base64'd, exactly
-    as Twilio sends it. Loud enough to trip EnergyVADModel's speech threshold."""
+    as Twilio sends it. Fallback only -- see CUSTOMER_WAV above."""
     samples = [int(amplitude * sin(2 * pi * freq_hz * i / 8000)) for i in range(num_samples)]
     pcm16 = struct.pack(f"<{num_samples}h", *samples)
     return base64.b64encode(audioop.lin2ulaw(pcm16, 2)).decode()
@@ -153,10 +182,17 @@ async def main() -> int:
         chunk = 0
         # Wait out the greeting (measured ~19s of synthesis on the real GPU).
         await asyncio.sleep(24.0)
-        print("      (greeting window elapsed — now feeding ~600ms of speech)")
-        for _ in range(30):  # ~600ms of speech
+
+        if CUSTOMER_WAV:
+            speech_frames = _real_speech_mulaw_frames()
+            print(f"      (greeting window elapsed — feeding {len(speech_frames)} frames of REAL captured speech)")
+        else:
+            speech_frames = [tone] * 30
+            print("      (greeting window elapsed — feeding synthetic tone; set SMOKE_CUSTOMER_WAV for real speech)")
+
+        for payload in speech_frames:
             orch.feed_message(
-                {"event": "media", "media": {"payload": tone, "chunk": str(chunk), "timestamp": str(chunk * 20)}}
+                {"event": "media", "media": {"payload": payload, "chunk": str(chunk), "timestamp": str(chunk * 20)}}
             )
             chunk += 1
             await asyncio.sleep(0.02)

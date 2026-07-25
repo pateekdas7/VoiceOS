@@ -23,7 +23,7 @@ from pathlib import Path
 
 import torch
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 
 logging.basicConfig(
@@ -290,24 +290,98 @@ async def evaluate(wav_file: UploadFile = File(...)) -> JSONResponse:
     })
 
 
-def _run_evaluation(audio_path: str) -> str:
+@app.post("/evaluate-custom")
+async def evaluate_custom(
+    prompt: str = Form(...),
+    system_prompt: str = Form("You are an independent senior conversational AI evaluation model."),
+    max_new_tokens: int = Form(3072),
+    wav_file: UploadFile | None = File(None),
+) -> JSONResponse:
+    """Run an evaluation against a CALLER-SUPPLIED prompt, with optional audio.
+
+    Sprint-029 Call-002: the acceptance review's prompt is specified by the
+    reviewer (a 14-point production-acceptance rubric covering latency,
+    persona compliance, CRM correctness, infrastructure observations, and
+    more), and the evidence includes a transcript, timing data, and logs --
+    not audio alone. /evaluate's fixed EVALUATION_PROMPT is deliberately
+    audio-perception-only ("describe only what you hear", no PASS/FAIL), so
+    it cannot serve that review; this endpoint exists alongside it rather
+    than changing it, leaving the audio-only path byte-identical for the
+    existing evaluate_trial.py Report-B flow.
+
+    ``wav_file`` is optional: a review whose evidence is transcript/metrics
+    text only (no captured audio) is still a valid use of this endpoint.
+    """
+    if not _ready:
+        raise HTTPException(status_code=503, detail="Evaluator not ready")
+
+    audio_path: str | None = None
+    wav_info: dict | None = None
+    tmp_path = Path("/tmp/evaluator-custom-input.wav")
+
+    if wav_file is not None:
+        wav_bytes = await wav_file.read()
+        if wav_bytes:
+            try:
+                with wave.open(io.BytesIO(wav_bytes)) as w:
+                    wav_info = {
+                        "channels": w.getnchannels(),
+                        "sample_rate": w.getframerate(),
+                        "duration_s": round(w.getnframes() / w.getframerate(), 3),
+                        "sample_width_bytes": w.getsampwidth(),
+                    }
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"Invalid WAV: {exc}")
+            tmp_path.write_bytes(wav_bytes)
+            audio_path = str(tmp_path)
+
+    log.info(
+        "Custom evaluation: prompt=%d chars, audio=%s",
+        len(prompt),
+        wav_info["duration_s"] if wav_info else "none",
+    )
+
+    t0 = time.perf_counter()
+    try:
+        evaluation_text = _run_evaluation(
+            audio_path, prompt=prompt, system_prompt=system_prompt, max_new_tokens=max_new_tokens
+        )
+    except Exception as exc:
+        log.exception("Custom evaluation failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Evaluation error: {exc}")
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    elapsed_ms = round((time.perf_counter() - t0) * 1000)
+    log.info("Custom evaluation complete in %dms", elapsed_ms)
+
+    return JSONResponse({
+        "evaluation": evaluation_text,
+        "wav_info": wav_info,
+        "elapsed_ms": elapsed_ms,
+        "model": "Qwen/Qwen2.5-Omni-7B",
+    })
+
+
+def _run_evaluation(
+    audio_path: str | None,
+    prompt: str = EVALUATION_PROMPT,
+    system_prompt: str = "You are an expert audio quality evaluator. You listen carefully and describe only what you hear.",
+    max_new_tokens: int = 2048,
+) -> str:
     try:
         from qwen_omni_utils import process_mm_info
     except ImportError:
         process_mm_info = None
 
+    user_content: list[dict] = []
+    if audio_path is not None:
+        user_content.append({"type": "audio", "audio": audio_path})
+    user_content.append({"type": "text", "text": prompt})
+
     messages = [
-        {
-            "role": "system",
-            "content": "You are an expert audio quality evaluator. You listen carefully and describe only what you hear.",
-        },
-        {
-            "role": "user",
-            "content": [
-                {"type": "audio", "audio": audio_path},
-                {"type": "text", "text": EVALUATION_PROMPT},
-            ],
-        },
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
     ]
 
     text = _processor.apply_chat_template(
@@ -334,7 +408,7 @@ def _run_evaluation(audio_path: str) -> str:
         output_ids = _model.generate(
             **inputs,
             generation_mode="text",     # text-only output; skip talker (not initialized)
-            thinker_max_new_tokens=2048,
+            thinker_max_new_tokens=max_new_tokens,
             do_sample=False,
             repetition_penalty=1.1,
         )
