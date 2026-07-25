@@ -84,7 +84,167 @@ _HINDI_RELATIVE_DATES: dict[str, int] = {
     "tomorrow": 1,
     "today": 0,
     "day after": 2,
+    # ------------------------------------------------------------------
+    # Path-A Phase 6: extended relative-date coverage, ported from
+    # evaluation/founder-validation/conv_server.py's _RELATIVE_DATE_TOKENS
+    # (90+ entries tuned against real founder-reviewed trial calls) so the
+    # scripted response engine can consume EntityExtractor's PROMISE_DATE
+    # directly instead of conv_server.py's own parallel date parser.
+    # Overlapping phrases are deliberately given the SAME offset as any
+    # existing shorter substring they contain, since _resolve_relative_date
+    # matches the first dict entry found via substring search (insertion
+    # order) — see the loop in _resolve_relative_date.
+    # ------------------------------------------------------------------
+    # day-scale aliases/variants
+    "day after tomorrow": 2,
+    "kal tak": 1,
+    "kal shaam": 1,
+    "kal subah": 1,
+    "aaj shaam": 0,
+    "aaj raat": 0,
+    "aaj tak": 0,
+    "कल तक": 1,
+    "कल शाम": 1,
+    "कल सुबह": 1,
+    "आज शाम": 0,
+    "आज तक": 0,
+    # week-scale — quantified phrases ("do hafte") MUST be checked before the
+    # generic single-word phrases below ("hafte mein" etc.), since
+    # _resolve_relative_date matches the FIRST dict entry whose text is a
+    # substring of the utterance (insertion order) — "do teen hafte" and
+    # "teen hafte" both contain "hafte", and without this ordering "hafte
+    # mein"/"hafte tak" etc. would shadow them and always resolve to 7 days.
+    "do teen hafte": 21,  # checked before "teen hafte" (also 21) — order-safe either way
+    "teen hafte": 21,
+    "do hafte": 14,
+    "chaar hafte": 28,
+    "char hafte": 28,
+    "agle hafte": 7,
+    "agle hafta": 7,
+    "iss hafte": 7,
+    "this week": 7,
+    "hafte mein": 7,
+    "hafte ke andar": 7,
+    "hafte tak": 7,
+    "hafte baad": 7,
+    "hafte ke baad": 7,
+    "week baad": 7,
+    "week ke baad": 7,
+    "weeks baad": 7,
+    "week tak": 7,
+    "week mein": 7,
+    "week ke andar": 7,
+    "aane wale hafte": 7,
+    "aane waale hafte": 7,
+    "अगले हफ्ते": 7,
+    "अगले हफ़्ते": 7,
+    "इस हफ्ते": 7,
+    "इस हफ़्ते": 7,
+    "हफ्ते तक": 7,
+    "हफ्ते में": 7,
+    # month-scale (calendar-month-length approximated as 30 days; "this
+    # month"/"month end" approximated as mid/end-of-month offsets — these
+    # are deliberate business-reasonable defaults, not exact calendar math,
+    # matching conv_server.py's own approach of echoing customer phrasing
+    # rather than computing exact month boundaries)
+    "agle mahine": 30,
+    "agle month": 30,
+    "next month": 30,
+    "iss month": 15,
+    "this month": 15,
+    "month end": 20,
+    "month ke baad": 30,
+    "month baad": 30,
+    "mahine baad": 30,
+    "mahine ke baad": 30,
+    "mahine ke end": 20,
+    "mahine tak": 30,
+    "अगले महीने": 30,
+    "इस महीने": 15,
+    # salary/pay-day markers — salary dates vary per employer; 30 days is a
+    # documented business-reasonable default for a monthly pay cycle, not a
+    # precise computation (same limitation conv_server.py had — it only
+    # echoed the customer's phrasing without resolving an actual date).
+    "salary aane par": 30,
+    "salary aane ke baad": 30,
+    "salary ke baad": 30,
+    "salary aayegi": 30,
+    "पगार आने पर": 30,
+    "सैलरी के बाद": 30,
 }
+
+# Hindi/Hinglish digit-word → day count, for "N din"/"N days"/"N दिन"
+# expressions (e.g. "pandrah din mein" -> 15 days). Ported from
+# conv_server.py's _HINDI_DAY_WORDS/_HINGLISH_DAY_WORDS.
+_HINDI_DAY_WORDS: dict[str, int] = {
+    "एक": 1, "दो": 2, "तीन": 3, "चार": 4, "पांच": 5, "पाँच": 5,
+    "छह": 6, "छः": 6, "सात": 7, "आठ": 8, "नौ": 9, "दस": 10,
+    "ग्यारह": 11, "बारह": 12, "तेरह": 13, "चौदह": 14, "पंद्रह": 15,
+    "सोलह": 16, "सत्रह": 17, "अठारह": 18, "उन्नीस": 19, "बीस": 20,
+    "इक्कीस": 21, "बाईस": 22, "तेईस": 23, "चौबीस": 24, "पच्चीस": 25,
+    "तीस": 30, "पैंतीस": 35, "चालीस": 40, "पैंतालीस": 45, "पचास": 50,
+    "साठ": 60,
+}  # fmt: skip
+_HINGLISH_DAY_WORDS: dict[str, int] = {
+    "ek": 1, "do": 2, "teen": 3, "char": 4, "chaar": 4, "paanch": 5, "panch": 5,
+    "chhah": 6, "chhe": 6, "saat": 7, "aath": 8, "nau": 9, "das": 10,
+    "gyarah": 11, "barah": 12, "terah": 13, "chaudah": 14,
+    "pandrah": 15, "pandra": 15,
+    "solah": 16, "satrah": 17, "atharah": 18, "unnis": 19, "bees": 20,
+    "ikkis": 21, "bais": 22, "tees": 30, "pachaas": 50, "pachas": 50,
+}  # fmt: skip
+
+_RE_DAY_UNIT = re.compile(r"(\d{1,3})\s*(?:din|dino|days?|दिन|दिनों)", re.IGNORECASE)
+_RE_TAREEKH = re.compile(r"(\d{1,2})\s*(?:तारीख|tareekh|tarikh|taarikh)", re.IGNORECASE)
+_DEVA_DIGIT_TRANS = str.maketrans("०१२३४५६७८९", "0123456789")
+
+
+def _resolve_day_offset(text: str) -> int | None:
+    """Return N if the utterance says 'N din'/'N days'/'N दिन', including
+    Hindi-word and Hinglish-word counts ('pandrah din' -> 15)."""
+    normalized = text.translate(_DEVA_DIGIT_TRANS)
+    m = _RE_DAY_UNIT.search(normalized)
+    if m:
+        try:
+            return int(m.group(1))
+        except ValueError:
+            pass
+    for word, n in _HINDI_DAY_WORDS.items():
+        if re.search(rf"{word}\s*दिन", text):
+            return n
+    lower = normalized.lower()
+    for word, n in _HINGLISH_DAY_WORDS.items():
+        if re.search(rf"\b{word}\s+(?:din|days?)\b", lower):
+            return n
+    return None
+
+
+def _resolve_tareekh(text: str, reference_date: date) -> date | None:
+    """Resolve 'N तारीख'/'N tareekh' (a day-of-month promise) to the nearest
+    future occurrence of that day-of-month (this month if not yet passed,
+    else next month)."""
+    m = _RE_TAREEKH.search(text)
+    if not m:
+        return None
+    try:
+        day = int(m.group(1))
+    except ValueError:
+        return None
+    if not (1 <= day <= 31):
+        return None
+    year, month = reference_date.year, reference_date.month
+    for _ in range(2):  # try this month, then next month
+        try:
+            candidate = date(year, month, day)
+        except ValueError:
+            candidate = None
+        if candidate is not None and candidate >= reference_date:
+            return candidate
+        month += 1
+        if month > 12:
+            month = 1
+            year += 1
+    return None
 
 # ---------------------------------------------------------------------------
 # Compiled regex patterns
@@ -268,15 +428,10 @@ class EntityExtractor:
             )
 
     def _extract_date(self, text: str, slots: dict[str, ExtractedValue]) -> None:
-        # Relative date expressions → PROMISE_DATE
-        relative = _resolve_relative_date(text, self._reference_date)
-        if relative:
-            slots[EntityType.PROMISE_DATE.value] = ExtractedValue(
-                entity_type=EntityType.PROMISE_DATE,
-                normalized=relative,
-                surface_form=text[:40],
-            )
-            return
+        # Priority: explicit/absolute dates are the most certain signal, then
+        # day-of-month ("N tareekh"), then a day-count offset ("15 din mein"),
+        # then vaguer relative-date phrases ("kal", "agle hafte") — checked
+        # last since they're substring-matched and least specific.
 
         # Absolute date D/M/Y or D-M-Y
         m = _RE_DATE_DMY.search(text)
@@ -310,8 +465,41 @@ class EntityExtractor:
                         normalized=resolved,
                         surface_form=m2.group(0),
                     )
+                    return
                 except ValueError:
                     pass
+
+        # "N तारीख" / "N tareekh" — day-of-month promise (Phase 6).
+        tareekh_date = _resolve_tareekh(text, self._reference_date)
+        if tareekh_date is not None:
+            m3 = _RE_TAREEKH.search(text)
+            slots[EntityType.PROMISE_DATE.value] = ExtractedValue(
+                entity_type=EntityType.PROMISE_DATE,
+                normalized=tareekh_date.isoformat(),
+                surface_form=m3.group(0) if m3 else text[:40],
+            )
+            return
+
+        # "N din" / "N days" / "N दिन" — relative day-count offset (Phase 6).
+        day_offset = _resolve_day_offset(text)
+        if day_offset is not None:
+            resolved_day = self._reference_date + timedelta(days=day_offset)
+            m4 = _RE_DAY_UNIT.search(text.translate(_DEVA_DIGIT_TRANS))
+            slots[EntityType.PROMISE_DATE.value] = ExtractedValue(
+                entity_type=EntityType.PROMISE_DATE,
+                normalized=resolved_day.isoformat(),
+                surface_form=m4.group(0) if m4 else text[:40],
+            )
+            return
+
+        # Relative date expressions ("kal", "agle hafte", ...) → PROMISE_DATE
+        relative = _resolve_relative_date(text, self._reference_date)
+        if relative:
+            slots[EntityType.PROMISE_DATE.value] = ExtractedValue(
+                entity_type=EntityType.PROMISE_DATE,
+                normalized=relative,
+                surface_form=text[:40],
+            )
 
     def _extract_phone(self, text: str, slots: dict[str, ExtractedValue]) -> None:
         m = _RE_PHONE.search(text)
