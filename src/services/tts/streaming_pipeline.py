@@ -17,6 +17,7 @@ import logging
 import re
 from collections.abc import AsyncGenerator, AsyncIterator
 
+from src.libs.ai_safety.register_guard import RegisterGuard, dedupe_name, sanitize_reply, strip_trailing_sir
 from src.libs.contracts.response_plan import ResponsePlan
 from src.libs.contracts.streaming import AudioClause, TokenChunk, VoiceConfig
 from src.services.ai_governance.service import AIGovernanceService
@@ -49,6 +50,7 @@ class TrueStreamingPipeline:
         # with a real AIGovernanceService — the gate is mandatory at that
         # call site, not at this one (see ConversationEngine.__init__).
         self._ai_governance_service = ai_governance_service
+        self._register_guard = RegisterGuard()
 
     async def run(
         self,
@@ -57,6 +59,7 @@ class TrueStreamingPipeline:
         tts_service: TTSService,
         validator: OutputValidator,
         playback: PlaybackScheduler,
+        customer_name: str = "",
     ) -> list[AudioClause]:
         """Drive tokens through validation, TTS, and playback.
 
@@ -66,6 +69,19 @@ class TrueStreamingPipeline:
             tts_service: TTSService instance for synthesis.
             validator: OutputValidator to check each candidate clause.
             playback: PlaybackScheduler to receive synthesised clauses.
+            customer_name: When non-empty, every clause is scrubbed of this
+                name before synthesis (Kavya persona rule 6 — never address
+                the customer by name). Empty string is a deliberate no-op,
+                not just "no name available": callers that intentionally
+                speak the customer's name (the AWAIT_IDENTITY greeting/
+                reask — see DialogueResponseEngine._handle_await_identity)
+                must omit this argument rather than pass it and rely on
+                scrubbing removing it again. Found missing entirely for the
+                real LLM/TTS streaming path during Call-002 readiness
+                validation — the scripted golden path was already clean via
+                DialogueResponseEngine's own RegisterGuard pass, but a real
+                LLM-generated reply addressed the customer by name and used
+                a blocked literary word with nothing here to catch it.
 
         Returns:
             List of all synthesised AudioClauses (ordered, non-barged-in only).
@@ -95,6 +111,7 @@ class TrueStreamingPipeline:
                         validator,
                         playback,
                         is_final=True,
+                        customer_name=customer_name,
                     )
                     all_clauses.extend(clauses)
                     clause_index += len(clauses)
@@ -115,6 +132,7 @@ class TrueStreamingPipeline:
                             validator,
                             playback,
                             is_final=False,
+                            customer_name=customer_name,
                         )
                         all_clauses.extend(clauses)
                         clause_index += len(clauses)
@@ -129,6 +147,7 @@ class TrueStreamingPipeline:
                 validator,
                 playback,
                 is_final=True,
+                customer_name=customer_name,
             )
             all_clauses.extend(clauses)
 
@@ -143,6 +162,7 @@ class TrueStreamingPipeline:
         validator: OutputValidator,
         playback: PlaybackScheduler,
         is_final: bool,
+        customer_name: str = "",
     ) -> list[AudioClause]:
         """Validate text then synthesise it and push to playback queue."""
         result: ValidationResult = validator.validate(text, response_plan)
@@ -175,6 +195,28 @@ class TrueStreamingPipeline:
                     text = SAFE_FALLBACK_RESPONSE
                 else:
                     return []
+
+        # Persona/register gate (Kavya rules, V2 Ch13) — the LAST gate
+        # before speech, same as DialogueResponseEngine's own guard pass
+        # on the scripted path (src/libs/ai_safety/register_guard.py).
+        # Runs here so it applies uniformly to BOTH paths through this
+        # pipeline: a scripted reply arrives already clean (this is then a
+        # harmless no-op), but an LLM-generated reply had nothing else
+        # enforcing register/name rules on it at all before this existed.
+        if customer_name:
+            text = dedupe_name(text, customer_name)
+        text = sanitize_reply(text)
+        text = strip_trailing_sir(text)
+        register_result = self._register_guard.check(text)
+        if not register_result.clean:
+            logger.warning(
+                "TrueStreamingPipeline: register/persona violation (%s) — skipping synthesis",
+                register_result.violation,
+            )
+            if is_final:
+                text = SAFE_FALLBACK_RESPONSE
+            else:
+                return []
 
         voice_config = VoiceConfig(
             rate_scale=response_plan.delivery.target_speaking_rate,

@@ -656,6 +656,7 @@ class ConversationEngine:
         # (Sprint-009-018) unchanged when no dialogue_response is wired at all.
         all_clauses: list[AudioClause] = []
         full_output_text = ""
+        customer_name = context.primary_party.name if context is not None else ""
 
         if self._dialogue_response is not None:
             dialogue_output = self._dialogue_response.generate_reply(
@@ -668,14 +669,14 @@ class ConversationEngine:
                     turn.call_id,
                     turn.turn_id,
                 )
-                clauses = await self._run_llm_streaming_path(prompt_text, response_plan, playback)
+                clauses = await self._run_llm_streaming_path(prompt_text, response_plan, playback, customer_name)
                 all_clauses.extend(clauses)
                 full_output_text = " ".join(c.text for c in all_clauses)
             else:
                 full_output_text = dialogue_output.reply_text
                 all_clauses.extend(await self.speak_scripted_text(full_output_text, playback, response_plan))
         else:
-            clauses = await self._run_llm_streaming_path(prompt_text, response_plan, playback)
+            clauses = await self._run_llm_streaming_path(prompt_text, response_plan, playback, customer_name)
             all_clauses.extend(clauses)
             full_output_text = " ".join(c.text for c in all_clauses)
 
@@ -762,6 +763,7 @@ class ConversationEngine:
         prompt_text: str,
         response_plan: ResponsePlan,
         playback: PlaybackScheduler,
+        customer_name: str = "",
     ) -> list[AudioClause]:
         """The original LLM token-streaming path (Sprint-009-018), extracted
         so it can be invoked either as the whole-call fallback (no
@@ -769,7 +771,11 @@ class ConversationEngine:
         when the scripted golden path can't classify the customer's
         utterance (DialogueTurnOutput.needs_llm_fallback, Phase 6g's
         Call-002-readiness follow-up). Same governance/validation gates as
-        every other path through TrueStreamingPipeline."""
+        every other path through TrueStreamingPipeline — including, as of
+        the same Call-002 readiness pass, the persona/register gate
+        (customer_name plumbed through so LLM-generated replies get the
+        same name-scrub/register enforcement the scripted path already had
+        via DialogueResponseEngine's own guard pass)."""
         token_stream = await self._llm.generate_stream(
             prompt=prompt_text,
             response_plan=response_plan,
@@ -781,6 +787,7 @@ class ConversationEngine:
             tts_service=self._tts,
             validator=self._validator,
             playback=playback,
+            customer_name=customer_name,
         )
 
     async def _persist_finalized_commitment(
