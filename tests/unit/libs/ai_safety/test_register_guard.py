@@ -1,0 +1,167 @@
+"""Unit tests for RegisterGuard (Path-A Phase 6c)."""
+
+from __future__ import annotations
+
+from src.libs.ai_safety.register_guard import (
+    RegisterGuard,
+    RegisterViolation,
+    dedupe_name,
+    sanitize_reply,
+    strip_trailing_sir,
+)
+
+
+class TestRegisterGuardCheck:
+    def test_clean_reply_passes(self) -> None:
+        guard = RegisterGuard()
+
+        result = guard.check("Sir, aapka payment kab tak ho jaayega?")
+
+        assert result.clean is True
+        assert result.violation is None
+
+    def test_literary_word_flagged(self) -> None:
+        guard = RegisterGuard()
+
+        result = guard.check("Kripya apna भुगतान jaldi kar dijiye.")
+
+        assert result.clean is False
+        assert result.violation == RegisterViolation.LITERARY
+
+    def test_slang_flagged(self) -> None:
+        guard = RegisterGuard()
+
+        result = guard.check("Aap साला paisa nahi de rahe.")
+
+        assert result.clean is False
+        assert result.violation == RegisterViolation.SLANG
+
+    def test_masculine_grammar_flagged(self) -> None:
+        guard = RegisterGuard()
+
+        result = guard.check("Main aapko call kar दूंगा kal.")
+
+        assert result.clean is False
+        assert result.violation == RegisterViolation.MASCULINE_GRAMMAR
+
+    def test_action_hallucination_flagged(self) -> None:
+        guard = RegisterGuard()
+
+        result = guard.check("Main बैंक जा kar check karti hoon.")
+
+        assert result.clean is False
+        assert result.violation == RegisterViolation.ACTION_HALLUCINATION
+
+    def test_unsolicited_followup_flagged(self) -> None:
+        guard = RegisterGuard()
+
+        result = guard.check("Main aapko हर महीने कॉल karungi.")
+
+        assert result.clean is False
+        assert result.violation == RegisterViolation.UNSOLICITED_FOLLOWUP
+
+    def test_hallucinated_recording_disclaimer_flagged(self) -> None:
+        guard = RegisterGuard()
+
+        result = guard.check("Yeh call recording ki ja rahi hai.")
+
+        assert result.clean is False
+        assert result.violation == RegisterViolation.HALLUCINATION
+
+    def test_hallucinated_discount_offer_flagged(self) -> None:
+        guard = RegisterGuard()
+
+        result = guard.check("Hum aapko discount दे सकते hain.")
+
+        assert result.clean is False
+        assert result.violation == RegisterViolation.HALLUCINATION
+
+    def test_foreign_script_flagged(self) -> None:
+        guard = RegisterGuard()
+
+        result = guard.check("こんにちは, sir aapka payment.")
+
+        assert result.clean is False
+        assert result.violation == RegisterViolation.FOREIGN_SCRIPT
+
+    def test_foreign_script_checked_before_other_categories(self) -> None:
+        guard = RegisterGuard()
+
+        result = guard.check("साला こんにちは भुगतान")
+
+        assert result.violation == RegisterViolation.FOREIGN_SCRIPT
+
+
+class TestDedupeName:
+    def test_strips_full_name_with_sir(self) -> None:
+        out = dedupe_name("Sir Prateek Das sir, aapka payment due hai.", "Prateek Das")
+
+        assert "Prateek" not in out
+        assert "Das" not in out
+
+    def test_strips_first_name_only_mention(self) -> None:
+        out = dedupe_name("Prateek, aapka payment due hai.", "Prateek Das")
+
+        assert "Prateek" not in out
+
+    def test_generalizes_to_other_customer_names(self) -> None:
+        out = dedupe_name("Sunita ji, aapka loan pending hai.", "Sunita Sharma")
+
+        assert "Sunita" not in out
+
+    def test_no_customer_name_is_noop(self) -> None:
+        reply = "Sir, aapka payment due hai."
+
+        assert dedupe_name(reply, "") == reply
+
+    def test_unrelated_reply_unaffected(self) -> None:
+        reply = "Sir, aapka payment due hai."
+
+        out = dedupe_name(reply, "Prateek Das")
+
+        assert out == reply
+
+
+class TestSanitizeReply:
+    def test_replaces_koi_nahi_fragment(self) -> None:
+        out = sanitize_reply("Theek hai, कोई नहीं.")
+
+        assert "कोई बात नहीं" in out
+
+    def test_replaces_bare_aayi_hoon_fragment(self) -> None:
+        out = sanitize_reply("Main aapki help ke liye आई हूँ")
+
+        assert "बात कर रही हूँ" in out
+
+    def test_no_match_is_noop(self) -> None:
+        reply = "Sir, aapka payment due hai."
+
+        assert sanitize_reply(reply) == reply
+
+
+class TestStripTrailingSir:
+    def test_strips_trailing_sir_with_period(self) -> None:
+        out = strip_trailing_sir("Aapka payment due hai, sir.")
+
+        assert not out.rstrip("।. ").lower().endswith("sir")
+
+    def test_strips_bare_trailing_sir(self) -> None:
+        out = strip_trailing_sir("Kab tak clear ho jaayega sir")
+
+        assert not out.strip().lower().endswith("sir")
+
+    def test_caps_sir_at_one_mention(self) -> None:
+        out = strip_trailing_sir("Sir, aapka sir bahut zaroori hai sir.")
+
+        assert out.lower().count("sir") == 1
+
+    def test_leaves_single_inline_sir_untouched(self) -> None:
+        out = strip_trailing_sir("Sir, aapka payment kab tak ho jaayega?")
+
+        assert "Sir" in out
+        assert out.lower().count("sir") == 1
+
+    def test_empty_result_falls_back_to_original(self) -> None:
+        out = strip_trailing_sir("sir")
+
+        assert out == "sir"
