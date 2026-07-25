@@ -1,11 +1,89 @@
 # VoiceOS v2 — Completed Sprints
 
-**Last Updated:** 2026-07-12  
-**Completed Sprints:** 27 / 34 complete (Sprint-028 PARTIAL — see below); Sprint-029 Phase 1 complete — **Milestone M-6 (SaaS Platform Complete) reached; Epic E6 (SaaS Platform) closed; Epic E7 (Production Alpha) in progress; Sprint-028 Phase 2 updates applied 2026-07-12 (ADR-004, security fixes, compliance code audit); M-7 NOT yet achieved**
+**Last Updated:** 2026-07-25  
+**Completed Sprints:** 27 / 34 complete (Sprint-028 PARTIAL — see below); Sprint-029 Phase 1 complete, Phase 2 Call-001 PASSED — **Milestone M-6 (SaaS Platform Complete) reached; Epic E6 (SaaS Platform) closed; Epic E7 (Production Alpha) in progress; M-7 NOT yet achieved. Path-A Runtime Consolidation Phases 1-6 complete 2026-07-25 (pre-Call-002 gate) — Phase 7 blocked on GPU connectivity, Phase 8/Call-002 not started — see entry below.**
 
 ---
 
 ## Completed Sprint Log
+
+## Path-A Runtime Consolidation — Phases 1-6 (pre-Call-002 gate)
+
+**Completed:** 2026-07-25 (Phases 1-6; Phase 7 in progress, Phase 8 not started)
+**Epic:** E8 — Founder Validation (Sprint-029), pre-Call-002 gate
+**Trigger:** explicit user directive to verify the runtime reflects the intended production architecture
+before preparing Call-002 — not a numbered sprint, but full-weight implementation work gated the same way.
+
+### What Was Found
+
+A full architecture audit (inventory, implementation status, live-execution-flow participation, the
+call-to-CRM connection map, and a search for missing integrations/duplicate logic/dead code) found **two
+disconnected implementations**: the designed architecture (`src/services/conversation_engine` +
+`src/engines/*`) — fully built and unit-tested but unreachable by any live call — and
+`evaluation/founder-validation/conv_server.py` — a standalone script with its own duplicated
+intent/negotiation/safety/dialogue logic that is what actually took the founder-approved Call-001,
+including a deterministic template/FSM golden path with no equivalent anywhere in `src/`.
+
+### What Was Built
+
+- **Phase 1:** 5 parameter-threading fixes in `ResponsePlanningEngine` making `NegotiationEngine`'s full
+  move set (ACCEPT/COUNTER/DECLINE/PROPOSE_PTP) reachable, not just OFFER. 13 tests.
+- **Phase 2:** `deployment/cpu/app.py` composition root — every real dependency wired exactly once.
+- **Phase 3:** `WhisperHTTPAdapter` (STT), live-validated against the real GPU node.
+- **Phase 4:** `src/services/media_gateway/twilio_ws_entrypoint.py` — the Twilio Media Streams WebSocket
+  transport layer that never existed in this repo. Found and fixed a real protocol bug:
+  `TwilioWebSocketAdapter.send_frame()` omitted the required `streamSid` field.
+- **Phase 5:** `PromiseToPayService` persistence wired into `ConversationEngine`, synchronous and
+  idempotent, before any TTS confirmation (RI-4). Verified against real Postgres.
+- **Phase 6a-6g:** ported/redesigned `conv_server.py`'s proven persona/FSM/guard logic into `src/` as
+  first-class Path A code, consuming real engine outputs instead of a second parallel parser:
+  `EntityExtractor` date enrichment (6a), `ConversationSessionState` FSM fields (6b), `RegisterGuard`
+  (6c), `EmpathyDirectiveComposer` (6d), the Kavya persona module (6e), the new `DialogueResponseEngine`
+  scripted-reply FSM reading real `IntentEngine`/`EntityExtractor` output (6f), and wiring all of it —
+  plus the call-open greeting — into `ConversationEngine` as the PRIMARY reply path and into the
+  composition root (6g).
+
+### Test Results
+
+- 113 new tests across Phase 6a-6g (23 register_guard, 24 empathy_directive, 10 kavya_persona, 22
+  dialogue_response, 4 session_state, 6 conversation_engine wiring, 12 empathy/entity-extraction/greeting
+  additions, 12 twilio_ws_entrypoint greeting tests — see CHANGELOG.md for the exact per-phase counts)
+- Full regression after Phase 6g: 2194 passed / 73 skipped / 0 failed (unit + e2e + integration)
+- `check_boundaries.py`: 0 violations, every sub-phase
+- Composition-root `--smoke-test`: PASS against real Postgres (peer auth) + real password-authenticated
+  Redis + GPU_NODE_HOST wired
+
+### Phase 7 — Blocked, Not Yet Complete
+
+`scripts/path_a_phase7_dry_run.py` confirmed the composition root, Postgres FK provisioning, and
+greeting-text generation (`DialogueResponseEngine.build_greeting()`) all work correctly against real
+infrastructure, then hit a GPU TTS connection timeout. Root-caused with a `tcpdump` capture on the GPU
+node's own NIC — zero inbound SYN packets arrived from two independent external IPs during the outage,
+despite the GPU node's `voiceos-{stt,llm,tts}` services being independently confirmed `active` and bound
+to `0.0.0.0` moments before — proving the block is enforced at the cloud provider's network edge, not by
+anything on the VM. The GPU node subsequently became unreachable on all ports including SSH. Per explicit
+user direction, further live GPU validation is deferred; not worked around via SSH tunneling or
+cross-host key copying.
+
+### Definition of Done
+
+- [x] Phases 1-6 acceptance criteria met (real infra validation where applicable)
+- [x] All new tests passing; full regression green
+- [x] CHANGELOG.md updated
+- [x] CURRENT_SPRINT.md updated
+- [x] PROJECT_STATUS.md updated
+- [ ] Phase 7 (full pipeline dry-run) — blocked on GPU node connectivity
+- [ ] Phase 8 (retire `conv_server.py`) — not started, blocked on Phase 7
+- [ ] Call-002 — not proposed, blocked on Phase 7/8
+
+### Notes
+
+Not a numbered sprint — this work sits inside Sprint-029 Phase 2 as an explicit pre-Call-002 gate the
+user required after the architecture audit. `implementation/BACKLOG.md` should get a tracked ticket for
+Phase 7's GPU connectivity blocker if it isn't resolved by the next session (same operational pattern as
+the project's recurring GPU-node-address churn documented across `deployment/GPU_NODE_STATE.md`).
+
+---
 
 ## Sprint-028 — Performance Validation, Load Testing, Pen Test & Production Alpha Deploy
 

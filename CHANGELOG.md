@@ -5,6 +5,140 @@ Format: `## [version] — Sprint-NNN — Title (YYYY-MM-DD)`
 
 ---
 
+## [Unreleased] — Path-A Runtime Consolidation, Phases 1–7 (2026-07-25)
+
+> Triggered by an explicit pre-Call-002 architecture verification request: a full audit found VoiceOS
+> had **two disconnected implementations** — the designed architecture (`src/services/conversation_engine`
+> + `src/engines/*`), fully built and unit-tested but unreachable by any live call, and
+> `evaluation/founder-validation/conv_server.py`, a standalone script that reimplemented its own
+> intent/negotiation/safety/dialogue logic and actually took Call-001. Directive: make the designed
+> architecture (`ConversationEngine`) the *only* production runtime, move the telephony entrypoint onto
+> it, and eliminate `conv_server.py`'s duplicated logic — one path from Twilio → `ConversationEngine` →
+> Governance → Collections → CRM. Full 8-phase plan approved before implementation began; phases landed as
+> individually tested, individually committed steps per `CLAUDE.md`'s "one sprint = one logical change."
+
+### Phase 1 — ResponsePlanningEngine wiring fixes
+
+Fixed 5 parameter-threading bugs that made `NegotiationEngine`'s ACCEPT/COUNTER/DECLINE/PROPOSE_PTP moves
+unreachable (only OFFER ever fired): `sentiment` now reaches `RiskEngine.evaluate()`, `turn_index` reaches
+`DialoguePolicyEngine.evaluate()`, real `ConversationStateIntelligence.transition()` output reaches
+`StrategyEngine`/`GoalPlanner` (replacing a temporary `_infer_state()` heuristic), and real
+`customer_offer_minor`/`concession_round`/`hardship_verified` reach `NegotiationEngine.compute_move()`.
+Added `NegotiationEnvelope.proposed_date`/`is_finalized_commitment` fields the persistence layer (Phase 5)
+needs. 13 new tests.
+
+### Phase 2 — Composition root
+
+New `deployment/cpu/app.py`: wires real Postgres/Redis/repositories/GPU-backed adapters into a single
+`build_conversation_engine()`, verified via `--smoke-test` against the real CPU node.
+
+### Phase 3 — STT HTTP adapter
+
+New `src/services/stt/adapters/whisper_http_adapter.py` (`WhisperHTTPAdapter`), calling the GPU node's
+`/transcribe` endpoint — completing the STT/LLM/TTS adapter set that already existed for the other two.
+Live-validated against the real GPU node after a provider security-group change opened 8000/8100/8200/8300
+to the CPU node's IP.
+
+### Phase 4 — Telephony transport
+
+New `src/services/media_gateway/twilio_ws_entrypoint.py` — the Twilio Media Streams WebSocket layer that
+never existed in this repo: `CallOrchestrator` (3 concurrent tasks — inbound frame pump, turn loop,
+outbound pump) and `create_twilio_media_stream_app()`. Found and fixed a real protocol bug in the process:
+`TwilioWebSocketAdapter.send_frame()` omitted the required top-level `streamSid` field, which would have
+caused a real Twilio carrier to reject every outbound playback frame.
+
+### Phase 5 — Persistence wiring
+
+`ConversationEngine` gained an optional `promise_to_pay_service`: a turn whose
+`ResponsePlan.negotiation_envelope.is_finalized_commitment` is `True` triggers a synchronous, idempotent
+`PromiseToPayService.create()` call immediately after the RI-4 DecisionEnvelope commit and before any
+TTS output — the durable commitment is recorded before the agent ever speaks a confirmation of it.
+Verified against real Postgres: one PTP row per finalized commitment, zero duplicates on retry.
+
+### Phase 6 — Porting Kavya's unique logic into the canonical runtime (6a–6g)
+
+The user chose, via an explicit design decision, to **redesign** `conv_server.py`'s proven
+template/FSM/persona/guard logic to consume real engine outputs rather than port its parallel
+regex-based parser verbatim:
+
+- **6a** — `EntityExtractor` (`src/engines/entity_extraction/`) enriched with ~90 relative-date phrases,
+  day-of-month ("N तारीख") and day-offset ("15 din mein") resolvers, ported from `conv_server.py`'s
+  `_RELATIVE_DATE_TOKENS`/`_HINDI_DAY_WORDS` — so the new dialogue engine can read `PROMISE_DATE` directly
+  instead of re-parsing dates itself. 12 new tests.
+- **6b** — `ConversationSessionState` (`src/services/conversation_engine/session_state.py`) extended with
+  the scripted engine's per-call state: `dialogue_state_name`/`identity_verified`/`last_ask`/a commitment
+  ledger (`amount_minor`/`months`/`date`/`cadence`)/bounded reply history. Unlike `conv_server.py`'s
+  session dict, the ledger is never populated by this class's own parsing — only by values the caller
+  already resolved via EntityExtractor. 4 new tests.
+- **6c** — new `src/libs/ai_safety/register_guard.py` (`RegisterGuard`): ports the register/tone/
+  hallucination guard system (literary-word/slang/masculine-grammar/action-hallucination/unsolicited-
+  followup/recording-disclaimer/foreign-script detection) plus name-scrub/sanitize/sir-tail-cap helpers.
+  Unlike `conv_server.py`'s version — hardcoded to one demo customer ("Prateek Das") — `dedupe_name()` is
+  parameterized by the real customer name from `CustomerContext`. 23 new tests.
+- **6d** — new `src/engines/empathy_directive/` (`EmpathyDirectiveComposer`): the 12-state bilingual
+  hardship-taxonomy classifier that produced Trial-018's fix for "robotic, lacks empathy" — additive to,
+  not a replacement for, the existing coarse `EmpathyPlanner`. 24 new tests.
+- **6e** — new `src/engines/prompt_builder/kavya_persona.py`: the persona/register rules, greeting, and
+  hangup text. Unlike `conv_server.py`'s version — hardcoded to one lender/customer/loan amount — loan
+  facts are never templated here (`PromptBuilder` already injects them from `ResponsePlan.facts` per
+  RI-5); `build_greeting_text()`/`build_system_prompt()` take `lender_name`/`customer_name` parameters.
+  10 new tests.
+- **6f** — new `src/engines/dialogue_response/` (`DialogueResponseEngine`): the deterministic
+  AWAIT_IDENTITY → CONVERSATION → CLOSE scripted-reply FSM that drove Call-001, redesigned to read
+  `ResponsePlan.intents` (real `IntentEngine`) and `ResponsePlan.entities` (real `EntityExtractor`)
+  instead of `conv_server.py`'s own intent classifier/regex parser. A `DialogueSessionState` Protocol
+  (not a concrete import) keeps `src/engines/` from importing `src/services/` (boundary Rule 2). Fixed a
+  latent gap in `conv_server.py`'s own bucket router along the way: it ignored the negotiation plan's
+  `kind` for the `gives_amount` bucket and could ask "which month" after a lumpsum offer; this version
+  selects the correct template from the plan's actual kind. 22 new tests.
+- **6g** — wired `DialogueResponseEngine` into `ConversationEngine` as the **primary** reply path via a
+  new `DialogueResponsePort` protocol and `speak_scripted_text()` (routes a fixed string through the same
+  `TrueStreamingPipeline` — OutputValidator + AIGovernanceService + TTS + playback — every LLM turn uses,
+  so no governance gate is bypassed); the LLM streaming path becomes the fallback, used only when
+  `dialogue_response` isn't wired (preserves every existing caller's behavior byte-for-byte). Wired the
+  call-open greeting into `CallOrchestrator.run()` via `ConversationEngine.build_greeting()`. Wired into
+  the composition root (`deployment/cpu/app.py`'s `build_dialogue_response_engine()` + new `LENDER_NAME`
+  env var) — the piece that makes every Phase 6 addition actually reachable at runtime. 18 new tests.
+
+**Phase 6 total: 113 new tests. Full regression after 6g: 2194 passed / 73 skipped, 0 failed
+(unit+e2e+integration); `check_boundaries.py` clean throughout every sub-phase.**
+
+### Phase 7 — Full pipeline validation (IN PROGRESS — GPU connectivity blocked)
+
+`scripts/path_a_phase7_dry_run.py` (new): drives a real multi-turn scripted conversation through the real
+composition root — real GPU-backed TTS, real Postgres (with FK-satisfying synthetic customer/loan rows
+provisioned and cleaned up around the run), real `DialogueResponseEngine` FSM reading real
+`ResponsePlanningEngine` output. Confirmed working through composition-root construction, Postgres row
+provisioning, and greeting generation (`DialogueResponseEngine.build_greeting()` correctly produced
+"नमस्ते sir, मैं Rajat Finance से Kavya बात कर रही हूँ ... क्या मेरी बात Anjali Verma से हो रही है?" for a
+synthetic customer) — then hit `httpx.ConnectTimeout` reaching the GPU node for TTS synthesis.
+
+Diagnosed, not worked around: the GPU node's own `voiceos-{stt,llm,tts}` services were confirmed `active`
+and correctly bound to `0.0.0.0` (not localhost-only) via direct SSH to the GPU node. A `tcpdump` capture
+on the GPU node's own NIC, filtered for inbound SYN on port 8200 during connection attempts from two
+independent external IPs, captured **zero packets** — proof the block is enforced at the cloud provider's
+network edge, upstream of anything on the VM, not by the GPU node's OS firewall (already confirmed
+permissive) or the application. A subsequent provider-side security-group change opened 8400–8700 instead
+of the actual service ports (8000/8100/8200/8300); after that mismatch was reported, the GPU node became
+unreachable on **all** ports including SSH (22), which had been reachable earlier the same session — per
+explicit user direction, further GPU-side live validation was deferred rather than worked around via SSH
+tunneling or cross-host key copying (a standing constraint from Phase 3).
+
+**What Phase 7 has NOT yet independently re-verified because of this:** real GPU TTS synthesis and real
+Postgres PTP persistence specifically through the *new* Phase 6g scripted-reply code path end to end in
+one continuous run. (Both were separately verified against real infra in Phase 3/4's own STT/TTS adapter
+validation and Phase 5's PTP persistence validation, using the pre-Phase-6 LLM path — not a Phase 6 gap,
+but not yet re-confirmed with the scripted path specifically.) The Qwen2.5-Omni founder-validation
+evaluator (Sprint-029) that scored Call-001 was also confirmed not running as a persistent service this
+session — standing it back up was judged out of Phase 7's scope (validating the new Phase 6 wiring, not
+re-provisioning an unrelated evaluation stack).
+
+**Not yet done:** Phase 8 (retire `conv_server.py`, confirm no traffic can reach it, update tracking docs
+to name `ConversationEngine` as the sole production path) — blocked on Phase 7 passing per the approved
+plan. **Call-002 has not been proposed** and remains explicitly pending founder/user authorization.
+
+---
+
 ## [Unreleased] — Post-Sprint-027 Full Production Readiness Audit (2026-07-08)
 
 > Independent, read-only audit against both the repository and the live CPU/Kubernetes node (`101.53.141.75`), requested to verify Sprint-001–027's claimed-complete status against real infrastructure rather than status markers alone. GPU node not accessed (standing per-instance approval rule). Findings appended to `implementation/BACKLOG.md` as **TT-018 through TT-023**.
