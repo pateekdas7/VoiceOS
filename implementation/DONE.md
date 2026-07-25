@@ -67,7 +67,8 @@ synthesized audio. Getting there required diagnosing and fixing two real, indepe
    that Call-001 ran entirely on the GPU node itself (`LLM_URL` defaults to `localhost:8000`; `uvicorn.run
    (host="0.0.0.0", port=8400)`) using Twilio-native `<Gather>`/`<Say>` for STT/TTS, never touching the CPU
    node or our Whisper/Veena services at all — so this black-hole could not have manifested before now.
-   Fixed via client-side TCP MSS clamping on the CPU node (not yet persisted across a reboot).
+   Fixed via client-side TCP MSS clamping on the CPU node, persisted via a self-contained systemd oneshot
+   unit and verified across a real CPU node reboot (TT-028, resolved same day).
 2. **A real pre-existing RI-3 crash risk in `CallOrchestrator`.** `PlaybackScheduler`'s queue was populated
    by `TrueStreamingPipeline` every turn but never drained — any real call with >~43s of cumulative AI
    speech would have crashed outright with `InvariantViolationError`. Pre-existing since Phase 4; never

@@ -52,8 +52,9 @@ approved before any code changed.
   on the GPU node itself via Twilio-native `<Gather>`/`<Say>` STT/TTS (verified in `conv_server.py`'s own
   code: `LLM_URL` defaults to `localhost:8000`, `uvicorn.run(host="0.0.0.0", port=8400)` on the GPU node),
   so it never touched this path and never could have hit this bug. Fixed via client-side TCP MSS clamping
-  on the CPU node (`iptables -t mangle ... TCPMSS --set-mss 1360`) — **not yet persisted across a reboot**,
-  no `iptables-persistent` installed; re-apply if GPU calls start hanging again after a CPU node restart.
+  on the CPU node (`iptables -t mangle ... TCPMSS --set-mss 1360`), persisted via a self-contained systemd
+  oneshot unit (`voiceos-gpu-mss-clamp.service`, no new package dependency after `iptables-persistent`
+  turned out to want to remove `ufw`) and **verified across a real CPU node reboot** — TT-028 resolved.
   (2) A real **pre-existing RI-3 crash risk**: `PlaybackScheduler`'s queue was populated by
   `TrueStreamingPipeline` on every turn but never drained by `CallOrchestrator` (Phase 4) — any real call
   whose cumulative AI speech exceeded ~43s would have crashed with `InvariantViolationError`. Fixed:

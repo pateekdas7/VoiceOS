@@ -126,13 +126,20 @@ dropped, most commonly because an intermediate hop has a smaller MTU and ICMP "f
 being filtered. **Fixed via client-side TCP MSS clamping** on the CPU node
 (`iptables -t mangle -A OUTPUT -p tcp -d <gpu-host> --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1360`) —
 confirmed via direct `curl`: TTS synthesis of the actual greeting text went from "hangs forever, 0 bytes"
-to "18.6s, 743KB of real audio"; a real LLM completion went from timing out to 4.1s. **This rule is not
-persisted across a CPU node reboot** (no `iptables-persistent`/`netfilter-persistent` installed) — a
-future session must re-apply it (or install a persistence mechanism) if the CPU node restarts and GPU
-calls start hanging again with this exact "connects fine, response never arrives" signature. Root-cause
-finding: **this is the first code path in this project's history to ever exercise sustained CPU→GPU
-streaming traffic for real inference payloads** — Call-001 (see below) never touched this network path at
-all, which is precisely why this black-hole was never discovered before now.
+to "18.6s, 743KB of real audio"; a real LLM completion went from timing out to 4.1s. Root-cause finding:
+**this is the first code path in this project's history to ever exercise sustained CPU→GPU streaming
+traffic for real inference payloads** — Call-001 (see below) never touched this network path at all,
+which is precisely why this black-hole was never discovered before now.
+
+**Persistence (TT-028, resolved same day, before Call-002):** the manual rule above did not survive a CPU
+node reboot. `apt install iptables-persistent` was attempted and rejected — the Ubuntu mirror connection
+failed transiently mid-install, and the package would have removed `ufw` as a dependency side effect
+(harmless since `ufw` was already inactive, but an unjustified new-package footprint for one rule). Fixed
+instead with a minimal, self-contained systemd oneshot unit (`voiceos-gpu-mss-clamp.service`, idempotent
+`iptables -C` check before `-A`, `enable --now`'d) — no new package dependency. **Verified against a real
+reboot, not assumed:** the CPU node was actually rebooted; post-reboot, the unit was `enabled`/`active`,
+the TCPMSS rule was present, Postgres/Redis both came back healthy, and a real TTS synthesis call to the
+GPU node succeeded (200/120,896 bytes/3.4s). Full detail in `implementation/BACKLOG.md`'s TT-028.
 
 **2. Code — PlaybackScheduler queue never drained, an RI-3 crash waiting to happen on any real call.**
 Once TTS worked, the dry run surfaced `InvariantViolationError: [RI-3] Queue 'playback_scheduler' is at
