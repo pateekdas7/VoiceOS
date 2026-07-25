@@ -76,6 +76,21 @@ class PlaybackScheduler:
         record_queue_depth(_QUEUE_NAME, len(self._queue))
         return clause
 
+    def dequeue_nowait(self) -> AudioClause | None:
+        """Pop the next AudioClause if one is queued, else return None immediately.
+
+        Unlike dequeue(), never awaits — for callers draining "whatever this
+        turn actually enqueued" (e.g. the WS entrypoint sending clauses it
+        already received directly from ConversationEngine's return value)
+        where the caller must not block if a test double/mocked engine
+        returned clauses without ever calling enqueue() on this scheduler.
+        """
+        if not self._queue:
+            return None
+        clause = self._queue.popleft()
+        record_queue_depth(_QUEUE_NAME, len(self._queue))
+        return clause
+
     async def flush(self) -> list[AudioClause]:
         """Flush all queued clauses and signal barge-in.
 

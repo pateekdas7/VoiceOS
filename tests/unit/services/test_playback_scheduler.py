@@ -54,6 +54,25 @@ class TestPlaybackScheduler:
         assert scheduler.depth == 0
         assert scheduler.barge_in_event.is_set()
 
+    async def test_dequeue_nowait_returns_none_on_empty_queue(self) -> None:
+        scheduler = PlaybackScheduler()
+
+        assert scheduler.dequeue_nowait() is None
+
+    async def test_dequeue_nowait_pops_fifo_without_blocking(self) -> None:
+        scheduler = PlaybackScheduler()
+        await scheduler.enqueue(_make_clause(0))
+        await scheduler.enqueue(_make_clause(1))
+
+        first = scheduler.dequeue_nowait()
+        second = scheduler.dequeue_nowait()
+        third = scheduler.dequeue_nowait()
+
+        assert first is not None and first.clause_index == 0
+        assert second is not None and second.clause_index == 1
+        assert third is None
+        assert scheduler.depth == 0
+
     async def test_get_clauses_non_destructive(self) -> None:
         scheduler = PlaybackScheduler()
         await scheduler.enqueue(_make_clause(0))

@@ -244,6 +244,29 @@ async def test_speak_greeting_is_noop_when_no_dialogue_response_wired() -> None:
 
 
 @pytest.mark.asyncio
+async def test_send_clauses_drains_playback_queue_across_many_turns() -> None:
+    """Regression test for a real bug found by Path-A Phase 7's live dry run:
+    ConversationEngine's TrueStreamingPipeline enqueues every synthesised
+    clause into PlaybackScheduler (for barge-in tracking), but nothing ever
+    dequeued them — so a real call accumulated queue depth monotonically
+    across turns and eventually hit RI-3's bounded-queue guard (max_depth
+    512, ~43s of cumulative audio) and crashed. Simulates what the real
+    pipeline does (enqueue, then hand the same clauses to _send_clauses) for
+    enough turns that the old code would have violated RI-3; asserts the
+    queue returns to empty after each turn instead."""
+    orch = _make_orchestrator()
+
+    for turn in range(20):
+        clauses = [AudioClause(audio_data=b"\x00\x00" * 160, sample_rate=24000, text=f"turn {turn}", clause_index=i, is_final=(i == 29)) for i in range(30)]
+        for clause in clauses:
+            await orch._playback.enqueue(clause)  # what TrueStreamingPipeline._synthesise_and_enqueue() does
+
+        await orch._send_clauses(clauses)
+
+        assert orch._playback.depth == 0, f"queue not drained after turn {turn} — would eventually hit RI-3"
+
+
+@pytest.mark.asyncio
 async def test_speak_greeting_synthesizes_and_sends_when_wired() -> None:
     orch = _make_orchestrator()
     clause = AudioClause(audio_data=b"\x00\x00" * 160, sample_rate=24000, text="namaste", clause_index=0, is_final=True)

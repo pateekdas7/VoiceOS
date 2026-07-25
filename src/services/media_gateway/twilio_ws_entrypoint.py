@@ -338,6 +338,25 @@ class CallOrchestrator:
         self._turn_index += 1
 
     async def _send_clauses(self, clauses: list[Any]) -> None:
+        """Send this turn's clauses out and drain them from PlaybackScheduler.
+
+        ConversationEngine's TrueStreamingPipeline already enqueued every one
+        of these same clauses into self._playback as it synthesised them (for
+        barge-in tracking — VAD's BargeinDetected handler calls
+        self._playback.flush(); TrueStreamingPipeline.run()'s loop checks
+        self._playback.barge_in_event mid-stream). Nothing previously dequeued
+        them afterward: RI-3's bounded-queue guard (max_depth=512, ~43s of
+        cumulative 85.33ms chunks) would eventually reject every turn's first
+        enqueue() once total spoken audio across the whole call exceeded that
+        bound, crashing any call longer than ~43s of cumulative AI speech —
+        found via Path-A Phase 7's real multi-turn dry run, not caught by
+        existing tests (none drove enough turns to reach the bound). Draining
+        one dequeue_nowait() per clause sent keeps the queue's depth accurate
+        to "still pending," matching what it was already enqueuing for.
+        Non-blocking: a mocked/test-double ConversationEngine that returns
+        clauses without ever calling enqueue() on this scheduler must not
+        hang here waiting for entries that will never arrive.
+        """
         self._vad.set_playback_active(True, playback_seq=self._turn_index)
         try:
             for clause in clauses:
@@ -345,6 +364,7 @@ class CallOrchestrator:
                 self._out_seq += 1
                 out_frame = _clause_to_mulaw_frame(pcm_ulaw, seq=self._out_seq, rtp_ts=self._out_seq * 160)
                 await self._adapter.send_frame(out_frame)
+                self._playback.dequeue_nowait()
         finally:
             self._vad.set_playback_active(False)
 
