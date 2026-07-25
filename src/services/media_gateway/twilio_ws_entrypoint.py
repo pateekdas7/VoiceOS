@@ -110,6 +110,20 @@ class SharedCallDependencies:
     call start, before the customer's first turn. True by default; a caller
     that already spoke a greeting through some other channel (e.g. TwiML
     <Say> before <Connect><Stream>) can set this False to avoid a duplicate."""
+    public_ws_base_url: str = ""
+    """The externally-reachable base URL Twilio's <Connect><Stream url="..."/>
+    actually points at (e.g. "wss://random-words.trycloudflare.com" behind a
+    tunnel, since this process itself only ever sees the internal
+    ws://0.0.0.0:<port> address it's bound to). Twilio's X-Twilio-Signature
+    HMAC is computed over the exact URL it was told to connect to (Twilio
+    Media Streams WebSocket security docs: the signature covers the full
+    request URL); if this process instead used the internal address it sees
+    locally, the signature would never validate and every real connection
+    would be rejected at the AR-2 auth gate before a single frame is
+    processed. Empty string (the default) preserves pre-existing behavior —
+    reconstructing the URL from what the ASGI server itself observed — for
+    tests and any deployment that terminates TLS with correct proxy-header
+    forwarding configured elsewhere instead."""
 
 
 # ---------------------------------------------------------------------------
@@ -493,10 +507,18 @@ def create_twilio_media_stream_app(deps: SharedCallDependencies) -> Starlette:
             await websocket.close(code=4001)
             return
 
+        # See SharedCallDependencies.public_ws_base_url's docstring: Twilio's
+        # signature is computed over the public URL it was told to connect
+        # to, which this process cannot observe directly when running behind
+        # a tunnel/reverse-proxy — websocket.url would be the internal
+        # address, and the signature would never validate against it.
+        request_url = (
+            f"{deps.public_ws_base_url}{websocket.url.path}" if deps.public_ws_base_url else str(websocket.url)
+        )
         credentials = {
             "account_sid": deps.account_sid,
             "auth_token": deps.auth_token,
-            "url": str(websocket.url),
+            "url": request_url,
             "params": "{}",
             "x_twilio_signature": websocket.headers.get("x-twilio-signature", ""),
             "expected_account_sid": deps.account_sid,

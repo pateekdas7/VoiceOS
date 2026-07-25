@@ -95,6 +95,37 @@ def _make_app() -> tuple[TestClient, SharedCallDependencies]:
     return TestClient(app), deps
 
 
+def test_accepts_connection_when_signed_against_public_tunnel_url() -> None:
+    """Real-deployment case: this process runs behind a tunnel/reverse-proxy
+    (e.g. a cloudflared quick tunnel for a live Twilio call), so it never
+    observes the public wss:// URL Twilio actually signed against — only
+    ws://testserver/... locally. SharedCallDependencies.public_ws_base_url
+    must be used to reconstruct the same URL Twilio signed, or every real
+    connection would fail AR-2 auth despite a genuinely valid signature."""
+    client, deps = _make_app()
+    deps.public_ws_base_url = "wss://random-words.trycloudflare.com"
+    public_url = "wss://random-words.trycloudflare.com/twilio/media-stream"
+    signature = _twilio_signature(public_url)
+
+    with client.websocket_connect("/twilio/media-stream", headers={"x-twilio-signature": signature}) as ws:
+        ws.send_json({"event": "connected"})
+        ws.send_json(
+            {
+                "event": "start",
+                "start": {"callSid": "CA_tunnel_001", "streamSid": "MZtunnel001", "mediaFormat": {"sampleRate": 8000}},
+            }
+        )
+        deps.conversation_engine.handle_turn.assert_not_awaited()
+        ws.send_json(
+            {
+                "event": "stop",
+                "stop": {"callSid": "CA_tunnel_001"},
+            }
+        )
+    # No exception/rejection on connect — reaching here without the
+    # "expected the server to close" failure mode proves auth succeeded.
+
+
 def test_rejects_connection_with_invalid_signature() -> None:
     client, _ = _make_app()
     with client.websocket_connect(

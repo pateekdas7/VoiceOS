@@ -447,6 +447,13 @@ def build_shared_call_dependencies() -> object:
         stt_service=build_stt_service(gpu_scheduler),
         conversation_engine=build_conversation_engine(),
         language=_env("STT_LANGUAGE", "hi"),
+        # See SharedCallDependencies.public_ws_base_url's docstring — required
+        # whenever this process runs behind a tunnel/reverse-proxy (e.g. a
+        # cloudflared quick tunnel), which is every real deployment: without
+        # it, Twilio's X-Twilio-Signature check fails for every connection
+        # because the internally-observed URL never matches what Twilio
+        # actually signed. e.g. "wss://random-words.trycloudflare.com".
+        public_ws_base_url=_env("PUBLIC_WS_BASE_URL", ""),
     )
 
 
