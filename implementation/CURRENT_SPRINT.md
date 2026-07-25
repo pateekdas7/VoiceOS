@@ -68,8 +68,24 @@ approved before any code changed.
   superseded it. Full regression unchanged after the move: 2197 passed / 73 skipped / 0 failed.
   **`ConversationEngine` is now the sole production runtime. Call-002 is formally proposed to the user.**
 
-**Call-002 remains explicitly not proposed.** Full narrative in CHANGELOG.md's "Path-A Runtime
-Consolidation, Phases 1–7" entry.
+- **Post-Phase-8 (same day):** before scheduling Call-002, the user required TT-028 fully resolved
+  (systemd-unit persistence, verified across a real CPU node reboot — done) and Call-002 scoped as a full
+  production-component validation, not a Call-001 repeat. That required a real, live LLM-fallback trigger
+  condition (the LLM path had been structurally unreachable at runtime despite being "wired" — see
+  `DialogueTurnOutput.needs_llm_fallback`). Validating it against real GPU/LLM infra
+  (`scripts/path_a_llm_fallback_validation.py`) surfaced and led to fixing three real defects: RegisterGuard
+  was never applied to the LLM streaming path at all; the masculine-grammar blocklist only covered
+  Devanagari phrases (replaced with systematic suffix-rule regexes per explicit direction, not phrase
+  enumeration); and both system-wide "safe fallback" constants were themselves grammatically masculine
+  (pre-Kavya-persona Sprint-018 defaults). 19 new tests; full regression 2223 passed/73 skipped/0 failed.
+  **Call-002 is formally proposed and this validation work is complete.** The user has since asked for
+  Call-002 itself to be a fully free-form, unscripted live call with comprehensive instrumentation and a
+  dual (engineering + independent-LLM-evaluator) acceptance report — scoping that live-call execution is
+  in progress; it requires real Twilio credentials, an actual live phone call, and the user's direct
+  participation as the human party, none of which can be executed unilaterally.
+
+Full narrative in CHANGELOG.md's "Path-A Runtime Consolidation, Phases 1–8" and "Post-Phase-8 — Call-002
+scoping follow-ups" entries.
 
 ---
 

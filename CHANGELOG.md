@@ -208,6 +208,72 @@ are now all complete.
 
 **Call-002 is now proposed to the user**, pending explicit authorization — see the accompanying message.
 
+### Post-Phase-8 — Call-002 scoping follow-ups (same day, 2026-07-25)
+
+Before scheduling Call-002, the user required (1) TT-028 (unpersisted MSS clamp) actually resolved and
+verified across a real reboot, and (2) Call-002 defined as a full validation of every participating
+production component — Twilio Media Streams, STT, DialogueManager, ConversationEngine, Governance, LLM,
+TTS, Playback, Event Bus, Collections, CRM — not a repeat of Call-001.
+
+**TT-028 resolved and verified live.** `apt install iptables-persistent` was attempted and rejected
+mid-install — the Ubuntu mirror connection failed transiently, and the package would have removed `ufw`
+as a dependency side effect (harmless since inactive, but an unjustified new-package footprint for one
+rule). Replaced with a minimal systemd oneshot unit (`voiceos-gpu-mss-clamp.service`, idempotent, no new
+package). **Verified against a real reboot, not assumed**: the CPU node was actually rebooted; post-reboot
+the unit was `enabled`/`active`, the rule was present, Postgres/Redis both came back healthy, and a real
+GPU TTS call succeeded.
+
+**The LLM had no live trigger condition — fixed.** The approved plan always described the LLM as a
+fallback, but Phase 6g's wiring only ever checked "is `dialogue_response` wired at construction time,"
+never a per-turn condition — once wired, the scripted engine always produced a reply, so the LLM path was
+structurally dead code. Added a real trigger: `ConversationSessionState.consecutive_else_count` (tracked,
+Recoverable) increments each time the scripted FSM fails to classify the customer's utterance
+(`Bucket.ELSE`) and resets on any successful classification; `DialogueTurnOutput.needs_llm_fallback`
+becomes `True` after two consecutive unclassified turns, routing exactly that turn through the real LLM/
+TTS streaming path (`ConversationEngine._run_llm_streaming_path()`, extracted and shared with the
+whole-engine-unwired case) instead of the scripted anchor re-ask.
+
+**New `scripts/path_a_llm_fallback_validation.py`** drives a real conversation that deliberately triggers
+this condition (two genuinely off-script turns) and asserts the fallback actually fired with real audio
+from the real LLM (vLLM/Qwen) and real GPU TTS — the "explicit production-grade validation" requirement.
+
+**Running it surfaced two real, connected defects, both found and fixed the same session:**
+
+1. **`RegisterGuard` was never wired into the LLM path.** The scripted path was always clean
+   (`DialogueResponseEngine` runs its own guard pass before ever speaking), but the LLM streaming path only
+   ever passed through `OutputValidator`/`AIGovernanceService` (fact/policy checks) — nothing enforced
+   persona/register rules on LLM-generated text. A real LLM reply addressed the customer by name and used a
+   blocked literary word. Fixed by adding the same persona/register gate to
+   `TrueStreamingPipeline._synthesise_and_enqueue()` — the single choke point both paths already share
+   before TTS — with `customer_name` threaded through from `ConversationEngine` (never passed for
+   `speak_scripted_text()`, since the AWAIT_IDENTITY greeting must still be allowed to say the name).
+
+2. **The masculine-grammar blocklist only covered Devanagari phrases.** Per explicit direction, replaced
+   the phrase-enumeration approach (in both scripts) with systematic regex rules on the three productive
+   Hindi 1st-person masculine suffix patterns (stem+ा+हूँ/था, stem+ऊंगा, सकता — and their Roman-transliterated
+   equivalents), which generalize to any verb stem in either script instead of requiring one entry per verb.
+   Found and fixed a real Python-regex bug while building this: Devanagari combining vowel signs (Unicode
+   category Mn/Mc) are not `\w` characters, so a trailing `\b` after one silently never matches.
+
+3. **Both system-wide "safe fallback" constants were themselves grammatically masculine** — a
+   pre-Kavya-persona Sprint-018 default (`SAFE_FALLBACK_RESPONSE` in `ai_governance/verdict.py`,
+   `_SAFE_FALLBACK` in `llm_runtime/output_validator.py`) nothing had corrected since. This is what made the
+   register-guard fix from (1) initially *look* broken in re-testing: the guard correctly rejected a real
+   LLM violation and substituted the fallback text — which was itself non-compliant, silently reintroducing
+   the exact defect class it exists to prevent. Root-caused via direct runtime debugging (temporary stderr
+   instrumentation around the check call, confirming the exact text reaching it at runtime), not guessed
+   at. Both constants fixed (`kar raha hoon` → `kar rahi hoon`); a new test asserts both pass
+   `RegisterGuard.check()` themselves, so a future edit can't silently reintroduce this.
+
+**Re-verified against real GPU/LLM infra after every fix** (multiple runs of
+`scripts/path_a_llm_fallback_validation.py`), confirming both the name-disclosure/literary-word violation
+and the masculine-grammar violation are now caught, and their replacement text is persona-compliant.
+Re-ran `scripts/path_a_phase7_dry_run.py` afterward too, confirming no regression in the main scripted path.
+
+19 new tests across this follow-up (3 session_state, 5 dialogue_response, 2 conversation_engine LLM-fallback
+routing, 4 streaming-pipeline register-guard, 8 register_guard suffix-rule + fallback-constant regression).
+Full regression: 2223 passed / 73 skipped / 0 failed; `check_boundaries.py` clean throughout.
+
 ---
 
 ## [Unreleased] — Post-Sprint-027 Full Production Readiness Audit (2026-07-08)

@@ -107,6 +107,15 @@ complete. Call-002 is formally proposed to the user in this session, pending exp
 - [x] Phase 8 (retire `conv_server.py`) — COMPLETE; audited (no live traffic reachable), archived to
   `evaluation/founder-validation/archive/` with its sibling `empathy_directive.py`
 - [x] Call-002 — formally proposed to the user; pending authorization
+- [x] TT-028 (unpersisted MSS clamp) — fully resolved via a systemd unit, verified across a real reboot
+- [x] Real, live LLM-fallback trigger condition built and validated (`needs_llm_fallback`, real GPU/LLM
+  infra) — three real defects found and fixed in the process (RegisterGuard missing from the LLM path,
+  Devanagari-only masculine-grammar detection replaced with systematic suffix rules, both system-wide
+  safe-fallback constants themselves grammatically masculine); 19 new tests, full regression 2223
+  passed/73 skipped/0 failed
+- [ ] Live, free-form Call-002 with full production instrumentation + dual (engineering + independent
+  Qwen2.5-Omni evaluator) acceptance report — user-requested follow-up, scoping in progress; requires real
+  Twilio credentials, an actual live call, and the user's direct participation
 
 ### Notes
 
