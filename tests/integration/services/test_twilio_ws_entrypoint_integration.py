@@ -69,6 +69,10 @@ def _make_app() -> tuple[TestClient, SharedCallDependencies]:
     conversation_engine = MagicMock()
     clause = AudioClause(audio_data=b"\x00\x00" * 2048, sample_rate=24000, text="namaste", clause_index=0, is_final=True)
     conversation_engine.handle_turn = AsyncMock(return_value=[clause])
+    # Path-A Phase 6g: build_greeting() returns None when no dialogue_response
+    # is wired (the real ConversationEngine's actual behavior) — makes
+    # CallOrchestrator.run()'s call-start greeting a no-op for this fixture.
+    conversation_engine.build_greeting = MagicMock(return_value=None)
 
     stt_service = MagicMock()
 

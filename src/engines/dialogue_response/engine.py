@@ -41,7 +41,7 @@ from src.engines.dialogue_response.session_protocol import DialogueSessionState
 from src.engines.dialogue_response.templates import SCRIPT_TEMPLATES, date_is_already_terminated, format_rupees
 from src.engines.empathy_directive.directive import EmpathyDirective
 from src.engines.empathy_directive.engine import EmpathyDirectiveComposer
-from src.engines.prompt_builder.kavya_persona import AGENT_NAME, HANGUP_TEXT
+from src.engines.prompt_builder.kavya_persona import AGENT_NAME, HANGUP_TEXT, build_greeting_text
 from src.libs.ai_safety.register_guard import RegisterGuard, dedupe_name, sanitize_reply, strip_trailing_sir
 from src.libs.contracts.context import CustomerContext
 from src.libs.contracts.response_plan import ResponsePlan
@@ -172,6 +172,14 @@ class DialogueResponseEngine:
             dialogue_state_name=session.dialogue_state_name,
             empathy_directive=directive,
         )
+
+    def build_greeting(self, context: CustomerContext | None, lender_name: str) -> str:
+        """The call-open identity-verification greeting (spoken once, before
+        any customer turn — not part of the AWAIT_IDENTITY/CONVERSATION/CLOSE
+        state machine above, which only runs from the customer's first reply
+        onward)."""
+        customer_name = context.primary_party.name if context is not None else ""
+        return build_greeting_text(customer_name=customer_name, lender_name=lender_name)
 
     def build_hangup_reply(self) -> str:
         return HANGUP_TEXT

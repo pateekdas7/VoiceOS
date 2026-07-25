@@ -186,6 +186,10 @@ class DialogueResponsePort(Protocol):
         """Return the scripted reply (and routing/empathy metadata) for one turn."""
         ...
 
+    def build_greeting(self, context: CustomerContext | None, lender_name: str) -> str:
+        """Return the call-open identity-verification greeting."""
+        ...
+
 
 @runtime_checkable
 class EventBusPort(Protocol):
@@ -699,6 +703,20 @@ class ConversationEngine:
                 plan_id=response_plan.plan_id,
             )
         return all_clauses
+
+    def build_greeting(self, context: CustomerContext | None) -> str | None:
+        """The call-open identity-verification greeting (Path-A Phase 6g),
+        or None when no dialogue_response is wired (pre-Phase-6 behavior —
+        callers must fall back to their own call-open handling).
+
+        Callers (the WS entrypoint) speak this once via
+        :meth:`speak_scripted_text` before the customer's first turn, so
+        DialogueResponseEngine's AWAIT_IDENTITY state has already asked its
+        question before handle_turn() is ever called for this call.
+        """
+        if self._dialogue_response is None:
+            return None
+        return self._dialogue_response.build_greeting(context, self._lender_name)
 
     async def speak_scripted_text(
         self,

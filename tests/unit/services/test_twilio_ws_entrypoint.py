@@ -221,3 +221,37 @@ async def test_empty_transcript_turn_skips_conversation_engine() -> None:
 
     orch._deps.conversation_engine.handle_turn.assert_not_awaited()
     orch._adapter.send_frame.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Call-start greeting (Path-A Phase 6g)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_speak_greeting_is_noop_when_no_dialogue_response_wired() -> None:
+    """ConversationEngine.build_greeting() returns None when it has no
+    dialogue_response wired (pre-Phase-6g behavior) — the greeting call
+    must be a clean no-op, not an error."""
+    orch = _make_orchestrator()
+    orch._deps.conversation_engine.build_greeting = MagicMock(return_value=None)
+    orch._deps.conversation_engine.speak_scripted_text = AsyncMock()
+
+    await orch._speak_greeting()
+
+    orch._deps.conversation_engine.speak_scripted_text.assert_not_awaited()
+    orch._adapter.send_frame.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_speak_greeting_synthesizes_and_sends_when_wired() -> None:
+    orch = _make_orchestrator()
+    clause = AudioClause(audio_data=b"\x00\x00" * 160, sample_rate=24000, text="namaste", clause_index=0, is_final=True)
+    orch._deps.conversation_engine.build_greeting = MagicMock(return_value="Namaste sir, main Kavya bol rahi hoon.")
+    orch._deps.conversation_engine.speak_scripted_text = AsyncMock(return_value=[clause])
+
+    await orch._speak_greeting()
+
+    orch._deps.conversation_engine.speak_scripted_text.assert_awaited_once()
+    assert orch._deps.conversation_engine.speak_scripted_text.call_args.args[0] == "Namaste sir, main Kavya bol rahi hoon."
+    orch._adapter.send_frame.assert_awaited_once()

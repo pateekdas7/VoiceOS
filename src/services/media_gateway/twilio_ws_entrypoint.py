@@ -105,6 +105,11 @@ class SharedCallDependencies:
     conversation_engine: ConversationEngine
     vad_model_factory: type[VADModelProtocol] | Any = None  # see build_vad_model() in deployment/cpu/app.py
     language: str = "hi"
+    speak_greeting: bool = True
+    """Path-A Phase 6g: speak ConversationEngine.build_greeting() once at
+    call start, before the customer's first turn. True by default; a caller
+    that already spoke a greeting through some other channel (e.g. TwiML
+    <Say> before <Connect><Stream>) can set this False to avoid a duplicate."""
 
 
 # ---------------------------------------------------------------------------
@@ -367,8 +372,26 @@ class CallOrchestrator:
     # Lifecycle
     # ------------------------------------------------------------------
 
+    async def _speak_greeting(self) -> None:
+        """Path-A Phase 6g: speak the call-open identity-verification
+        greeting before any customer turn, so DialogueResponseEngine's
+        AWAIT_IDENTITY state has already asked its question by the time the
+        customer's first reply reaches handle_turn(). No-op when
+        ConversationEngine has no dialogue_response wired (build_greeting()
+        returns None) — preserves pre-Phase-6g behavior for TwiML-<Say>-based
+        greetings or callers that haven't adopted the scripted golden path.
+        """
+        greeting = self._deps.conversation_engine.build_greeting(self._context)
+        if greeting is None:
+            return
+        clauses = await self._deps.conversation_engine.speak_scripted_text(greeting, self._playback)
+        await self._send_clauses(clauses)
+
     async def run(self, websocket: WebSocket) -> None:
         import asyncio
+
+        if self._deps.speak_greeting:
+            await self._speak_greeting()
 
         tasks = [
             asyncio.create_task(self._pump_inbound()),
