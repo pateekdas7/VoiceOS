@@ -12,7 +12,7 @@ Architecture: V1 Ch10, V1 Appendix A; V2 Ch15; V6 AR-4; DocSuite-02 A.3;
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -223,6 +223,10 @@ class NegotiationEnvelope(BaseModel):
 
     proposed_amount_minor: int | None = None
     """Initial offer amount in minor units. Must be within [floor_minor, ceiling_minor]."""
+
+    proposed_date: date | None = None
+    """Proposed commitment/payment date for ACCEPT and PROPOSE_PTP moves. None for
+    moves that don't finalize a specific date (OFFER/COUNTER/DECLINE/HOLD)."""
 
 
 class DeliverySpec(BaseModel):

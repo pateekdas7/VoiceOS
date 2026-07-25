@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from src.libs.contracts.context import CustomerContext
 from src.libs.contracts.decision import (
@@ -51,13 +51,18 @@ from src.libs.contracts.streaming import EmpathyConfig
 from src.libs.contracts.turn import TurnInput
 
 from ..adaptive_conversation.engine import AdaptiveConversationEngine, AdaptiveSignal
+from ..conversation_state.engine import ConversationStateIntelligence, InvalidTransitionError
+from ..conversation_state.schema import ConversationState
 from ..dialogue_policy.constraints import PolicyConstraintType
 from ..dialogue_policy.engine import DialoguePolicyEngine
 from ..emotion.engine import EmotionIntelligenceEngine
 from ..emotion.result import EmotionSignal
 from ..empathy.engine import EmpathyPlanner
 from ..entity_extraction.engine import EntityExtractor
+from ..entity_extraction.result import ExtractedEntities
+from ..entity_extraction.slots import EntityType
 from ..goal_planner.engine import GoalPlanner
+from ..goal_planner.goals import Goal
 from ..intent.engine import IntentEngine
 from ..intent.result import IntentResult
 from ..negotiation.engine import NegotiationEngine
@@ -159,13 +164,47 @@ def _convert_negotiation_envelope(
     eng_env: EngineNegotiationEnvelope,
     move: NegotiationMove,
     proposed_minor: int | None,
+    proposed_date: date | None = None,
 ) -> ContractsNegotiationEnvelope:
     return ContractsNegotiationEnvelope(
         floor_minor=eng_env.floor_amount.amount_minor,
         ceiling_minor=eng_env.ceiling_amount.amount_minor,
         move_type=_NEG_MOVE_TO_CONTRACT.get(move, NegotiationMoveType.PARTIAL_PAYMENT),
         proposed_amount_minor=proposed_minor,
+        proposed_date=proposed_date,
     )
+
+
+def _extract_customer_offer_minor(entity_result: ExtractedEntities) -> int | None:
+    """Extract a customer-stated offer amount (minor units) from entity slots.
+
+    Prefers PARTIAL_AMOUNT (an explicit partial-payment offer) over the
+    generic AMOUNT slot. EntityExtractor normalizes amounts to plain rupee
+    digit strings (e.g. "5000" for Rs.5,000), not minor units — this helper
+    converts to minor units (paise) for NegotiationEngine.compute_move().
+    """
+    slot = entity_result.get(EntityType.PARTIAL_AMOUNT) or entity_result.get(EntityType.AMOUNT)
+    if slot is None:
+        return None
+    try:
+        return int(slot.normalized) * 100
+    except (ValueError, TypeError):
+        return None
+
+
+def _extract_customer_proposed_date(entity_result: ExtractedEntities) -> date | None:
+    """Extract a customer-stated promise/payment date from entity slots.
+
+    Prefers PROMISE_DATE over the generic DATE slot. Both are normalized to
+    ISO 8601 (YYYY-MM-DD) by EntityExtractor.
+    """
+    slot = entity_result.get(EntityType.PROMISE_DATE) or entity_result.get(EntityType.DATE)
+    if slot is None:
+        return None
+    try:
+        return date.fromisoformat(slot.normalized)
+    except ValueError:
+        return None
 
 
 def _convert_emotion(signal: EmotionSignal) -> EmotionSpec:
@@ -280,6 +319,8 @@ class ResponsePlanningEngine:
         intent_history: list[str] | None = None,
         identity_verified: bool = False,
         silence_duration_ms: int = 0,
+        conversation_state_tracker: ConversationStateIntelligence | None = None,
+        concession_round: int = 0,
     ) -> tuple[ResponsePlan, DecisionEnvelope]:
         """Assemble a ResponsePlan and DecisionEnvelope for one turn.
 
@@ -298,6 +339,15 @@ class ResponsePlanningEngine:
             intent_history: List of recent intent label strings for loop detection.
             identity_verified: Whether identity has been verified for this call.
             silence_duration_ms: Customer silence duration in milliseconds.
+            conversation_state_tracker: Caller-owned ConversationStateIntelligence
+                instance for this call. The same instance must be passed on every
+                turn so state persists correctly across the call (mirrors the
+                intent_history/silence_duration_ms caller-owned pattern below).
+                If None, a fresh tracker (GREETING) is used for this call only —
+                safe for single-turn tests, but without cross-turn identity.
+            concession_round: Number of negotiation concession rounds already
+                completed this call (caller-tracked, incremented once per
+                COUNTER move — mirrors intent_history/silence_duration_ms).
 
         Returns:
             Tuple of (ResponsePlan, DecisionEnvelope).
@@ -305,6 +355,7 @@ class ResponsePlanningEngine:
         decisions: list[DecisionRecord] = []
         call_id = turn.call_id
         tenant_id = turn.tenant_id
+        tracker = conversation_state_tracker if conversation_state_tracker is not None else ConversationStateIntelligence()
 
         # ------------------------------------------------------------------
         # Stage 1: Perception
@@ -339,12 +390,14 @@ class ResponsePlanningEngine:
         # ------------------------------------------------------------------
         risk_assessment: RiskAssessment = self._risk.evaluate(
             turn=turn,
+            sentiment=emotion_signal.sentiment,
             stress_level=emotion_signal.stress_level,
         )
         policy_constraints: list[PolicyConstraintType] = self._policy.evaluate(
             turn=turn,
             context=context,
             risk=risk_assessment,
+            turn_index=turn.turn_index,
             identity_verified=identity_verified,
         )
 
@@ -364,7 +417,7 @@ class ResponsePlanningEngine:
         # ------------------------------------------------------------------
         strategy_sel: StrategySelection = self._strategy.select(
             primary_intent=intent_result.label,
-            conversation_state=self._infer_state(intent_result, risk_assessment),
+            conversation_state=tracker.current_state.value,
             risk=risk_assessment,
             stress_level=emotion_signal.stress_level,
             identity_verified=identity_verified,
@@ -373,6 +426,7 @@ class ResponsePlanningEngine:
             context=context,
             primary_intent=intent_result.label,
             risk=risk_assessment,
+            conversation_state=tracker.current_state.value,
             identity_verified=identity_verified,
         )
 
@@ -400,11 +454,21 @@ class ResponsePlanningEngine:
         # Stage 4: Negotiation (only when strategy == NEGOTIATE)
         # ------------------------------------------------------------------
         contracts_neg_envelope: ContractsNegotiationEnvelope | None = None
+        neg_move: NegotiationMove | None = None
         if strategy_sel.action == EngineStrategyAction.NEGOTIATE and context is not None:
             eng_env = self._negotiation.build_envelope(context)
-            neg_result = self._negotiation.compute_move(eng_env)
+            neg_result = self._negotiation.compute_move(
+                eng_env,
+                customer_offer_minor=_extract_customer_offer_minor(entity_result),
+                concession_round=concession_round,
+                hardship_verified=EngineRiskFlag.HARDSHIP_INDICATOR in risk_assessment.flags,
+                customer_proposed_date=_extract_customer_proposed_date(entity_result),
+            )
+            neg_move = neg_result.move
             proposed_minor = neg_result.proposed_amount.amount_minor if neg_result.proposed_amount is not None else None
-            contracts_neg_envelope = _convert_negotiation_envelope(eng_env, neg_result.move, proposed_minor)
+            contracts_neg_envelope = _convert_negotiation_envelope(
+                eng_env, neg_result.move, proposed_minor, neg_result.proposed_date
+            )
             decisions.append(
                 _make_decision_record(
                     call_id=call_id,
@@ -460,6 +524,43 @@ class ResponsePlanningEngine:
         final_strategy_label = _ENGINE_STRATEGY_TO_LABEL.get(strategy_sel.action, StrategyLabel.ASK)
         if adaptive_signal.escalation_recommended:
             final_strategy_label = StrategyLabel.ESCALATE
+
+        # ------------------------------------------------------------------
+        # Conversation state transition (real ConversationStateIntelligence —
+        # replaces the Sprint-012 _infer_state heuristic). The requested next
+        # state is derived deterministically from this turn's own decisions,
+        # then validated against ALLOWED_TRANSITIONS before being applied;
+        # an illegal request is logged and the tracker stays at its current
+        # state (RI-5: the LLM never decides state transitions, and neither
+        # does an unvalidated guess).
+        # ------------------------------------------------------------------
+        requested_state = self._determine_next_state(
+            current_state=tracker.current_state,
+            intent_result=intent_result,
+            risk_assessment=risk_assessment,
+            goal=goal,
+            strategy_label=final_strategy_label,
+            negotiation_move=neg_move,
+            identity_verified=identity_verified,
+        )
+        if requested_state != tracker.current_state:
+            try:
+                tracker.transition(requested_state)
+            except InvalidTransitionError as exc:
+                logger.warning(
+                    "ResponsePlanningEngine: rejected illegal state transition",
+                    extra={"call_id": call_id, "error": str(exc)},
+                )
+        decisions.append(
+            _make_decision_record(
+                call_id=call_id,
+                tenant_id=tenant_id,
+                source_engine="ConversationStateIntelligence",
+                decision=f"STATE={tracker.current_state.value}",
+                confidence=1.0,
+                reasoning=f"requested={requested_state.value}",
+            )
+        )
 
         facts: dict[str, str | int | float | bool | None] = {}
         if context and context.outstanding:
@@ -526,27 +627,42 @@ class ResponsePlanningEngine:
         return response_plan, decision_envelope
 
     @staticmethod
-    def _infer_state(intent_result: IntentResult, risk: RiskAssessment) -> str:
-        """Infer a conversation state label from intent and risk.
+    def _determine_next_state(
+        current_state: ConversationState,
+        intent_result: IntentResult,
+        risk_assessment: RiskAssessment,
+        goal: Goal,
+        strategy_label: StrategyLabel,
+        negotiation_move: NegotiationMove | None,
+        identity_verified: bool,
+    ) -> ConversationState:
+        """Determine the requested next ConversationState for this turn.
 
-        This is a lightweight heuristic used in Sprint-012 before the full
-        ConversationStateIntelligence integration. Sprint-013 will replace this
-        with Redis-backed state tracking.
+        Replaces the Sprint-012 ``_infer_state`` heuristic (which returned ad
+        hoc strings never validated against the real state machine). This
+        method only *proposes* a target state deterministically from the
+        turn's own decisions — it never mutates a tracker itself; the caller
+        validates the proposal via ``ConversationStateIntelligence.transition()``
+        (RI-5/RI-7: no ungoverned state changes).
+
+        Architecture: V2 Ch13 (Conversation State Intelligence).
         """
         from src.libs.contracts.response_plan import IntentLabel
 
-        from ..risk.flags import RiskFlag as EngineRF
-
-        if EngineRF.ABUSE_DETECTED in risk.flags:
-            return "CLOSING"
-        if intent_result.label == IntentLabel.DISCONNECT:
-            return "CLOSING"
-        if intent_result.label == IntentLabel.DISPUTE:
-            return "DISPUTE_HANDLING"
-        if intent_result.label == IntentLabel.HARDSHIP:
-            return "HARDSHIP_HANDLING"
-        if intent_result.label in (IntentLabel.PAYMENT, IntentLabel.PROMISE_TO_PAY):
-            return "NEGOTIATION"
-        if intent_result.label == IntentLabel.IDENTITY_VERIFY:
-            return "VERIFICATION"
-        return "DEBT_DISCUSSION"
+        if EngineRiskFlag.ABUSE_DETECTED in risk_assessment.flags or goal == Goal.TRANSFER_AGENT:
+            return ConversationState.ESCALATION
+        if intent_result.label in (IntentLabel.DISCONNECT, IntentLabel.CONSENT_REVOKE) or goal == Goal.END_CALL:
+            return ConversationState.CLOSING
+        if current_state == ConversationState.GREETING:
+            return ConversationState.IDENTITY_VERIFICATION
+        if current_state == ConversationState.IDENTITY_VERIFICATION:
+            return ConversationState.DEBT_DISCUSSION if identity_verified else current_state
+        if intent_result.label == IntentLabel.DISPUTE or EngineRiskFlag.DISPUTE_CLAIM in risk_assessment.flags:
+            return ConversationState.OBJECTION_HANDLING
+        if negotiation_move in (NegotiationMove.ACCEPT, NegotiationMove.PROPOSE_PTP):
+            return ConversationState.COMMITMENT_CAPTURE
+        if strategy_label == StrategyLabel.NEGOTIATE:
+            return ConversationState.NEGOTIATION
+        if strategy_label == StrategyLabel.CLOSE:
+            return ConversationState.CLOSING
+        return current_state
