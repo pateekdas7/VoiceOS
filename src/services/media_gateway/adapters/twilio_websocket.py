@@ -180,6 +180,14 @@ class TwilioWebSocketAdapter(TransportAdapter):
         msg = json.dumps(
             {
                 "event": "media",
+                # Twilio requires streamSid on every outbound media message
+                # (https://www.twilio.com/docs/voice/media-streams/websocket-messages#send-media-to-twilio) —
+                # omitted here prior to this fix, which would have caused a
+                # real Twilio carrier to reject every outbound playback
+                # frame. Populated from the 'start' message _handle_start()
+                # parses before any send_frame() call is possible in
+                # practice (media only flows after a session has started).
+                "streamSid": self._stream_sid or "",
                 "media": {
                     "payload": payload,
                     "encoding": "audio/x-mulaw",
@@ -231,6 +239,12 @@ class TwilioWebSocketAdapter(TransportAdapter):
     def call_id(self) -> CallId | None:
         """CallId assigned to this session (available after 'start' message)."""
         return self._call_id
+
+    @property
+    def stream_sid(self) -> str | None:
+        """Twilio StreamSid (available after 'start' message; required on
+        every outbound media message per Twilio's Media Streams protocol)."""
+        return self._stream_sid
 
     @property
     def is_connected(self) -> bool:

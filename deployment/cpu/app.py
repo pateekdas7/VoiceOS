@@ -21,9 +21,17 @@ constructs both src/engines/ classes (the CIL) and src/services/ classes
 
 Phase 2 scope: construction only. build_conversation_engine() returns a
 working ConversationEngine that can run handle_turn() (as
-walking_skeleton.py already does with hand-built TurnInputs), but is not
-yet reachable by a real phone call (Phase 4: telephony transport) and does
-not yet persist negotiated commitments to Collections (Phase 5).
+walking_skeleton.py already does with hand-built TurnInputs).
+
+Phase 4 addition: build_shared_call_dependencies() constructs everything
+src/services/media_gateway/twilio_ws_entrypoint.py's Starlette app needs
+(MediaGatewayService, AudioSessionManagerService, AudioPreprocessorService,
+the real GPU-backed STT via WhisperHTTPAdapter, and the same
+ConversationEngine build_conversation_engine() produces) — serve() binds
+this to a real uvicorn process, making this composition root's output
+reachable by a real Twilio phone call for the first time.
+
+Does not yet persist negotiated commitments to Collections (Phase 5).
 
 Usage:
     python deployment/cpu/app.py --smoke-test
@@ -31,6 +39,10 @@ Usage:
         constructor succeeds against the real environment described by
         .env (see deployment/cpu/.env.example for every variable read
         here). Exits non-zero on any construction failure.
+
+    python deployment/cpu/app.py --serve [--port 8010]
+        Binds the real Twilio Media Streams WebSocket entrypoint
+        (WS /twilio/media-stream) via uvicorn.
 """
 
 from __future__ import annotations
@@ -343,6 +355,80 @@ def build_conversation_engine() -> object:
 
 
 # ---------------------------------------------------------------------------
+# Phase 4 — Twilio Media Streams WS entrypoint dependencies
+# ---------------------------------------------------------------------------
+
+
+def build_stt_service(gpu_scheduler: object) -> object:
+    """Real GPU-backed STT via WhisperHTTPAdapter (Path-A Phase 3) — the
+    piece that let this composition root reach the GPU node's /transcribe
+    endpoint for the first time."""
+    from src.services.stt.adapters.whisper_http_adapter import WhisperHTTPAdapter
+    from src.services.stt.service import STTService, STTServiceConfig
+
+    gpu_host = _env("GPU_NODE_HOST", required=True)
+    adapter = WhisperHTTPAdapter(gpu_scheduler=gpu_scheduler, base_url=f"http://{gpu_host}:8100")
+    return STTService.create(adapter=adapter, config=STTServiceConfig(default_language=_env("STT_LANGUAGE", "hi")))
+
+
+def build_media_gateway_service() -> object:
+    from src.services.media_gateway.service import MediaGatewayService
+
+    return MediaGatewayService()
+
+
+def build_audio_session_manager_service() -> object:
+    from src.services.audio_session_manager.service import AudioSessionManagerService
+
+    return AudioSessionManagerService()
+
+
+def build_audio_preprocessor() -> object:
+    from src.services.audio_preprocessing.service import AudioPreprocessorService
+
+    return AudioPreprocessorService()
+
+
+def build_shared_call_dependencies() -> object:
+    """Everything src/services/media_gateway/twilio_ws_entrypoint.py's
+    Starlette app needs, constructed once for the life of the process —
+    one MediaGatewayService/AudioSessionManagerService/AudioPreprocessor/
+    STTService/ConversationEngine instance serves every call; only
+    call-scoped state (AudioSession, VADEndpointingService, DialogueManager,
+    PlaybackScheduler) is constructed fresh per connection inside
+    CallOrchestrator itself.
+    """
+    from src.services.media_gateway.twilio_ws_entrypoint import SharedCallDependencies
+
+    gpu_scheduler = build_gpu_scheduler()
+    return SharedCallDependencies(
+        account_sid=_env("TWILIO_ACCOUNT_SID", required=True),
+        auth_token=_env("TWILIO_AUTH_TOKEN", required=True),
+        tenant_id=_env("DEFAULT_TENANT_ID", "tenant-default"),
+        media_gateway_service=build_media_gateway_service(),
+        audio_session_manager_service=build_audio_session_manager_service(),
+        audio_preprocessor=build_audio_preprocessor(),
+        stt_service=build_stt_service(gpu_scheduler),
+        conversation_engine=build_conversation_engine(),
+        language=_env("STT_LANGUAGE", "hi"),
+    )
+
+
+def serve() -> None:
+    """Bind the real Twilio Media Streams WebSocket entrypoint via uvicorn."""
+    import uvicorn
+
+    from src.services.media_gateway.twilio_ws_entrypoint import create_twilio_media_stream_app
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    port = int(_env("MEDIA_GATEWAY_PORT", "8010"))
+    deps = build_shared_call_dependencies()
+    app = create_twilio_media_stream_app(deps)  # type: ignore[arg-type]
+    logger.info("Serving Twilio Media Streams WS entrypoint on 0.0.0.0:%d/twilio/media-stream", port)
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+
+
+# ---------------------------------------------------------------------------
 # Smoke test — construct-only, no turn handled
 # ---------------------------------------------------------------------------
 
@@ -366,9 +452,15 @@ def smoke_test() -> None:
     assert ptp_service is not None
     logger.info("OK — PromiseToPayService constructed (not yet wired into ConversationEngine — Phase 5).")
 
+    deps = build_shared_call_dependencies()
+    assert deps is not None
+    logger.info("OK — SharedCallDependencies constructed (Phase 4 Twilio WS entrypoint is ready to serve).")
+
 
 if __name__ == "__main__":
     if "--smoke-test" in sys.argv:
         smoke_test()
+    elif "--serve" in sys.argv:
+        serve()
     else:
         print(__doc__)
