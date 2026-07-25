@@ -1,15 +1,15 @@
 # VoiceOS v2 — Completed Sprints
 
 **Last Updated:** 2026-07-25  
-**Completed Sprints:** 27 / 34 complete (Sprint-028 PARTIAL — see below); Sprint-029 Phase 1 complete, Phase 2 Call-001 PASSED — **Milestone M-6 (SaaS Platform Complete) reached; Epic E6 (SaaS Platform) closed; Epic E7 (Production Alpha) in progress; M-7 NOT yet achieved. Path-A Runtime Consolidation Phases 1-7 complete 2026-07-25 (pre-Call-002 gate, real GPU/Postgres dry-run PASSED) — Phase 8/Call-002 in progress — see entry below.**
+**Completed Sprints:** 27 / 34 complete (Sprint-028 PARTIAL — see below); Sprint-029 Phase 1 complete, Phase 2 Call-001 PASSED — **Milestone M-6 (SaaS Platform Complete) reached; Epic E6 (SaaS Platform) closed; Epic E7 (Production Alpha) in progress; M-7 NOT yet achieved. Path-A Runtime Consolidation Phases 1-8 complete 2026-07-25 (pre-Call-002 gate, real GPU/Postgres dry-run PASSED, `conv_server.py` retired) — Call-002 formally proposed, pending authorization — see entry below.**
 
 ---
 
 ## Completed Sprint Log
 
-## Path-A Runtime Consolidation — Phases 1-7 (pre-Call-002 gate)
+## Path-A Runtime Consolidation — Phases 1-8 (pre-Call-002 gate)
 
-**Completed:** 2026-07-25 (Phases 1-7; Phase 8 in progress)
+**Completed:** 2026-07-25 (Phases 1-8, all complete)
 **Epic:** E8 — Founder Validation (Sprint-029), pre-Call-002 gate
 **Trigger:** explicit user directive to verify the runtime reflects the intended production architecture
 before preparing Call-002 — not a numbered sprint, but full-weight implementation work gated the same way.
@@ -75,16 +75,37 @@ synthesized audio. Getting there required diagnosing and fixing two real, indepe
    non-blocking `PlaybackScheduler.dequeue_nowait()` + draining it in `_send_clauses()`. 4 new regression
    tests (20 turns × 30 clauses, well past the bound).
 
+### Phase 8 — COMPLETE
+
+Before touching anything: a dedicated read-only audit confirmed no live traffic could reach
+`conv_server.py` — no systemd unit, Docker/Compose service, or CI/cron job ever started it; the GPU node
+that hosted Call-001's actual `conv_server.py` process was fully rebuilt from scratch since, without
+conv_server ever being part of the reproducible deployment; its Call-001 Twilio webhook was an ephemeral
+`trycloudflare.com` tunnel URL, not a persisted config; and no test in `tests/` imports it. The only
+filesystem dependency is its sibling `empathy_directive.py` (imported by `conv_server.py` alone) — the
+dependency arrow only ever points from `conv_server.py` into `src/`, never the reverse, so retiring it
+could not break anything under `src/`.
+
+Both files moved to `evaluation/founder-validation/archive/` via `git mv` (history preserved), each with a
+prominent "ARCHIVED — RETIRED FROM PRODUCTION, DO NOT DEPLOY" header explaining what superseded them
+module-by-module. Full regression after the move: 2197 passed / 73 skipped / 0 failed (unchanged),
+`check_boundaries.py` clean — confirming the audit's "nothing depends on the old path" finding.
+
+**`ConversationEngine` is now the sole production runtime.** Path-A Runtime Consolidation Phases 1-8 are
+complete. Call-002 is formally proposed to the user in this session, pending explicit authorization.
+
 ### Definition of Done
 
-- [x] Phases 1-7 acceptance criteria met (real infra validation throughout)
-- [x] All new tests passing; full regression green (2197 passed / 73 skipped / 0 failed)
+- [x] Phases 1-8 acceptance criteria met (real infra validation throughout)
+- [x] All new tests passing; full regression green (2197 passed / 73 skipped / 0 failed, unchanged after
+  the Phase 8 file move)
 - [x] CHANGELOG.md updated
 - [x] CURRENT_SPRINT.md updated
 - [x] PROJECT_STATUS.md updated
 - [x] Phase 7 (full pipeline dry-run) — PASSED against real GPU/Postgres infra
-- [ ] Phase 8 (retire `conv_server.py`) — in progress
-- [ ] Call-002 — not proposed, blocked on Phase 8
+- [x] Phase 8 (retire `conv_server.py`) — COMPLETE; audited (no live traffic reachable), archived to
+  `evaluation/founder-validation/archive/` with its sibling `empathy_directive.py`
+- [x] Call-002 — formally proposed to the user; pending authorization
 
 ### Notes
 

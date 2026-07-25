@@ -5,7 +5,7 @@ Format: `## [version] — Sprint-NNN — Title (YYYY-MM-DD)`
 
 ---
 
-## [Unreleased] — Path-A Runtime Consolidation, Phases 1–7 (2026-07-25)
+## [Unreleased] — Path-A Runtime Consolidation, Phases 1–8 (2026-07-25)
 
 > Triggered by an explicit pre-Call-002 architecture verification request: a full audit found VoiceOS
 > had **two disconnected implementations** — the designed architecture (`src/services/conversation_engine`
@@ -173,9 +173,33 @@ as a persistent service this session — standing it back up was judged out of P
 the new Phase 6 wiring end to end, not re-provisioning an unrelated evaluation stack). The WAV this script
 produces can be fed to `evaluate_trial.py` by hand once/if that service is restarted.
 
-**Not yet done:** Phase 8 (retire `conv_server.py`, confirm no traffic can reach it, update tracking docs
-to name `ConversationEngine` as the sole production path). **Call-002 has not been proposed** and remains
-explicitly pending founder/user authorization.
+### Phase 8 — Retire `conv_server.py` — ✅ COMPLETE
+
+Before touching anything, an independent audit (dedicated read-only investigation, not assumed) confirmed
+no live traffic could reach `conv_server.py`: no systemd unit, Docker/Compose service, or CI/cron job ever
+started it; `deployment/GPU_NODE_STATE.md` documents that the current GPU node was fully rebuilt from
+scratch using only `deployment/gpu/`'s bootstrap/systemd files — the node that actually hosted Call-001's
+`conv_server.py` process was terminated and replaced since, without conv_server ever being part of the
+reproducible deployment; its Call-001 Twilio webhook was an ephemeral `trycloudflare.com` tunnel URL, not
+a persisted config; and no test in `tests/` imports it (two source comments reference it in prose only).
+The only filesystem dependency is its sibling `evaluation/founder-validation/empathy_directive.py`
+(imported by `conv_server.py` line 88) — nothing else in the repo imports either file; the dependency
+arrow only ever points *from* `conv_server.py` *into* `src/`, never the reverse.
+
+Both files moved to `evaluation/founder-validation/archive/` (via `git mv`, preserving history) with a
+prominent "ARCHIVED — RETIRED FROM PRODUCTION, DO NOT DEPLOY" header added to each, explaining what they
+were, what superseded them (module-by-module: `register_guard.py`/`empathy_directive/`/`kavya_persona.py`/
+`dialogue_response/`/`session_state.py`), and pointing to this CHANGELOG entry. Full regression after the
+move: 2197 passed / 73 skipped / 0 failed (unchanged), `check_boundaries.py` clean — confirming nothing
+depended on the old path.
+
+**`ConversationEngine` (`src/services/conversation_engine/engine.py`) is now the sole production runtime**,
+reachable end to end from a real Twilio Media Streams WebSocket connection through to Collections/CRM
+persistence, wired through the real composition root (`deployment/cpu/app.py`), validated in Phase 7's
+live multi-turn dry run against real GPU TTS and real Postgres. Path-A Runtime Consolidation Phases 1–8
+are now all complete.
+
+**Call-002 is now proposed to the user**, pending explicit authorization — see the accompanying message.
 
 ---
 

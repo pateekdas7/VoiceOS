@@ -1,4 +1,15 @@
-"""EmpathyDirectiveComposer — permanent empathy layer for the Kavya voice-bot.
+"""
+=============================================================================
+ARCHIVED — RETIRED FROM PRODUCTION (Path-A Runtime Consolidation Phase 8,
+2026-07-25). Kept for historical/reference purposes only. DO NOT DEPLOY.
+Ported and redesigned as src/engines/empathy_directive/ (real
+DialogueResponseEngine consumer, additive to src/engines/empathy/
+EmpathyPlanner). Only ever imported by archive/conv_server.py, its sibling
+in this directory, itself retired the same day — see that file's header
+and CHANGELOG.md's "Path-A Runtime Consolidation, Phases 1-7" entry.
+=============================================================================
+
+EmpathyDirectiveComposer — permanent empathy layer for the Kavya voice-bot.
 
 Purpose
 -------

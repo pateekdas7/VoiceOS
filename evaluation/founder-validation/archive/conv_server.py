@@ -1,5 +1,41 @@
 #!/usr/bin/env python3
 """
+=============================================================================
+ARCHIVED — RETIRED FROM PRODUCTION (Path-A Runtime Consolidation Phase 8,
+2026-07-25). Kept for historical/reference purposes only. DO NOT DEPLOY.
+
+This script drove the founder-approved Call-001 (Sprint-029 Phase 2,
+2026-07-20) as a standalone, self-contained FastAPI webhook running
+directly on the GPU node, bypassing src/services/ entirely: STT/TTS were
+Twilio-native (<Gather>/<Say> + Amazon Polly), not our Whisper/Veena
+services, and the only VoiceOS-repo service it called was the LLM via a
+same-host localhost:8000 request.
+
+A pre-Call-002 architecture audit found this script's proven persona/
+FSM/guard/empathy logic never ran through the designed production runtime
+(ConversationEngine) at all. That logic has since been ported and
+redesigned (not just copy-pasted) into first-class Path A code, consuming
+real IntentEngine/EntityExtractor/NegotiationEngine output instead of this
+script's own parallel parser:
+
+  - src/libs/ai_safety/register_guard.py          <- register/tone guards
+  - src/engines/empathy_directive/                 <- EmpathyDirectiveComposer
+  - src/engines/prompt_builder/kavya_persona.py    <- persona/greeting/hangup
+  - src/engines/dialogue_response/                 <- the scripted-reply FSM
+  - src/services/conversation_engine/session_state.py <- the commitment ledger
+
+ConversationEngine (src/services/conversation_engine/engine.py), wired
+through the real composition root (deployment/cpu/app.py) and the real
+Twilio Media Streams WS entrypoint (src/services/media_gateway/
+twilio_ws_entrypoint.py), is now the sole production runtime — validated
+against real GPU TTS + real Postgres in a live multi-turn dry run (Path-A
+Phase 7). No live process runs this script anymore; it was never part of
+the current GPU node's reproducible deployment (deployment/gpu/), and its
+Call-001 Twilio webhook was an ephemeral trycloudflare.com tunnel, not a
+persisted config. Full narrative in CHANGELOG.md's "Path-A Runtime
+Consolidation, Phases 1-7" entry.
+=============================================================================
+
 VoiceOS Conversation Webhook — Sprint-029 Phase 2 (v3.9)
 
 v3.9 wires the full VoiceOS Volume 2 Conversation Intelligence Layer:
