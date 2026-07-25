@@ -454,6 +454,7 @@ def build_shared_call_dependencies() -> object:
         # because the internally-observed URL never matches what Twilio
         # actually signed. e.g. "wss://random-words.trycloudflare.com".
         public_ws_base_url=_env("PUBLIC_WS_BASE_URL", ""),
+        recording_dir=_env("CALL_RECORDING_DIR", ""),
     )
 
 

@@ -62,6 +62,7 @@ from src.libs.contracts.streaming import WordHypothesis
 from src.services.audio_preprocessing.service import AudioPreprocessorService
 from src.services.audio_session_manager.service import AudioSessionManagerService
 from src.services.media_gateway.adapters.twilio_websocket import TwilioWebSocketAdapter
+from src.services.media_gateway.call_recorder import CallRecorder
 from src.services.media_gateway.protocol import ADAPTER_TYPE_TWILIO
 from src.services.media_gateway.service import MediaGatewayService
 from src.services.playback.output import AudioOutput
@@ -125,6 +126,14 @@ class SharedCallDependencies:
     reconstructing the URL from what the ASGI server itself observed — for
     tests and any deployment that terminates TLS with correct proxy-header
     forwarding configured elsewhere instead."""
+    recording_dir: str = ""
+    """When non-empty, every call gets a CallRecorder writing its transcript
+    (JSONL of timestamped STT/dialogue/TTS/barge-in events) and raw
+    customer/Kavya audio (two mono WAV files) to this directory —
+    Sprint-029 Call-002's production acceptance instrumentation. Empty
+    string (the default) disables recording entirely (no CallRecorder is
+    constructed), preserving prior behavior for every existing test and
+    deployment that hasn't opted in."""
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +194,7 @@ class CallOrchestrator:
         vad_engine: VADEngine,
         context: CustomerContext | None = None,
         identity_verified: bool = False,
+        recorder: CallRecorder | None = None,
     ) -> None:
         import asyncio
 
@@ -194,6 +204,7 @@ class CallOrchestrator:
         self._deps = deps
         self._context = context
         self._identity_verified = identity_verified
+        self._recorder = recorder
 
         self._session = deps.audio_session_manager_service.create_session(call_id, tenant_id)
         self._vad = VADEndpointingService(
@@ -248,6 +259,8 @@ class CallOrchestrator:
         vad_model = deps.vad_model_factory() if deps.vad_model_factory is not None else _default_vad_model()
         vad_engine = VADEngine(model=vad_model)
 
+        recorder = CallRecorder(call_id, deps.recording_dir) if deps.recording_dir else None
+
         return cls(
             call_id=call_id,
             tenant_id=tenant_id,
@@ -256,6 +269,7 @@ class CallOrchestrator:
             vad_engine=vad_engine,
             context=context,
             identity_verified=identity_verified,
+            recorder=recorder,
         )
 
     def _call_time_ms(self) -> int:
@@ -276,6 +290,9 @@ class CallOrchestrator:
             for ready_frame in self._session.push_frame(pcm_frame):
                 pre = self._deps.audio_preprocessor.process_frame(self._call_id, ready_frame)
                 events = self._vad.process_frame(pre, self._call_id, self._tenant_id, self._call_time_ms())
+
+                if self._recorder is not None:
+                    self._recorder.add_inbound_audio(pre.pcm_data, int(pre.config.sample_rate))
 
                 if self._turn_active and self._current_turn_queue is not None:
                     await self._current_turn_queue.put(pre)
@@ -302,6 +319,8 @@ class CallOrchestrator:
             self._turn_active = False
         elif isinstance(event, BargeinDetected):
             logger.info("Barge-in detected on call %s — flushing playback", self._call_id)
+            if self._recorder is not None:
+                self._recorder.event("barge_in", turn_index=self._turn_index, call_time_ms=self._call_time_ms())
             await self._playback.flush()
             self._playback.clear_barge_in()
             self._session.on_barge_in()
@@ -335,20 +354,49 @@ class CallOrchestrator:
         if queue is None:
             return
 
+        stt_start = time.monotonic()
         word_stream: AsyncIterator[WordHypothesis] = self._deps.stt_service.transcribe_stream(
             _queue_to_frame_gen(queue), language=self._deps.language
         )
         turn = await self._dialogue_manager.ingest_stream(word_stream)
+        stt_latency_ms = int((time.monotonic() - stt_start) * 1000)
 
         if not turn.transcript.strip():
+            if self._recorder is not None:
+                self._recorder.event(
+                    "stt_empty_turn", turn_index=self._turn_index, latency_ms=stt_latency_ms,
+                    call_time_ms=self._call_time_ms(),
+                )
             return  # silence/noise-only turn — nothing to respond to
 
+        if self._recorder is not None:
+            self._recorder.event(
+                "stt_final",
+                turn_index=self._turn_index,
+                transcript=turn.transcript,
+                latency_ms=stt_latency_ms,
+                call_time_ms=self._call_time_ms(),
+            )
+
+        dialogue_start = time.monotonic()
         clauses = await self._deps.conversation_engine.handle_turn(
             turn=turn,
             playback=self._playback,
             context=self._context,
             identity_verified=self._identity_verified,
         )
+        dialogue_latency_ms = int((time.monotonic() - dialogue_start) * 1000)
+
+        if self._recorder is not None:
+            self._recorder.event(
+                "kavya_reply",
+                turn_index=self._turn_index,
+                text=" ".join(c.text for c in clauses if getattr(c, "text", "")),
+                dialogue_and_tts_latency_ms=dialogue_latency_ms,
+                clause_count=len(clauses),
+                call_time_ms=self._call_time_ms(),
+            )
+
         await self._send_clauses(clauses)
         self._turn_index += 1
 
@@ -375,6 +423,8 @@ class CallOrchestrator:
         self._vad.set_playback_active(True, playback_seq=self._turn_index)
         try:
             for clause in clauses:
+                if self._recorder is not None:
+                    self._recorder.add_outbound_audio(clause.audio_data, clause.sample_rate)
                 pcm_ulaw = self._audio_output.convert(clause, fmt="ulaw")
                 self._out_seq += 1
                 out_frame = _clause_to_mulaw_frame(pcm_ulaw, seq=self._out_seq, rtp_ts=self._out_seq * 160)
@@ -419,11 +469,16 @@ class CallOrchestrator:
         greeting = self._deps.conversation_engine.build_greeting(self._context)
         if greeting is None:
             return
+        if self._recorder is not None:
+            self._recorder.event("greeting", text=greeting, call_time_ms=self._call_time_ms())
         clauses = await self._deps.conversation_engine.speak_scripted_text(greeting, self._playback)
         await self._send_clauses(clauses)
 
     async def run(self, websocket: WebSocket) -> None:
         import asyncio
+
+        if self._recorder is not None:
+            self._recorder.event("call_start", tenant_id=self._tenant_id)
 
         if self._deps.speak_greeting:
             await self._speak_greeting()
@@ -447,6 +502,11 @@ class CallOrchestrator:
             await asyncio.gather(*tasks, return_exceptions=True)
             await self._deps.media_gateway_service.release_adapter(self._call_id)
             self._deps.audio_session_manager_service.release_session(self._call_id)
+            if self._recorder is not None:
+                self._recorder.event(
+                    "call_end", total_turns=self._turn_index, call_time_ms=self._call_time_ms()
+                )
+                self._recorder.close()
 
 
 def _default_vad_model() -> VADModelProtocol:
