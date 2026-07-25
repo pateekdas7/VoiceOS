@@ -155,12 +155,13 @@ class OutputEvaluatorPort(Protocol):
 class DialogueTurnOutputPort(Protocol):
     """Structural shape of DialogueResponseEngine's per-turn output.
 
-    Only the attribute this engine actually reads is declared — the real
+    Only the attributes this engine actually reads are declared — the real
     return type (src.engines.dialogue_response.engine.DialogueTurnOutput,
     Phase 6f) cannot be imported here (check_boundaries.py Rule 1).
     """
 
     reply_text: str
+    needs_llm_fallback: bool
 
 
 @runtime_checkable
@@ -646,7 +647,13 @@ class ConversationEngine:
             self._snapshot_store.take_snapshot(session, TenantId(turn.tenant_id), CallId(turn.call_id))
 
         # Step 5 — Reply generation: scripted golden path (Phase 6g) when
-        # wired, else the LLM streaming path (Sprint-009-018) unchanged.
+        # wired, with a real per-turn LLM fallback when the golden path can't
+        # classify the customer's utterance for _ELSE_FALLBACK_THRESHOLD
+        # consecutive turns (DialogueTurnOutput.needs_llm_fallback — the live
+        # trigger condition for the approved plan's "LLM as fallback" intent,
+        # not merely "LLM only runs when dialogue_response is unwired at
+        # construction time"). Falls back to the plain LLM streaming path
+        # (Sprint-009-018) unchanged when no dialogue_response is wired at all.
         all_clauses: list[AudioClause] = []
         full_output_text = ""
 
@@ -654,22 +661,21 @@ class ConversationEngine:
             dialogue_output = self._dialogue_response.generate_reply(
                 session, response_plan, context, turn.transcript, self._lender_name
             )
-            full_output_text = dialogue_output.reply_text
-            all_clauses.extend(await self.speak_scripted_text(full_output_text, playback, response_plan))
+            if dialogue_output.needs_llm_fallback:
+                logger.info(
+                    "ConversationEngine: scripted golden path exhausted for call %s turn %s — "
+                    "falling back to the LLM for this turn",
+                    turn.call_id,
+                    turn.turn_id,
+                )
+                clauses = await self._run_llm_streaming_path(prompt_text, response_plan, playback)
+                all_clauses.extend(clauses)
+                full_output_text = " ".join(c.text for c in all_clauses)
+            else:
+                full_output_text = dialogue_output.reply_text
+                all_clauses.extend(await self.speak_scripted_text(full_output_text, playback, response_plan))
         else:
-            token_stream = await self._llm.generate_stream(
-                prompt=prompt_text,
-                response_plan=response_plan,
-                max_tokens=response_plan.delivery.max_response_tokens,
-            )
-
-            clauses = await self._pipeline.run(
-                token_stream=token_stream,
-                response_plan=response_plan,
-                tts_service=self._tts,
-                validator=self._validator,
-                playback=playback,
-            )
+            clauses = await self._run_llm_streaming_path(prompt_text, response_plan, playback)
             all_clauses.extend(clauses)
             full_output_text = " ".join(c.text for c in all_clauses)
 
@@ -746,6 +752,32 @@ class ConversationEngine:
         return await self._pipeline.run(
             token_stream=_single_chunk(),
             response_plan=plan,
+            tts_service=self._tts,
+            validator=self._validator,
+            playback=playback,
+        )
+
+    async def _run_llm_streaming_path(
+        self,
+        prompt_text: str,
+        response_plan: ResponsePlan,
+        playback: PlaybackScheduler,
+    ) -> list[AudioClause]:
+        """The original LLM token-streaming path (Sprint-009-018), extracted
+        so it can be invoked either as the whole-call fallback (no
+        dialogue_response wired at all) or as a genuine per-turn fallback
+        when the scripted golden path can't classify the customer's
+        utterance (DialogueTurnOutput.needs_llm_fallback, Phase 6g's
+        Call-002-readiness follow-up). Same governance/validation gates as
+        every other path through TrueStreamingPipeline."""
+        token_stream = await self._llm.generate_stream(
+            prompt=prompt_text,
+            response_plan=response_plan,
+            max_tokens=response_plan.delivery.max_response_tokens,
+        )
+        return await self._pipeline.run(
+            token_stream=token_stream,
+            response_plan=response_plan,
             tts_service=self._tts,
             validator=self._validator,
             playback=playback,

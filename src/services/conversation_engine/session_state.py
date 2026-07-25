@@ -66,6 +66,18 @@ class ConversationSessionState:
         self._assistant_replies: list[str] = []
         self._last_empathy_state: str = ""
 
+        # Path-A Call-002 readiness: real LLM-fallback trigger condition.
+        # DialogueResponseEngine bumps this when the scripted golden path
+        # can't classify the customer's utterance (Bucket.ELSE); resets it
+        # on any successful classification. ConversationEngine routes the
+        # turn to the real LLM/TTS streaming path once this crosses the
+        # threshold, instead of the deterministic "anchor" re-ask —
+        # matching the approved consolidation plan's "LLM as fallback"
+        # intent, which the initial Phase 6g wiring never actually
+        # implemented as a live condition (see CHANGELOG.md's Call-002
+        # readiness entry).
+        self._consecutive_else_count: int = 0
+
     @property
     def call_id(self) -> CallId:
         return self._call_id
@@ -182,6 +194,17 @@ class ConversationSessionState:
     def set_last_empathy_state(self, value: str) -> None:
         self._last_empathy_state = value
 
+    @property
+    def consecutive_else_count(self) -> int:
+        return self._consecutive_else_count
+
+    def bump_consecutive_else_count(self) -> int:
+        self._consecutive_else_count += 1
+        return self._consecutive_else_count
+
+    def reset_consecutive_else_count(self) -> None:
+        self._consecutive_else_count = 0
+
     # ------------------------------------------------------------------
     # Recoverable protocol
     # ------------------------------------------------------------------
@@ -203,6 +226,7 @@ class ConversationSessionState:
                 "commitment": self._commitment,
                 "assistant_replies": self._assistant_replies,
                 "last_empathy_state": self._last_empathy_state,
+                "consecutive_else_count": self._consecutive_else_count,
             },
             last_event_offset=self._last_event_offset,
         )
@@ -223,6 +247,7 @@ class ConversationSessionState:
         )
         self._assistant_replies = list(snapshot.state.get("assistant_replies", []))
         self._last_empathy_state = str(snapshot.state.get("last_empathy_state", ""))
+        self._consecutive_else_count = int(snapshot.state.get("consecutive_else_count", 0))
         self._version = snapshot.version
         self._last_event_offset = snapshot.last_event_offset
 

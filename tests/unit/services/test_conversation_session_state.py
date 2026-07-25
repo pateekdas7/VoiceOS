@@ -80,6 +80,33 @@ class TestConversationSessionState:
         assert restored.assistant_replies == ["Perfect sir, kab tak clear ho jaayega?"]
         assert restored.last_empathy_state == "HARDSHIP_FINANCIAL"
 
+    def test_snapshot_roundtrip_includes_consecutive_else_count(self) -> None:
+        session = ConversationSessionState(CallId("call-1"))
+        session.bump_consecutive_else_count()
+        session.bump_consecutive_else_count()
+
+        snap = session.snapshot()
+        restored = ConversationSessionState(CallId("call-1"))
+        restored.restore(snap)
+
+        assert restored.consecutive_else_count == 2
+
+    def test_bump_consecutive_else_count_increments_and_returns_new_value(self) -> None:
+        session = ConversationSessionState(CallId("call-1"))
+
+        assert session.bump_consecutive_else_count() == 1
+        assert session.bump_consecutive_else_count() == 2
+        assert session.consecutive_else_count == 2
+
+    def test_reset_consecutive_else_count_zeroes_it(self) -> None:
+        session = ConversationSessionState(CallId("call-1"))
+        session.bump_consecutive_else_count()
+        session.bump_consecutive_else_count()
+
+        session.reset_consecutive_else_count()
+
+        assert session.consecutive_else_count == 0
+
     def test_update_commitment_only_overwrites_supplied_fields(self) -> None:
         session = ConversationSessionState(CallId("call-1"))
         session.update_commitment(amount_minor=400_000, cadence="monthly")

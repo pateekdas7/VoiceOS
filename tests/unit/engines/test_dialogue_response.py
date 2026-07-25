@@ -246,6 +246,69 @@ class TestConversationBuckets:
         assert "50,000" in out.reply_text
 
 
+class TestLLMFallback:
+    """Call-002 readiness: a real, live trigger condition for the LLM
+    fallback the approved consolidation plan always intended — two
+    consecutive unclassified turns, not merely "dialogue_response is
+    unwired at construction time"."""
+
+    def _in_conversation(self, name: str = "Sunita Sharma") -> tuple[DialogueResponseEngine, ConversationSessionState, CustomerContext]:
+        return TestConversationBuckets()._in_conversation(name=name)
+
+    def test_single_unclassified_turn_does_not_trigger_fallback(self) -> None:
+        engine, session, context = self._in_conversation()
+        plan = _make_plan()
+
+        out = engine.generate_reply(session, plan, context, "मुझे समझ नहीं आया कुछ भी", _LENDER)
+
+        assert out.bucket == Bucket.ELSE
+        assert out.needs_llm_fallback is False
+        assert out.reply_text != ""  # deterministic backstop still populated
+
+    def test_two_consecutive_unclassified_turns_triggers_fallback(self) -> None:
+        engine, session, context = self._in_conversation()
+        plan = _make_plan()
+
+        engine.generate_reply(session, plan, context, "पहला अस्पष्ट वाक्य", _LENDER)
+        out = engine.generate_reply(session, plan, context, "दूसरा अस्पष्ट वाक्य", _LENDER)
+
+        assert out.bucket == Bucket.ELSE
+        assert out.needs_llm_fallback is True
+        assert out.reply_text != ""  # still returns a deterministic backstop reply
+
+    def test_classified_turn_between_resets_the_streak(self) -> None:
+        engine, session, context = self._in_conversation()
+        plan_unclassified = _make_plan()
+        plan_amount_query = _make_plan()
+
+        engine.generate_reply(session, plan_unclassified, context, "पहला अस्पष्ट वाक्य", _LENDER)
+        classified = engine.generate_reply(session, plan_amount_query, context, "kitna outstanding hai mera", _LENDER)
+        out = engine.generate_reply(session, plan_unclassified, context, "दूसरा अस्पष्ट वाक्य", _LENDER)
+
+        assert classified.bucket == Bucket.ASK_AMOUNT
+        assert out.bucket == Bucket.ELSE
+        assert out.needs_llm_fallback is False  # streak was reset by the classified turn in between
+
+    def test_third_consecutive_unclassified_turn_stays_true(self) -> None:
+        engine, session, context = self._in_conversation()
+        plan = _make_plan()
+
+        engine.generate_reply(session, plan, context, "पहला अस्पष्ट वाक्य", _LENDER)
+        engine.generate_reply(session, plan, context, "दूसरा अस्पष्ट वाक्य", _LENDER)
+        out = engine.generate_reply(session, plan, context, "तीसरा अस्पष्ट वाक्य", _LENDER)
+
+        assert out.needs_llm_fallback is True
+
+    def test_classified_bucket_never_triggers_fallback(self) -> None:
+        engine, session, context = self._in_conversation()
+        plan = _make_plan()
+
+        out = engine.generate_reply(session, plan, context, "haan", _LENDER)
+
+        assert out.bucket == Bucket.ACK
+        assert out.needs_llm_fallback is False
+
+
 class TestClose:
     def test_close_state_repeats_farewell(self) -> None:
         engine = DialogueResponseEngine()

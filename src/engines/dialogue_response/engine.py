@@ -48,6 +48,21 @@ from src.libs.contracts.response_plan import ResponsePlan
 
 logger = logging.getLogger(__name__)
 
+_ELSE_FALLBACK_THRESHOLD = 2
+"""Two consecutive turns the scripted golden path can't classify (Bucket.ELSE)
+triggers a real LLM fallback for that turn, instead of a third consecutive
+deterministic "anchor" re-ask. This is the live trigger condition for the
+approved consolidation plan's "LLM as fallback" design intent (Phase 6 of
+Path-A Runtime Consolidation) — the initial Phase 6g wiring made
+DialogueResponseEngine always produce a scripted reply with no fallback
+signal at all, which technically satisfied "never crashes" but never
+actually let the LLM participate in a live call. Two, not one: a single
+unclassified turn is routine (garbled STT, an ambiguous phrase) and the
+deterministic anchor re-ask handles it fine; two in a row is a stronger
+signal the customer has said something genuinely off-script that a fixed
+template can't serve, where the LLM's flexibility earns its cost/latency
+and reduced determinism."""
+
 _IDENTITY_YES_TOKENS = (
     "हाँ", "हां", "haan", "yes", "बोल रहा", "bol raha", "speaking",
     "हां जी", "haan ji", "jee", "जी", "जी हाँ", "ji haan",
@@ -120,6 +135,12 @@ class DialogueTurnOutput:
     bucket: Bucket | None
     dialogue_state_name: str
     empathy_directive: EmpathyDirective
+    needs_llm_fallback: bool = False
+    """True when the scripted golden path has failed to classify the
+    customer's utterance for _ELSE_FALLBACK_THRESHOLD consecutive turns.
+    reply_text is still populated (a guaranteed deterministic backstop) —
+    callers that want the real LLM/TTS streaming path to serve this turn
+    instead should check this flag rather than relying on reply_text alone."""
 
 
 class DialogueResponseEngine:
@@ -154,6 +175,12 @@ class DialogueResponseEngine:
         else:
             reply, bucket = self._handle_conversation(session, user_text, response_plan, outstanding_minor, lender_name)
 
+        needs_llm_fallback = False
+        if bucket == Bucket.ELSE:
+            needs_llm_fallback = session.bump_consecutive_else_count() >= _ELSE_FALLBACK_THRESHOLD
+        elif bucket is not None:
+            session.reset_consecutive_else_count()
+
         directive = self._empathy.compose(user_text, bucket.value if bucket is not None else "")
         reply = self._empathy.apply_to_reply(reply, directive)
         # Rule 6 (never address by name) only applies once identity has been
@@ -171,6 +198,7 @@ class DialogueResponseEngine:
             bucket=bucket,
             dialogue_state_name=session.dialogue_state_name,
             empathy_directive=directive,
+            needs_llm_fallback=needs_llm_fallback,
         )
 
     def build_greeting(self, context: CustomerContext | None, lender_name: str) -> str:

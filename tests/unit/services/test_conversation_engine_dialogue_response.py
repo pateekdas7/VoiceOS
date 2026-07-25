@@ -64,11 +64,17 @@ class _AlwaysValidValidator:
 @dataclass(frozen=True)
 class _FakeDialogueTurnOutput:
     reply_text: str
+    needs_llm_fallback: bool = False
 
 
 class _FakeDialogueResponse:
-    def __init__(self, reply_text: str = "Perfect sir, aapka payment kab tak ho jaayega?") -> None:
+    def __init__(
+        self,
+        reply_text: str = "Perfect sir, aapka payment kab tak ho jaayega?",
+        needs_llm_fallback: bool = False,
+    ) -> None:
         self.reply_text = reply_text
+        self.needs_llm_fallback = needs_llm_fallback
         self.calls: list[tuple[Any, ...]] = []
 
     def generate_reply(
@@ -80,7 +86,7 @@ class _FakeDialogueResponse:
         lender_name: str,
     ) -> _FakeDialogueTurnOutput:
         self.calls.append((session, response_plan, context, user_text, lender_name))
-        return _FakeDialogueTurnOutput(reply_text=self.reply_text)
+        return _FakeDialogueTurnOutput(reply_text=self.reply_text, needs_llm_fallback=self.needs_llm_fallback)
 
 
 # ---------------------------------------------------------------------------
@@ -267,3 +273,61 @@ class TestHandleTurnScriptedPath:
 
         engine._llm.generate_stream.assert_awaited_once()  # type: ignore[attr-defined]
         assert clauses == []
+
+
+# ---------------------------------------------------------------------------
+# handle_turn() — real per-turn LLM fallback (Call-002 readiness)
+# ---------------------------------------------------------------------------
+
+
+class TestHandleTurnLLMFallback:
+    """DialogueTurnOutput.needs_llm_fallback=True routes THAT turn through
+    the real LLM streaming path even though dialogue_response is wired —
+    the live trigger condition for the approved plan's "LLM as fallback"
+    intent, not merely "dialogue_response is unwired at construction time"
+    (see TestHandleTurnScriptedPath, which covers that whole-engine case)."""
+
+    @pytest.mark.asyncio
+    async def test_needs_llm_fallback_routes_to_real_llm_path_not_scripted_reply(self) -> None:
+        from src.libs.contracts.streaming import TokenChunk
+
+        dialogue_response = _FakeDialogueResponse(
+            reply_text="Sir, आपके account पर 50,000 outstanding है — कब तक payment कर सकते हैं?",
+            needs_llm_fallback=True,
+        )
+
+        async def _llm_stream() -> AsyncIterator[TokenChunk]:
+            yield TokenChunk(text="Yeh ek LLM-generated reply hai.", token_id=0, finish_reason="stop")
+
+        llm = MagicMock()
+        llm.generate_stream = AsyncMock(return_value=_llm_stream())
+        tts = _FakeTTS()
+        engine = _make_engine(dialogue_response=dialogue_response, llm_service=llm, tts_service=tts)
+        _stub_cil(engine)
+        playback = PlaybackScheduler()
+
+        clauses = await engine.handle_turn(_make_turn(), playback, context=_make_context())
+
+        llm.generate_stream.assert_awaited_once()
+        assert len(clauses) >= 1
+        assert "LLM-generated" in tts.received_texts[0]
+        assert "outstanding" not in tts.received_texts[0]  # the scripted backstop text was NOT spoken
+
+    @pytest.mark.asyncio
+    async def test_no_fallback_flag_uses_scripted_reply_and_skips_llm(self) -> None:
+        dialogue_response = _FakeDialogueResponse(
+            reply_text="Sir, aapka payment kab tak ho jaayega?",
+            needs_llm_fallback=False,
+        )
+        llm = MagicMock()
+        llm.generate_stream = AsyncMock()
+        tts = _FakeTTS()
+        engine = _make_engine(dialogue_response=dialogue_response, llm_service=llm, tts_service=tts)
+        _stub_cil(engine)
+        playback = PlaybackScheduler()
+
+        clauses = await engine.handle_turn(_make_turn(), playback, context=_make_context())
+
+        llm.generate_stream.assert_not_awaited()
+        assert len(clauses) >= 1
+        assert "payment kab tak" in tts.received_texts[0]
