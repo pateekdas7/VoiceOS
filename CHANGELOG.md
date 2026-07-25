@@ -103,39 +103,79 @@ regex-based parser verbatim:
 **Phase 6 total: 113 new tests. Full regression after 6g: 2194 passed / 73 skipped, 0 failed
 (unit+e2e+integration); `check_boundaries.py` clean throughout every sub-phase.**
 
-### Phase 7 — Full pipeline validation (IN PROGRESS — GPU connectivity blocked)
+### Phase 7 — Full pipeline validation — ✅ PASSED (after diagnosing and fixing two real infra/code defects)
 
 `scripts/path_a_phase7_dry_run.py` (new): drives a real multi-turn scripted conversation through the real
 composition root — real GPU-backed TTS, real Postgres (with FK-satisfying synthetic customer/loan rows
 provisioned and cleaned up around the run), real `DialogueResponseEngine` FSM reading real
-`ResponsePlanningEngine` output. Confirmed working through composition-root construction, Postgres row
-provisioning, and greeting generation (`DialogueResponseEngine.build_greeting()` correctly produced
-"नमस्ते sir, मैं Rajat Finance से Kavya बात कर रही हूँ ... क्या मेरी बात Anjali Verma से हो रही है?" for a
-synthetic customer) — then hit `httpx.ConnectTimeout` reaching the GPU node for TTS synthesis.
+`ResponsePlanningEngine` output. First attempt hit `httpx.ConnectTimeout` reaching the GPU node for TTS
+synthesis (composition-root construction, Postgres provisioning, and greeting generation had already
+succeeded by then). Two real, independent problems were found and fixed before Phase 7 passed:
 
-Diagnosed, not worked around: the GPU node's own `voiceos-{stt,llm,tts}` services were confirmed `active`
-and correctly bound to `0.0.0.0` (not localhost-only) via direct SSH to the GPU node. A `tcpdump` capture
-on the GPU node's own NIC, filtered for inbound SYN on port 8200 during connection attempts from two
-independent external IPs, captured **zero packets** — proof the block is enforced at the cloud provider's
-network edge, upstream of anything on the VM, not by the GPU node's OS firewall (already confirmed
-permissive) or the application. A subsequent provider-side security-group change opened 8400–8700 instead
-of the actual service ports (8000/8100/8200/8300); after that mismatch was reported, the GPU node became
-unreachable on **all** ports including SSH (22), which had been reachable earlier the same session — per
-explicit user direction, further GPU-side live validation was deferred rather than worked around via SSH
-tunneling or cross-host key copying (a standing constraint from Phase 3).
+**1. Cloud network — Path MTU black-hole (not a security-group block).** The GPU node's own
+`voiceos-{stt,llm,tts}` services were confirmed `active` and correctly bound to `0.0.0.0`. A `tcpdump`
+capture on the GPU node's own NIC, filtered for inbound SYN on port 8200, initially captured zero packets
+from two independent external IPs — the provider's security group. After the user corrected the
+security-group rule (and the GPU node briefly became fully unreachable including SSH mid-session,
+separately resolved), TCP connections to all four ports succeeded, but requests requiring a real streamed
+response — TTS synthesis, a real LLM completion — hung indefinitely after an initial `HTTP 200` with zero
+body bytes ever arriving, even with a 5-minute client timeout, while same-host (GPU node → itself) and
+small/instant cross-host responses (health checks) worked fine. This is the textbook signature of a Path
+MTU black-hole: small packets traverse the path fine, but a sustained run of full-size packets is silently
+dropped, most commonly because an intermediate hop has a smaller MTU and ICMP "fragmentation needed" is
+being filtered. **Fixed via client-side TCP MSS clamping** on the CPU node
+(`iptables -t mangle -A OUTPUT -p tcp -d <gpu-host> --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1360`) —
+confirmed via direct `curl`: TTS synthesis of the actual greeting text went from "hangs forever, 0 bytes"
+to "18.6s, 743KB of real audio"; a real LLM completion went from timing out to 4.1s. **This rule is not
+persisted across a CPU node reboot** (no `iptables-persistent`/`netfilter-persistent` installed) — a
+future session must re-apply it (or install a persistence mechanism) if the CPU node restarts and GPU
+calls start hanging again with this exact "connects fine, response never arrives" signature. Root-cause
+finding: **this is the first code path in this project's history to ever exercise sustained CPU→GPU
+streaming traffic for real inference payloads** — Call-001 (see below) never touched this network path at
+all, which is precisely why this black-hole was never discovered before now.
 
-**What Phase 7 has NOT yet independently re-verified because of this:** real GPU TTS synthesis and real
-Postgres PTP persistence specifically through the *new* Phase 6g scripted-reply code path end to end in
-one continuous run. (Both were separately verified against real infra in Phase 3/4's own STT/TTS adapter
-validation and Phase 5's PTP persistence validation, using the pre-Phase-6 LLM path — not a Phase 6 gap,
-but not yet re-confirmed with the scripted path specifically.) The Qwen2.5-Omni founder-validation
-evaluator (Sprint-029) that scored Call-001 was also confirmed not running as a persistent service this
-session — standing it back up was judged out of Phase 7's scope (validating the new Phase 6 wiring, not
-re-provisioning an unrelated evaluation stack).
+**2. Code — PlaybackScheduler queue never drained, an RI-3 crash waiting to happen on any real call.**
+Once TTS worked, the dry run surfaced `InvariantViolationError: [RI-3] Queue 'playback_scheduler' is at
+capacity: depth=512 >= max_depth=512` a few turns in. Root cause: `TrueStreamingPipeline` enqueues every
+synthesised `AudioClause` into `PlaybackScheduler` (for barge-in tracking), but `CallOrchestrator.
+_send_clauses()` (Phase 4) sent clauses to the caller straight from `ConversationEngine`'s return value,
+never dequeuing from the scheduler it was also being populated into. Queue depth grew monotonically across
+every turn with no ceiling but RI-3's bound (max_depth=512, ~43s of cumulative 85.33ms audio chunks) —
+meaning **any real call whose total AI speech across all turns exceeded ~43 seconds would have crashed
+outright**, a defect pre-existing since Phase 4 and never caught because no prior test drove enough
+turns/clause volume to reach the bound. Fixed: `PlaybackScheduler` gained `dequeue_nowait()` (non-blocking
+pop, `None` on empty — required because a blocking `dequeue()` would hang the existing mocked-engine test
+suite, whose canned clause lists were never actually enqueued into a real scheduler);
+`CallOrchestrator._send_clauses()` now calls it once per clause sent. New regression test drives 20 turns
+× 30 clauses (600 total, past the 512 bound) and asserts the queue empties after every turn. 4 new tests;
+full regression 2197 passed / 73 skipped / 0 failed; `check_boundaries.py` clean.
+
+**Phase 7 dry-run result (after both fixes):** greeting + 5 scripted turns, all real — real GPU TTS
+(Veena), real `AIGovernanceService`/`OutputValidator` gates, real `DialogueResponseEngine` FSM routing
+(identity confirm → amount query → hardship/empathy-composed reply → offer → ack), zero exceptions, 67.6s
+/ 3,247,040 bytes of real synthesized audio written to WAV, Postgres FK rows provisioned and cleaned up
+correctly. No PTP was persisted this particular run (the scripted "5000 monthly de dunga" turn didn't
+route to the `GIVES_AMOUNT` bucket the way an isolated unit-test fixture assumed — worth a follow-up look
+at real-pipeline `EntityExtractor` AMOUNT-phrase coverage vs. the synthetic fixtures Phase 6f's own unit
+tests used; not a crash, not a governance bypass, filed as a follow-up rather than blocking Phase 7).
+
+**Why Call-001 never hit this MTU black-hole (verified in `conv_server.py`'s own code, per explicit
+request):** Call-001 ran an entirely different, CPU-node-free architecture. `LLM_URL` defaults to
+`http://localhost:8000/...` — `conv_server.py` itself ran directly **on the GPU node**
+(`uvicorn.run(app, host="0.0.0.0", port=8400)`), calling the LLM via same-host loopback. STT was never our
+Whisper service — it used Twilio's own native `<Gather input="speech dtmf">` recognition. TTS was never
+our Veena service — it used Twilio's `<Say voice="Polly.Kajal-Neural">` (Amazon Polly via Twilio). The CPU
+node, `WhisperHTTPAdapter`, and `VeenaAdapter` were never part of Call-001's path at all, so there was no
+CPU→GPU streaming traffic to black-hole. The pipeline built this session is the first to ever attempt it.
+
+The Qwen2.5-Omni founder-validation evaluator (Sprint-029) that scored Call-001 was confirmed not running
+as a persistent service this session — standing it back up was judged out of Phase 7's scope (validating
+the new Phase 6 wiring end to end, not re-provisioning an unrelated evaluation stack). The WAV this script
+produces can be fed to `evaluate_trial.py` by hand once/if that service is restarted.
 
 **Not yet done:** Phase 8 (retire `conv_server.py`, confirm no traffic can reach it, update tracking docs
-to name `ConversationEngine` as the sole production path) — blocked on Phase 7 passing per the approved
-plan. **Call-002 has not been proposed** and remains explicitly pending founder/user authorization.
+to name `ConversationEngine` as the sole production path). **Call-002 has not been proposed** and remains
+explicitly pending founder/user authorization.
 
 ---
 

@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import tempfile
 import sys
 import uuid
 import wave
@@ -173,6 +174,14 @@ async def main() -> None:
     for c in clauses:
         all_audio.extend(c.audio_data)
         sample_rate = c.sample_rate
+    # Mirrors what CallOrchestrator._send_clauses() does in the real WS
+    # entrypoint (Phase 7 found this was previously missing there too, see
+    # the twilio_ws_entrypoint.py fix in this same commit series): drain
+    # exactly what TrueStreamingPipeline enqueued into `playback` for this
+    # turn's clauses, so the queue doesn't accumulate across turns and hit
+    # RI-3's bounded-queue guard.
+    for _ in clauses:
+        playback.dequeue_nowait()
     print(f"      OK — {len(clauses)} audio clause(s), {sum(len(c.audio_data) for c in clauses)} bytes")
 
     script = [
@@ -190,17 +199,31 @@ async def main() -> None:
             turn = _turn(transcript, i)
             clauses = await engine.handle_turn(turn, playback, context=context)
             assert clauses, f"turn {i} produced zero audio clauses"
-            reply_text = " ".join(c.text for c in clauses)
+            # clause_index is actually a per-audio-*chunk* counter (every
+            # ~85ms PCM chunk gets its own, monotonically increasing —
+            # see VeenaAdapter._stream_clause), not a per-text-clause one;
+            # every chunk belonging to the same text clause carries that
+            # clause's full text. Dedupe by collapsing consecutive repeats
+            # of the same text instead of by index.
+            reply_parts: list[str] = []
+            for c in clauses:
+                if not reply_parts or reply_parts[-1] != c.text:
+                    reply_parts.append(c.text)
+            reply_text = " ".join(reply_parts)
             print(f"          Kavya: {reply_text}")
             for c in clauses:
                 all_audio.extend(c.audio_data)
                 sample_rate = c.sample_rate
+            for _ in clauses:
+                playback.dequeue_nowait()
             session = engine.get_session_state(CALL_ID)
             assert session is not None, f"no session state tracked after turn {i}"
 
         print("\n[4/4] Writing dry-run audio + checking Postgres for a persisted commitment...")
-        out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", f"{CALL_ID}.wav")
-        out_path = os.path.abspath(out_path)
+        # tempfile.gettempdir() rather than the repo tree: this script may run
+        # as a different OS user than owns the repo checkout (e.g. `postgres`,
+        # for Unix-socket peer auth), which lacks write permission there.
+        out_path = os.path.join(tempfile.gettempdir(), f"{CALL_ID}.wav")
         with wave.open(out_path, "wb") as wf:
             wf.setnchannels(1)
             wf.setsampwidth(2)

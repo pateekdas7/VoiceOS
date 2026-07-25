@@ -1,15 +1,15 @@
 # VoiceOS v2 — Completed Sprints
 
 **Last Updated:** 2026-07-25  
-**Completed Sprints:** 27 / 34 complete (Sprint-028 PARTIAL — see below); Sprint-029 Phase 1 complete, Phase 2 Call-001 PASSED — **Milestone M-6 (SaaS Platform Complete) reached; Epic E6 (SaaS Platform) closed; Epic E7 (Production Alpha) in progress; M-7 NOT yet achieved. Path-A Runtime Consolidation Phases 1-6 complete 2026-07-25 (pre-Call-002 gate) — Phase 7 blocked on GPU connectivity, Phase 8/Call-002 not started — see entry below.**
+**Completed Sprints:** 27 / 34 complete (Sprint-028 PARTIAL — see below); Sprint-029 Phase 1 complete, Phase 2 Call-001 PASSED — **Milestone M-6 (SaaS Platform Complete) reached; Epic E6 (SaaS Platform) closed; Epic E7 (Production Alpha) in progress; M-7 NOT yet achieved. Path-A Runtime Consolidation Phases 1-7 complete 2026-07-25 (pre-Call-002 gate, real GPU/Postgres dry-run PASSED) — Phase 8/Call-002 in progress — see entry below.**
 
 ---
 
 ## Completed Sprint Log
 
-## Path-A Runtime Consolidation — Phases 1-6 (pre-Call-002 gate)
+## Path-A Runtime Consolidation — Phases 1-7 (pre-Call-002 gate)
 
-**Completed:** 2026-07-25 (Phases 1-6; Phase 7 in progress, Phase 8 not started)
+**Completed:** 2026-07-25 (Phases 1-7; Phase 8 in progress)
 **Epic:** E8 — Founder Validation (Sprint-029), pre-Call-002 gate
 **Trigger:** explicit user directive to verify the runtime reflects the intended production architecture
 before preparing Call-002 — not a numbered sprint, but full-weight implementation work gated the same way.
@@ -53,35 +53,47 @@ including a deterministic template/FSM golden path with no equivalent anywhere i
 - Composition-root `--smoke-test`: PASS against real Postgres (peer auth) + real password-authenticated
   Redis + GPU_NODE_HOST wired
 
-### Phase 7 — Blocked, Not Yet Complete
+### Phase 7 — COMPLETE
 
-`scripts/path_a_phase7_dry_run.py` confirmed the composition root, Postgres FK provisioning, and
-greeting-text generation (`DialogueResponseEngine.build_greeting()`) all work correctly against real
-infrastructure, then hit a GPU TTS connection timeout. Root-caused with a `tcpdump` capture on the GPU
-node's own NIC — zero inbound SYN packets arrived from two independent external IPs during the outage,
-despite the GPU node's `voiceos-{stt,llm,tts}` services being independently confirmed `active` and bound
-to `0.0.0.0` moments before — proving the block is enforced at the cloud provider's network edge, not by
-anything on the VM. The GPU node subsequently became unreachable on all ports including SSH. Per explicit
-user direction, further live GPU validation is deferred; not worked around via SSH tunneling or
-cross-host key copying.
+`scripts/path_a_phase7_dry_run.py` ran a real greeting + 5-turn conversation end to end through real GPU
+TTS, real AIGovernanceService/OutputValidator gates, and real Postgres — zero exceptions, 67.6s of real
+synthesized audio. Getting there required diagnosing and fixing two real, independent defects:
+
+1. **Path MTU black-hole on the CPU→GPU network path.** TCP connected fine and returned HTTP 200, but
+   sustained streamed responses (TTS synthesis, a real LLM completion) never delivered any body bytes even
+   after a 5-minute timeout, while same-host and small/instant cross-host responses worked. Root-caused via
+   `tcpdump` and direct comparison, not guessed at. This is the first code path in this project's history
+   to ever exercise sustained CPU→GPU streaming inference traffic — verified in `conv_server.py`'s own code
+   that Call-001 ran entirely on the GPU node itself (`LLM_URL` defaults to `localhost:8000`; `uvicorn.run
+   (host="0.0.0.0", port=8400)`) using Twilio-native `<Gather>`/`<Say>` for STT/TTS, never touching the CPU
+   node or our Whisper/Veena services at all — so this black-hole could not have manifested before now.
+   Fixed via client-side TCP MSS clamping on the CPU node (not yet persisted across a reboot).
+2. **A real pre-existing RI-3 crash risk in `CallOrchestrator`.** `PlaybackScheduler`'s queue was populated
+   by `TrueStreamingPipeline` every turn but never drained — any real call with >~43s of cumulative AI
+   speech would have crashed outright with `InvariantViolationError`. Pre-existing since Phase 4; never
+   caught because no prior test drove enough turns to reach the 512-clause bound. Fixed with a new
+   non-blocking `PlaybackScheduler.dequeue_nowait()` + draining it in `_send_clauses()`. 4 new regression
+   tests (20 turns × 30 clauses, well past the bound).
 
 ### Definition of Done
 
-- [x] Phases 1-6 acceptance criteria met (real infra validation where applicable)
-- [x] All new tests passing; full regression green
+- [x] Phases 1-7 acceptance criteria met (real infra validation throughout)
+- [x] All new tests passing; full regression green (2197 passed / 73 skipped / 0 failed)
 - [x] CHANGELOG.md updated
 - [x] CURRENT_SPRINT.md updated
 - [x] PROJECT_STATUS.md updated
-- [ ] Phase 7 (full pipeline dry-run) — blocked on GPU node connectivity
-- [ ] Phase 8 (retire `conv_server.py`) — not started, blocked on Phase 7
-- [ ] Call-002 — not proposed, blocked on Phase 7/8
+- [x] Phase 7 (full pipeline dry-run) — PASSED against real GPU/Postgres infra
+- [ ] Phase 8 (retire `conv_server.py`) — in progress
+- [ ] Call-002 — not proposed, blocked on Phase 8
 
 ### Notes
 
 Not a numbered sprint — this work sits inside Sprint-029 Phase 2 as an explicit pre-Call-002 gate the
 user required after the architecture audit. `implementation/BACKLOG.md` should get a tracked ticket for
-Phase 7's GPU connectivity blocker if it isn't resolved by the next session (same operational pattern as
-the project's recurring GPU-node-address churn documented across `deployment/GPU_NODE_STATE.md`).
+the TCP MSS clamp fix's lack of persistence across a CPU node reboot (`iptables -t mangle -A OUTPUT -p tcp
+-d 62.169.159.20 --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1360` — re-apply, or install
+`iptables-persistent`, if GPU calls start hanging again with the "connects fine, response never arrives"
+signature after a restart).
 
 ---
 
