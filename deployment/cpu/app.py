@@ -455,7 +455,7 @@ def build_shared_call_dependencies() -> object:
         # actually signed. e.g. "wss://random-words.trycloudflare.com".
         public_ws_base_url=_env("PUBLIC_WS_BASE_URL", ""),
         recording_dir=_env("CALL_RECORDING_DIR", ""),
-        greeting_timeout_s=float(_env("GREETING_TIMEOUT_S", "15.0")),
+        greeting_timeout_s=float(_env("GREETING_TIMEOUT_S", "60.0")),
     )
 
 

@@ -112,7 +112,7 @@ class SharedCallDependencies:
     call start, before the customer's first turn. True by default; a caller
     that already spoke a greeting through some other channel (e.g. TwiML
     <Say> before <Connect><Stream>) can set this False to avoid a duplicate."""
-    greeting_timeout_s: float = 15.0
+    greeting_timeout_s: float = 60.0
     """Upper bound on how long the call-open greeting (which calls out to
     the GPU TTS service) may take before CallOrchestrator.run() gives up on
     it and proceeds to the turn-processing pipeline anyway. Found via a
@@ -366,7 +366,16 @@ class CallOrchestrator:
             return
 
         stt_start = time.monotonic()
-        word_stream: AsyncIterator[WordHypothesis] = self._deps.stt_service.transcribe_stream(
+        # STTService.transcribe_stream() is an `async def` that RETURNS the
+        # async generator (it does `return await self._adapter
+        # .transcribe_stream(...)`), so it must be awaited to get an object
+        # `async for` can iterate -- without the await this is a bare
+        # coroutine and the turn loop dies with "'async for' requires an
+        # object with __aiter__ method, got coroutine". Found via a live
+        # Call-002 trial; unit tests missed it because they patch
+        # transcribe_stream with a plain lambda returning an async generator
+        # directly, which is iterable without awaiting.
+        word_stream: AsyncIterator[WordHypothesis] = await self._deps.stt_service.transcribe_stream(
             _queue_to_frame_gen(queue), language=self._deps.language
         )
         turn = await self._dialogue_manager.ingest_stream(word_stream)
@@ -434,15 +443,26 @@ class CallOrchestrator:
         self._vad.set_playback_active(True, playback_seq=self._turn_index)
         try:
             for clause in clauses:
-                if self._recorder is not None:
-                    self._recorder.add_outbound_audio(clause.audio_data, clause.sample_rate)
-                pcm_ulaw = self._audio_output.convert(clause, fmt="ulaw")
-                self._out_seq += 1
-                out_frame = _clause_to_mulaw_frame(pcm_ulaw, seq=self._out_seq, rtp_ts=self._out_seq * 160)
-                await self._adapter.send_frame(out_frame)
+                await self._send_clause(clause)
                 self._playback.dequeue_nowait()
         finally:
             self._vad.set_playback_active(False)
+
+    async def _send_clause(self, clause: Any) -> None:
+        """Convert one AudioClause to a mu-law Twilio frame and send it.
+
+        Does NOT touch the PlaybackScheduler queue -- callers own that,
+        because the two callers differ: _send_clauses() receives clauses
+        directly from ConversationEngine's return value and drains one
+        queue entry per clause afterward, while _speak_greeting() takes its
+        clauses *out* of the queue itself as they stream in.
+        """
+        if self._recorder is not None:
+            self._recorder.add_outbound_audio(clause.audio_data, clause.sample_rate)
+        pcm_ulaw = self._audio_output.convert(clause, fmt="ulaw")
+        self._out_seq += 1
+        out_frame = _clause_to_mulaw_frame(pcm_ulaw, seq=self._out_seq, rtp_ts=self._out_seq * 160)
+        await self._adapter.send_frame(out_frame)
 
     # ------------------------------------------------------------------
     # Task C — outbound pump: adapter's queued Twilio JSON -> real WebSocket
@@ -482,8 +502,32 @@ class CallOrchestrator:
             return
         if self._recorder is not None:
             self._recorder.event("greeting", text=greeting, call_time_ms=self._call_time_ms())
-        clauses = await self._deps.conversation_engine.speak_scripted_text(greeting, self._playback)
-        await self._send_clauses(clauses)
+
+        # Stream the greeting out as TrueStreamingPipeline synthesises it,
+        # rather than awaiting the whole list first. Measured on the real GPU:
+        # the greeting takes ~19s to synthesise in full (131 clauses / ~15s of
+        # audio), so buffering it meant ~19s of dead air before the customer
+        # heard anything -- long enough that a real person hangs up, and long
+        # enough that it tripped the greeting timeout entirely. The pipeline
+        # already enqueues each clause into self._playback as it produces it,
+        # so draining that queue concurrently gets first audio out in
+        # roughly first-clause latency instead of full-utterance latency.
+        import asyncio
+
+        synth_task = asyncio.create_task(
+            self._deps.conversation_engine.speak_scripted_text(greeting, self._playback)
+        )
+        self._vad.set_playback_active(True, playback_seq=self._turn_index)
+        try:
+            while not synth_task.done() or self._playback.depth > 0:
+                clause = self._playback.dequeue_nowait()
+                if clause is None:
+                    await asyncio.sleep(0.005)
+                    continue
+                await self._send_clause(clause)
+        finally:
+            self._vad.set_playback_active(False)
+        await synth_task  # surface any synthesis exception
 
     async def run(self, websocket: WebSocket) -> None:
         import asyncio
