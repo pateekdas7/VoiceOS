@@ -228,6 +228,14 @@ class NegotiationEnvelope(BaseModel):
     """Proposed commitment/payment date for ACCEPT and PROPOSE_PTP moves. None for
     moves that don't finalize a specific date (OFFER/COUNTER/DECLINE/HOLD)."""
 
+    is_finalized_commitment: bool = False
+    """True only for the engine-level NegotiationMove.ACCEPT/PROPOSE_PTP moves —
+    a customer commitment ready for Collections persistence. Deliberately NOT
+    derived from move_type: NegotiationMoveType collapses ACCEPT/COUNTER/OFFER/
+    DECLINE into overlapping contract categories (e.g. both HOLD and
+    PROPOSE_PTP map to CALLBACK_SCHEDULE), so move_type alone cannot
+    distinguish a finalized commitment from an in-progress negotiation move."""
+
 
 class DeliverySpec(BaseModel):
     """How the response should be delivered: language, voice, pacing.

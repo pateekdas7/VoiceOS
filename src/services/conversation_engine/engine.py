@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
 from src.libs.ai_safety.prompt_injection import PromptInjectionDetector
@@ -43,6 +44,11 @@ from src.services.ai_config.model_config import ModelConfigService
 from src.services.ai_config.prompt_versioning import PromptVersioningService
 from src.services.ai_governance.service import AIGovernanceService
 from src.services.campaign_management.service import CampaignPromptNotPinnedError
+from src.services.collections.promise_to_pay import (
+    PolicyDeniedError,
+    PromiseToPayService,
+    PTPValidationError,
+)
 from src.services.contact_center.live_transfer import TransferResult
 from src.services.contact_center.service import ContactCenterService
 from src.services.conversation_quality.scorer import ConversationQualityScorer
@@ -184,6 +190,14 @@ class ConversationEngine:
         structured_logger: StructuredLogger for JSON turn-completion logs
             (Sprint-016; no-op if None).
         tracer: OTelTracer opening a span per turn (Sprint-016; no-op if None).
+        promise_to_pay_service: PromiseToPayService (Path-A Phase 5). Optional
+            — None preserves the pre-Phase-5 behavior of computing but never
+            persisting a negotiated commitment. When wired, a turn whose
+            ResponsePlan.negotiation_envelope.is_finalized_commitment is True
+            triggers a synchronous, idempotent PTP creation immediately after
+            the RI-4 DecisionEnvelope commit and before any LLM/TTS output —
+            the durable commitment is recorded before the agent ever speaks a
+            confirmation of it.
     """
 
     def __init__(
@@ -211,6 +225,7 @@ class ConversationEngine:
         contact_center_service: ContactCenterService | None = None,
         model_config_service: ModelConfigService | None = None,
         prompt_versioning_service: PromptVersioningService | None = None,
+        promise_to_pay_service: PromiseToPayService | None = None,
     ) -> None:
         self._cil = cil
         self._prompt_builder = prompt_builder
@@ -277,6 +292,12 @@ class ConversationEngine:
         # returns an all-None RuntimeConfig when unwired).
         self._model_config_service = model_config_service
         self._prompt_versioning_service = prompt_versioning_service
+
+        # Path-A Phase 5 (V5 Ch4.3): Collections persistence for a finalized
+        # negotiation commitment. Optional — None preserves pre-Phase-5
+        # behavior (negotiation moves are computed and spoken but never
+        # durably recorded — the exact gap the architecture audit found).
+        self._promise_to_pay_service = promise_to_pay_service
 
     def start_call(
         self, tenant_id: TenantId, customer_id: str, call_id: str, campaign_id: str | None = None
@@ -529,6 +550,11 @@ class ConversationEngine:
             action_name="tts_synthesis",
         )
 
+        # Step 4.5 — Path-A Phase 5 (V5 Ch4.3): persist a finalized negotiation
+        # commitment (RI-4: durably recorded before the agent ever speaks a
+        # confirmation of it, i.e. before Step 5's LLM/TTS).
+        await self._persist_finalized_commitment(turn, context, response_plan)
+
         # Sprint-015: track this call's Recoverable session state and take a
         # periodic snapshot (every `snapshot_every_n_turns` turns — V3 Ch6).
         # `entry_id` is the real EventBus stream offset (not decision_envelope's
@@ -592,6 +618,81 @@ class ConversationEngine:
                 plan_id=response_plan.plan_id,
             )
         return all_clauses
+
+    async def _persist_finalized_commitment(
+        self,
+        turn: TurnInput,
+        context: CustomerContext | None,
+        response_plan: ResponsePlan,
+    ) -> None:
+        """Persist a finalized negotiation commitment to Collections (V5 Ch4.3).
+
+        No-op unless every one of the following holds: a promise_to_pay_service
+        was wired, the ResponsePlan carries a negotiation_envelope, that
+        envelope's is_finalized_commitment is True (engine-level
+        NegotiationMove.ACCEPT/PROPOSE_PTP — see response_planning/engine.py),
+        and enough authoritative data is available (CustomerContext with a
+        primary_loan, a proposed amount, a proposed date) to construct a valid
+        PTP. Missing data logs a warning and skips persistence rather than
+        raising — a turn should not crash outright over an unpersisted
+        commitment; the gap is surfaced in logs for operator follow-up.
+
+        A PTPValidationError/PolicyDeniedError from the service itself
+        (invalid amount/date, or a live policy denial) is also caught and
+        logged rather than propagated — deciding what the agent should say
+        differently when a commitment can't be recorded is a persona/dialogue
+        concern (Phase 6), not this transport-and-plumbing layer's job.
+        PromiseToPayService.create() is idempotent by construction
+        (IdempotencyGuard + a DB-level unique constraint on the same key), so
+        a retried turn never double-creates a PTP.
+        """
+        if self._promise_to_pay_service is None:
+            return
+        envelope = response_plan.negotiation_envelope
+        if envelope is None or not envelope.is_finalized_commitment:
+            return
+        if context is None or context.primary_loan is None:
+            logger.warning(
+                "Finalized commitment on call %s cannot be persisted — no CustomerContext/primary_loan available",
+                turn.call_id,
+            )
+            return
+        if envelope.proposed_amount_minor is None or envelope.proposed_date is None:
+            logger.warning(
+                "Finalized commitment on call %s cannot be persisted — missing proposed_amount_minor/proposed_date",
+                turn.call_id,
+            )
+            return
+
+        promise_date = datetime.combine(envelope.proposed_date, datetime.min.time())
+        currency = context.primary_loan.outstanding_balance.currency.value
+
+        try:
+            ptp = await self._promise_to_pay_service.create(
+                tenant_id=TenantId(turn.tenant_id),
+                call_id=CallId(turn.call_id),
+                customer_id=context.customer_id,
+                loan_account_id=str(context.primary_loan.account_id),
+                promised_amount_minor=envelope.proposed_amount_minor,
+                currency=currency,
+                promise_date=promise_date,
+            )
+        except (PTPValidationError, PolicyDeniedError) as exc:
+            logger.warning(
+                "PromiseToPayService rejected finalized commitment on call %s: %s",
+                turn.call_id,
+                exc,
+            )
+            return
+
+        logger.info(
+            "Persisted PTP %s for call %s (%s minor %s by %s)",
+            ptp.ptp_id,
+            turn.call_id,
+            envelope.proposed_amount_minor,
+            currency,
+            envelope.proposed_date,
+        )
 
     def check_call_admission(
         self,

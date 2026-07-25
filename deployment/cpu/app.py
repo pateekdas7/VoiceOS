@@ -31,7 +31,10 @@ ConversationEngine build_conversation_engine() produces) — serve() binds
 this to a real uvicorn process, making this composition root's output
 reachable by a real Twilio phone call for the first time.
 
-Does not yet persist negotiated commitments to Collections (Phase 5).
+Phase 5 addition: build_conversation_engine() now wires a
+PromiseToPayService into ConversationEngine — a finalized negotiation
+commitment (ACCEPT/PROPOSE_PTP) is persisted to Collections, not just
+computed and spoken.
 
 Usage:
     python deployment/cpu/app.py --smoke-test
@@ -350,6 +353,15 @@ def build_conversation_engine() -> object:
         policy_engine_service=policy_engine_service,
         context_assembler=build_customer_context_assembler(conn),
         structured_logger=StructuredLogger("voiceos-cpu-app"),
+        # Path-A Phase 5: a finalized negotiation commitment (ACCEPT/
+        # PROPOSE_PTP) is now durably persisted to Collections — reuses the
+        # same idempotency_guard/policy_engine_service instances constructed
+        # above, on a fresh Postgres connection (a repository connection
+        # should not be shared with one already handed to other repositories
+        # constructed on `conn` above, to keep transaction boundaries clean).
+        promise_to_pay_service=build_promise_to_pay_service(
+            build_postgres_connection(), idempotency_guard, policy_engine_service
+        ),
     )
     return engine
 
@@ -440,8 +452,10 @@ def smoke_test() -> None:
     assert engine is not None
     logger.info("OK — ConversationEngine constructed with every real dependency wired.")
 
-    # Also verify the standalone Collections/CRM persistence path Phase 5
-    # will call, since it's not yet reachable through ConversationEngine.
+    # Standalone construction check — build_conversation_engine() above
+    # already wires an equivalent instance into ConversationEngine itself
+    # (Phase 5); this just double-checks the builder function works in
+    # isolation on its own fresh connection too.
     conn = build_postgres_connection()
     raw_redis = build_raw_redis_client()
     ptp_service = build_promise_to_pay_service(
@@ -450,7 +464,7 @@ def smoke_test() -> None:
         build_policy_engine_service(conn, raw_redis),
     )
     assert ptp_service is not None
-    logger.info("OK — PromiseToPayService constructed (not yet wired into ConversationEngine — Phase 5).")
+    logger.info("OK — PromiseToPayService constructed and wired into ConversationEngine (Path-A Phase 5).")
 
     deps = build_shared_call_dependencies()
     assert deps is not None

@@ -160,6 +160,9 @@ def _convert_policy_constraints(
     return tuple(result)
 
 
+_FINALIZED_COMMITMENT_MOVES = frozenset({NegotiationMove.ACCEPT, NegotiationMove.PROPOSE_PTP})
+
+
 def _convert_negotiation_envelope(
     eng_env: EngineNegotiationEnvelope,
     move: NegotiationMove,
@@ -172,6 +175,7 @@ def _convert_negotiation_envelope(
         move_type=_NEG_MOVE_TO_CONTRACT.get(move, NegotiationMoveType.PARTIAL_PAYMENT),
         proposed_amount_minor=proposed_minor,
         proposed_date=proposed_date,
+        is_finalized_commitment=move in _FINALIZED_COMMITMENT_MOVES,
     )
 
 
