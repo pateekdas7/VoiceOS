@@ -278,3 +278,55 @@ async def test_speak_greeting_synthesizes_and_sends_when_wired() -> None:
     orch._deps.conversation_engine.speak_scripted_text.assert_awaited_once()
     assert orch._deps.conversation_engine.speak_scripted_text.call_args.args[0] == "Namaste sir, main Kavya bol rahi hoon."
     orch._adapter.send_frame.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_run_does_not_hang_forever_when_greeting_tts_call_hangs() -> None:
+    """Regression test for a real bug found by a live Call-002 trial: when
+    the GPU node was unreachable, _speak_greeting()'s TTS call hung
+    indefinitely, and since it previously ran *before* run()'s try/finally
+    with no timeout, the whole call hung forever, the turn-processing
+    pipeline never started (the customer got no response to anything they
+    said), and cleanup (media_gateway_service.release_adapter()) never ran.
+
+    Simulates the hang with an AsyncMock that sleeps far longer than
+    greeting_timeout_s, and asserts run() moves on well before that full
+    duration and still performs cleanup once cancelled from outside (the
+    turn-processing loop itself blocks forever on real customer audio in
+    this fake setup, same as it always does until the adapter's inbound
+    stream ends -- this test only needs to prove the greeting no longer
+    blocks that loop from ever starting)."""
+    import asyncio
+    import time
+
+    orch = _make_orchestrator()
+    orch._deps.greeting_timeout_s = 0.05
+    orch._deps.conversation_engine.build_greeting = MagicMock(return_value="Namaste sir...")
+
+    async def _hang_forever(*_a: object, **_kw: object) -> list[AudioClause]:
+        await asyncio.sleep(10.0)
+        return []
+
+    orch._deps.conversation_engine.speak_scripted_text = AsyncMock(side_effect=_hang_forever)
+    orch._deps.media_gateway_service.release_adapter = AsyncMock()
+
+    async def _empty_frames() -> AsyncIterator[AudioFrame]:
+        return
+        yield  # pragma: no cover — makes this an async generator
+
+    orch._adapter.receive_frame = MagicMock(return_value=_empty_frames())
+    orch._adapter.drain_outbound = MagicMock(return_value=None)
+    fake_websocket = AsyncMock()
+
+    start = time.monotonic()
+    # _pump_inbound() finishes immediately (the fake adapter's frame stream
+    # is empty) and sets self._closing -- so _run_turns()/_pump_outbound()
+    # exit their loops and run() returns normally. The outer timeout here
+    # only guards against the actual regression (the greeting hang blocking
+    # everything for the full simulated 10s).
+    await asyncio.wait_for(orch.run(fake_websocket), timeout=2.0)
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 2.0, f"greeting hang blocked run() for {elapsed:.2f}s — timeout was not honored"
+    orch._deps.conversation_engine.speak_scripted_text.assert_awaited_once()
+    orch._deps.media_gateway_service.release_adapter.assert_awaited_once()

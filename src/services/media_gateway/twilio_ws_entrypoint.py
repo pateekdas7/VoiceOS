@@ -112,6 +112,17 @@ class SharedCallDependencies:
     call start, before the customer's first turn. True by default; a caller
     that already spoke a greeting through some other channel (e.g. TwiML
     <Say> before <Connect><Stream>) can set this False to avoid a duplicate."""
+    greeting_timeout_s: float = 15.0
+    """Upper bound on how long the call-open greeting (which calls out to
+    the GPU TTS service) may take before CallOrchestrator.run() gives up on
+    it and proceeds to the turn-processing pipeline anyway. Found via a
+    live Call-002 trial: _speak_greeting() previously ran outside run()'s
+    try/finally with no timeout at all -- when the GPU node was
+    unreachable, the greeting call hung indefinitely, the turn-processing
+    tasks (which start only after the greeting returns) never even began,
+    the customer heard nothing and got no response to anything they said,
+    and cleanup (recorder.close(), adapter/session release) never ran
+    either, since the hang never reached run()'s finally block."""
     public_ws_base_url: str = ""
     """The externally-reachable base URL Twilio's <Connect><Stream url="..."/>
     actually points at (e.g. "wss://random-words.trycloudflare.com" behind a
@@ -477,18 +488,36 @@ class CallOrchestrator:
     async def run(self, websocket: WebSocket) -> None:
         import asyncio
 
-        if self._recorder is not None:
-            self._recorder.event("call_start", tenant_id=self._tenant_id)
-
-        if self._deps.speak_greeting:
-            await self._speak_greeting()
-
-        tasks = [
-            asyncio.create_task(self._pump_inbound()),
-            asyncio.create_task(self._run_turns()),
-            asyncio.create_task(self._pump_outbound(websocket)),
-        ]
+        tasks: list[asyncio.Task[None]] = []
         try:
+            if self._recorder is not None:
+                self._recorder.event("call_start", tenant_id=self._tenant_id)
+
+            if self._deps.speak_greeting:
+                try:
+                    await asyncio.wait_for(self._speak_greeting(), timeout=self._deps.greeting_timeout_s)
+                except TimeoutError:
+                    logger.error(
+                        "Call %s: greeting timed out after %.1fs (GPU TTS unreachable/slow?) — "
+                        "proceeding to turn processing without it",
+                        self._call_id,
+                        self._deps.greeting_timeout_s,
+                    )
+                    if self._recorder is not None:
+                        self._recorder.event(
+                            "greeting_timeout", timeout_s=self._deps.greeting_timeout_s,
+                            call_time_ms=self._call_time_ms(),
+                        )
+                except Exception:
+                    logger.exception("Call %s: greeting failed — proceeding to turn processing without it", self._call_id)
+                    if self._recorder is not None:
+                        self._recorder.event("greeting_error", call_time_ms=self._call_time_ms())
+
+            tasks = [
+                asyncio.create_task(self._pump_inbound()),
+                asyncio.create_task(self._run_turns()),
+                asyncio.create_task(self._pump_outbound(websocket)),
+            ]
             done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
             for task in done:
                 exc = task.exception()
