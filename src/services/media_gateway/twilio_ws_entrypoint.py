@@ -57,6 +57,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from src.libs.contracts.audio import AudioConfig, AudioFrame, Encoding, SampleRate
 from src.libs.contracts.context import CustomerContext
 from src.libs.contracts.events.audio_events import BargeinDetected, VADSpeechEnd, VADSpeechStart
+from src.libs.contracts.primitives import TenantId
 from src.libs.contracts.streaming import WordHypothesis
 from src.services.audio_preprocessing.service import AudioPreprocessorService
 from src.services.audio_session_manager.service import AudioSessionManagerService
@@ -524,11 +525,31 @@ def create_twilio_media_stream_app(deps: SharedCallDependencies) -> Starlette:
             "expected_account_sid": deps.account_sid,
         }
 
+        # Assemble the real, authoritative CustomerContext when the call was
+        # placed with a known customer_id (outbound trials — see
+        # scripts/place_call002.py — pass it as a <Stream><Parameter>; an
+        # inbound-only deployment would resolve this from ANI/DNIS lookup
+        # instead, not built here since Call-002 is outbound). Without this,
+        # every greeting/reply would address the customer with an empty
+        # name (ConversationEngine.build_greeting() falls back to "" when
+        # context is None) — previously always the case, since nothing
+        # here ever called start_call() at all before this fix.
+        customer_id = start_msg.get("start", {}).get("customParameters", {}).get("customer_id", "")
+        context = None
+        if customer_id:
+            try:
+                context = deps.conversation_engine.start_call(
+                    tenant_id=TenantId(deps.tenant_id), customer_id=customer_id, call_id=call_id
+                )
+            except Exception:
+                logger.exception("start_call() failed for customer_id=%s call_id=%s — proceeding without context", customer_id, call_id)
+
         orchestrator = await CallOrchestrator.create(
             call_id=call_id,
             tenant_id=deps.tenant_id,
             credentials=credentials,
             deps=deps,
+            context=context,
         )
         if orchestrator is None:
             await websocket.close(code=4003)

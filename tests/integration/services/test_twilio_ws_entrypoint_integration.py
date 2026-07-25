@@ -126,6 +126,37 @@ def test_accepts_connection_when_signed_against_public_tunnel_url() -> None:
     # "expected the server to close" failure mode proves auth succeeded.
 
 
+def test_assembles_real_customer_context_when_customer_id_parameter_present() -> None:
+    """Outbound trial calls (scripts/place_call002.py) pass customer_id as a
+    <Stream><Parameter> so the greeting/replies can address the real
+    customer by name — previously nothing here ever called start_call() at
+    all, so context was always None and every greeting used an empty name."""
+    client, deps = _make_app()
+    deps.conversation_engine.start_call = MagicMock()
+    url = "ws://testserver/twilio/media-stream"
+    signature = _twilio_signature(url)
+
+    with client.websocket_connect("/twilio/media-stream", headers={"x-twilio-signature": signature}) as ws:
+        ws.send_json({"event": "connected"})
+        ws.send_json(
+            {
+                "event": "start",
+                "start": {
+                    "callSid": "CA_ctx_001",
+                    "streamSid": "MZctx001",
+                    "customParameters": {"customer_id": "cust-prateek-001"},
+                    "mediaFormat": {"sampleRate": 8000},
+                },
+            }
+        )
+        ws.send_json({"event": "stop", "stop": {"callSid": "CA_ctx_001"}})
+
+    deps.conversation_engine.start_call.assert_called_once()
+    kwargs = deps.conversation_engine.start_call.call_args.kwargs
+    assert kwargs["customer_id"] == "cust-prateek-001"
+    assert kwargs["call_id"] == "CA_ctx_001"
+
+
 def test_rejects_connection_with_invalid_signature() -> None:
     client, _ = _make_app()
     with client.websocket_connect(
