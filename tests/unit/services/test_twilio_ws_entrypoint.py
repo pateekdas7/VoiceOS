@@ -180,7 +180,12 @@ async def test_run_turns_processes_one_turn_and_sends_audio_out() -> None:
 
         yield WordHypothesis(word="namaste", confidence=0.9, start_ms=0, end_ms=300, is_final=True)
 
-    orch._deps.stt_service.transcribe_stream = MagicMock(return_value=_fake_word_stream())
+    # STTService.transcribe_stream() is `async def` (it awaits the adapter
+    # and returns the resulting async generator), so the real call site
+    # awaits it -- AsyncMock(return_value=...) mirrors that: the mock call
+    # itself is awaitable and resolves to the async generator, whereas a
+    # plain MagicMock(return_value=...) returns it un-awaitable.
+    orch._deps.stt_service.transcribe_stream = AsyncMock(return_value=_fake_word_stream())
 
     clause = AudioClause(audio_data=b"\x00" * 4096, sample_rate=24000, text="hi", clause_index=0, is_final=True)
     orch._deps.conversation_engine.handle_turn = AsyncMock(return_value=[clause])
@@ -210,7 +215,7 @@ async def test_empty_transcript_turn_skips_conversation_engine() -> None:
         return
         yield  # pragma: no cover - makes this an async generator
 
-    orch._deps.stt_service.transcribe_stream = MagicMock(return_value=_empty_word_stream())
+    orch._deps.stt_service.transcribe_stream = AsyncMock(return_value=_empty_word_stream())
     orch._deps.conversation_engine.handle_turn = AsyncMock()
 
     await orch._handle_vad_event(VADSpeechStart(tenant_id=_tenant(), call_id="call-1", start_ms=0, energy_db=-10.0))
@@ -268,10 +273,21 @@ async def test_send_clauses_drains_playback_queue_across_many_turns() -> None:
 
 @pytest.mark.asyncio
 async def test_speak_greeting_synthesizes_and_sends_when_wired() -> None:
+    """_speak_greeting() now streams: it drains self._playback concurrently
+    with synthesis instead of awaiting a returned clause list (see its
+    docstring — buffering the whole ~19s greeting before any audio went out
+    was a real bug found via a live Call-002 trial). The fake
+    speak_scripted_text must therefore enqueue into self._playback as its
+    real TrueStreamingPipeline counterpart does, not just return a list."""
     orch = _make_orchestrator()
     clause = AudioClause(audio_data=b"\x00\x00" * 160, sample_rate=24000, text="namaste", clause_index=0, is_final=True)
     orch._deps.conversation_engine.build_greeting = MagicMock(return_value="Namaste sir, main Kavya bol rahi hoon.")
-    orch._deps.conversation_engine.speak_scripted_text = AsyncMock(return_value=[clause])
+
+    async def _fake_speak_scripted_text(text: str, playback: object) -> list[AudioClause]:
+        await playback.enqueue(clause)  # type: ignore[attr-defined]
+        return [clause]
+
+    orch._deps.conversation_engine.speak_scripted_text = AsyncMock(side_effect=_fake_speak_scripted_text)
 
     await orch._speak_greeting()
 

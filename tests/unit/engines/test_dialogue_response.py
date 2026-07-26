@@ -116,6 +116,77 @@ class TestAwaitIdentity:
         assert "50,000" in out.reply_text
 
 
+class TestRepeatRequest:
+    def test_repeat_during_await_identity_gives_short_recap_not_full_greeting(self) -> None:
+        engine = DialogueResponseEngine()
+        session = _session()
+        context = _make_context(name="Ravi Kumar")
+
+        out = engine.generate_reply(session, _make_plan(), context, "phir se bolo", _LENDER)
+
+        assert out.bucket == Bucket.REPEAT
+        assert session.dialogue_state_name == "AWAIT_IDENTITY"
+        assert "Ravi Kumar" in out.reply_text
+        assert _LENDER in out.reply_text
+        # Must be materially shorter than the full call-open greeting -- not
+        # a second recitation of "namaste .. outstanding balance ke regarding".
+        assert "outstanding" not in out.reply_text.lower()
+        assert len(out.reply_text) < 90
+
+    def test_repeat_does_not_consume_identity_reprompted_flag(self) -> None:
+        """A repeat request must not behave like an ambiguous identity
+        answer -- asking to repeat twice in a row must not accidentally
+        force-confirm identity and jump to CONVERSATION."""
+        engine = DialogueResponseEngine()
+        session = _session()
+        context = _make_context()
+
+        engine.generate_reply(session, _make_plan(), context, "repeat please", _LENDER)
+        assert session.identity_reprompted is False
+        out2 = engine.generate_reply(session, _make_plan(), context, "repeat please", _LENDER)
+
+        assert session.dialogue_state_name == "AWAIT_IDENTITY"
+        assert out2.bucket == Bucket.REPEAT
+
+    def test_generalizes_to_unenumerated_repeat_phrasing_devanagari(self) -> None:
+        engine = DialogueResponseEngine()
+        session = _session()
+        context = _make_context()
+
+        out = engine.generate_reply(session, _make_plan(), context, "sir फिर से बोलिए", _LENDER)
+
+        assert out.bucket == Bucket.REPEAT
+
+    def test_repeat_in_conversation_replays_last_reply_verbatim(self) -> None:
+        engine = DialogueResponseEngine()
+        session = _session()
+        session.set_dialogue_state_name("CONVERSATION")
+        session.set_last_ask("when_pay")
+        context = _make_context()
+
+        first = engine.generate_reply(session, _make_plan(), context, "aap kaun ho", _LENDER)
+        assert first.bucket == Bucket.ASK_WHO
+
+        second = engine.generate_reply(session, _make_plan(), context, "repeat please", _LENDER)
+
+        assert second.bucket == Bucket.REPEAT
+        assert second.reply_text == first.reply_text
+        # Idempotent: last_ask from the ASK_WHO turn must survive a repeat.
+        assert session.last_ask == "when_pay"
+
+    def test_repeat_in_conversation_falls_back_to_anchor_with_no_prior_reply(self) -> None:
+        engine = DialogueResponseEngine()
+        session = _session()
+        session.set_dialogue_state_name("CONVERSATION")
+        session.set_last_ask("when_pay")
+        context = _make_context()
+
+        out = engine.generate_reply(session, _make_plan(), context, "repeat please", _LENDER)
+
+        assert out.bucket == Bucket.REPEAT
+        assert "50,000" in out.reply_text
+
+
 class TestConversationBuckets:
     def _in_conversation(self, name: str = "Sunita Sharma") -> tuple[DialogueResponseEngine, ConversationSessionState, CustomerContext]:
         engine = DialogueResponseEngine()

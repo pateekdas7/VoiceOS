@@ -5,6 +5,7 @@ from __future__ import annotations
 from src.engines.prompt_builder.kavya_persona import (
     HANGUP_TEXT,
     build_greeting_text,
+    build_short_identity_repeat_text,
     build_system_prompt,
 )
 
@@ -64,3 +65,25 @@ class TestHangupText:
 
     def test_carries_no_customer_specific_facts(self) -> None:
         assert "sir" in HANGUP_TEXT.lower()
+
+
+class TestBuildShortIdentityRepeatText:
+    def test_renders_customer_and_lender_name(self) -> None:
+        text = build_short_identity_repeat_text(customer_name="Sunita Sharma", lender_name="Acme Capital")
+
+        assert "Sunita Sharma" in text
+        assert "Acme Capital" in text
+
+    def test_shorter_than_full_greeting(self) -> None:
+        full = build_greeting_text(customer_name="Sunita Sharma", lender_name="Acme Capital")
+        short = build_short_identity_repeat_text(customer_name="Sunita Sharma", lender_name="Acme Capital")
+
+        assert len(short) < len(full)
+        assert "outstanding" not in short.lower()
+
+    def test_generalizes_across_customers(self) -> None:
+        first = build_short_identity_repeat_text(customer_name="Sunita Sharma", lender_name="Acme Capital")
+        second = build_short_identity_repeat_text(customer_name="Ravi Kumar", lender_name="Acme Capital")
+
+        assert first != second
+        assert "Ravi Kumar" in second

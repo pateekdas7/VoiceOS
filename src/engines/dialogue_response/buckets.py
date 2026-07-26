@@ -38,6 +38,7 @@ from src.libs.contracts.response_plan import IntentLabel, ResponsePlan
 class Bucket(str, Enum):
     FAREWELL = "farewell"
     LOAN_DENIAL = "loan_denial"
+    REPEAT = "repeat"
     ASK_WHO = "ask_who"
     ASK_AMOUNT = "ask_amount"
     HARDSHIP = "hardship"
@@ -61,6 +62,26 @@ _IDENTITY_QUESTIONS = (
 )  # fmt: skip
 _IDENTITY_NEGATIVE = ("कौन सा", "कौनसा")
 _WHY_CALLED = ("क्यों call", "क्यों फोन", "मुझे क्यों", "why did you", "why calling")
+_REPEAT_REQUEST_TOKENS = (
+    # Deliberately narrow to unambiguous "say it again" / "I didn't HEAR
+    # you" phrasing only. Broader comprehension phrases like "समझ नहीं आया"
+    # ("I didn't understand [any of that]") are NOT included here -- that
+    # exact phrase is this engine's own canonical example of a genuinely
+    # unclassifiable utterance that should fall through to Bucket.ELSE and,
+    # after a second consecutive occurrence, trigger the real LLM fallback
+    # (_ELSE_FALLBACK_THRESHOLD) -- a customer who is lost needs the LLM's
+    # flexibility, not a verbatim repeat of a line they already didn't
+    # follow. "sunai nahi"/"suna nahi" ("didn't HEAR") is kept because it is
+    # unambiguously an audio/repeat request, not a comprehension one.
+    "फिर से", "फिर से बोलो", "फिर से बोलिए", "दोबारा", "दुबारा", "वापस बोलो",
+    "सुनाई नहीं", "सुना नहीं", "क्या बोला", "क्या कहा",
+    "एक बार फिर", "फिर बोलो", "फिर बताओ",
+    "phir se", "phir se bolo", "phirse bolo", "dobara", "dubara", "wapas bolo",
+    "sunai nahi", "suna nahi",
+    "kya bola", "kya kaha", "phir bolo", "phir batao", "ek baar phir",
+    "repeat", "say again", "come again", "one more time", "pardon",
+    "excuse me", "what did you say", "can you repeat",
+)  # fmt: skip
 _AMOUNT_QUERY_TOKENS = (
     "कितना payment", "कितना pay", "कितना पेमेंट", "कितना paisa",
     "कितना बाकी", "कितना outstanding", "कितना दे", "कितना देना",
@@ -105,6 +126,16 @@ def _is_identity_question(text: str) -> bool:
 def _is_why_called(text: str) -> bool:
     lower = _strip_devanagari_punct(text.lower())
     return any(tok in lower for tok in _WHY_CALLED)
+
+
+def is_repeat_request(text: str) -> bool:
+    """True when the customer is asking Kavya to say her last utterance
+    again ("phir se bolo", "samajh nahi aaya", "repeat please") — used both
+    by classify_bucket() (mid-conversation) and DialogueResponseEngine's
+    AWAIT_IDENTITY handling (before identity is confirmed, where no
+    ResponsePlan-derived bucket routing runs at all)."""
+    lower = _strip_devanagari_punct(text.lower())
+    return any(tok in text or tok.lower() in lower for tok in _REPEAT_REQUEST_TOKENS)
 
 
 def _is_amount_query(text: str) -> bool:
@@ -155,6 +186,8 @@ def classify_bucket(
         return Bucket.FAREWELL
     if top == IntentLabel.DISPUTE:
         return Bucket.LOAN_DENIAL
+    if is_repeat_request(user_text):
+        return Bucket.REPEAT
     if _is_identity_question(user_text) or _is_why_called(user_text):
         return Bucket.ASK_WHO
     if _is_amount_query(user_text):
@@ -177,4 +210,4 @@ def classify_bucket(
     return Bucket.ELSE
 
 
-__all__ = ["Bucket", "classify_bucket"]
+__all__ = ["Bucket", "classify_bucket", "is_repeat_request"]

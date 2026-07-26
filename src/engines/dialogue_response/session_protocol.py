@@ -50,6 +50,9 @@ class DialogueSessionState(Protocol):
 
     def record_assistant_reply(self, reply: str) -> None: ...
 
+    @property
+    def assistant_replies(self) -> list[str]: ...
+
     def set_last_empathy_state(self, value: str) -> None: ...
 
     @property

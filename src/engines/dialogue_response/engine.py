@@ -35,13 +35,18 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from src.engines.dialogue_response.buckets import Bucket, classify_bucket
+from src.engines.dialogue_response.buckets import Bucket, classify_bucket, is_repeat_request
 from src.engines.dialogue_response.installment import InstallmentPlan, InstallmentPlanKind, compute_installment_plan
 from src.engines.dialogue_response.session_protocol import DialogueSessionState
 from src.engines.dialogue_response.templates import SCRIPT_TEMPLATES, date_is_already_terminated, format_rupees
 from src.engines.empathy_directive.directive import EmpathyDirective
 from src.engines.empathy_directive.engine import EmpathyDirectiveComposer
-from src.engines.prompt_builder.kavya_persona import AGENT_NAME, HANGUP_TEXT, build_greeting_text
+from src.engines.prompt_builder.kavya_persona import (
+    AGENT_NAME,
+    HANGUP_TEXT,
+    build_greeting_text,
+    build_short_identity_repeat_text,
+)
 from src.libs.ai_safety.register_guard import RegisterGuard, dedupe_name, sanitize_reply, strip_trailing_sir
 from src.libs.contracts.context import CustomerContext
 from src.libs.contracts.response_plan import ResponsePlan
@@ -169,7 +174,9 @@ class DialogueResponseEngine:
 
         state = session.dialogue_state_name
         if state == "AWAIT_IDENTITY":
-            reply, bucket = self._handle_await_identity(session, user_text, customer_name, outstanding_minor)
+            reply, bucket = self._handle_await_identity(
+                session, user_text, customer_name, outstanding_minor, lender_name
+            )
         elif state == "CLOSE":
             reply, bucket = SCRIPT_TEMPLATES["close_farewell"], None
         else:
@@ -222,7 +229,16 @@ class DialogueResponseEngine:
         user_text: str,
         customer_name: str,
         outstanding_minor: int,
+        lender_name: str,
     ) -> tuple[str, Bucket | None]:
+        if is_repeat_request(user_text):
+            # A repeat request is not an identity response at all -- must not
+            # consume the one-shot identity_reprompted flag (that flag exists
+            # to stop an AMBIGUOUS identity answer from re-asking forever;
+            # an explicit "repeat" request is allowed every single time) and
+            # must not replay the full ~20-word call-open greeting a second
+            # time -- see build_short_identity_repeat_text's docstring.
+            return build_short_identity_repeat_text(customer_name, lender_name), Bucket.REPEAT
         verdict = _classify_identity_response(user_text)
         if verdict == "confirm":
             session.set_identity_verified(True)
@@ -274,6 +290,19 @@ class DialogueResponseEngine:
         if bucket == Bucket.LOAN_DENIAL:
             session.set_dialogue_state_name("CLOSE")
             return SCRIPT_TEMPLATES["close_callback"], bucket
+
+        if bucket == Bucket.REPEAT:
+            # Replay Kavya's own last line verbatim -- every scripted template
+            # is already one short sentence, so there is no "shorter" version
+            # to fall back to here (unlike the AWAIT_IDENTITY greeting, which
+            # build_short_identity_repeat_text() shortens instead of
+            # replaying in full). Idempotent: no last_ask/ledger mutation, so
+            # asking to repeat never advances or disturbs the conversation
+            # state -- the customer can ask as many times as needed.
+            previous = session.assistant_replies
+            if previous:
+                return previous[-1], bucket
+            return SCRIPT_TEMPLATES["anchor"].format(outstanding=format_rupees(outstanding_minor)), bucket
 
         if bucket == Bucket.ASK_WHO:
             session.set_last_ask("when_pay")

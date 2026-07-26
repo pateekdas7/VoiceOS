@@ -79,7 +79,11 @@ def _make_app() -> tuple[TestClient, SharedCallDependencies]:
     async def _fake_words(*_a: object, **_kw: object) -> AsyncIterator[WordHypothesis]:
         yield WordHypothesis(word="hello", confidence=0.9, start_ms=0, end_ms=200, is_final=True)
 
-    stt_service.transcribe_stream = MagicMock(side_effect=lambda *a, **kw: _fake_words())
+    # STTService.transcribe_stream() is `async def` -- the real call site
+    # awaits it. AsyncMock(side_effect=<sync callable>) makes the mock call
+    # itself awaitable, resolving to whatever the callable returns (the
+    # async generator), matching that contract.
+    stt_service.transcribe_stream = AsyncMock(side_effect=lambda *a, **kw: _fake_words())
 
     deps = SharedCallDependencies(
         account_sid=_ACCOUNT_SID,

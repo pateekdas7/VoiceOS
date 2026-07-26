@@ -110,6 +110,23 @@ HANGUP_TEXT = "Theek hai sir, हम later बात करेंगे। Thank
 """Fixed graceful-close line — carries no customer-specific facts, so it
 needs no templating."""
 
+_SHORT_IDENTITY_REPEAT_TEMPLATE = (
+    "मैं {agent_name} बोल रही हूँ, {lender_name} से। क्या मेरी बात {customer_name} से हो रही है?"
+)
+"""A customer asking to repeat the call-open greeting should not hear the
+full ~20-word greeting (with 'namaste'/'outstanding balance ke regarding')
+a second time — a real agent would give a shorter recap, not the identical
+opener verbatim. Used only for repeat requests during AWAIT_IDENTITY,
+before identity is confirmed (build_greeting_text's full form is still
+spoken exactly once, at call-open)."""
+
+
+def build_short_identity_repeat_text(customer_name: str, lender_name: str) -> str:
+    """Render the short recap spoken when the customer asks Kavya to repeat
+    herself before identity has been confirmed — see
+    _SHORT_IDENTITY_REPEAT_TEMPLATE's docstring."""
+    return _SHORT_IDENTITY_REPEAT_TEMPLATE.format(agent_name=AGENT_NAME, lender_name=lender_name, customer_name=customer_name)
+
 
 def build_system_prompt(lender_name: str) -> str:
     """Render the persona rules block for a given tenant's lender name."""
@@ -133,5 +150,6 @@ __all__ = [
     "HANGUP_TEXT",
     "PERSONA_RULES",
     "build_greeting_text",
+    "build_short_identity_repeat_text",
     "build_system_prompt",
 ]
