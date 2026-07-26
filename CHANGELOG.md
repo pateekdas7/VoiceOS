@@ -5,6 +5,113 @@ Format: `## [version] — Sprint-NNN — Title (YYYY-MM-DD)`
 
 ---
 
+## [Unreleased] — ADR-006 Monitoring & Intelligent Operations Architecture — Backend Implementation (2026-07-25/26)
+
+> Following ADR-006 Rev. 3's founder approval (repository-wide validation pass, plumbing/reasoning split,
+> explainable-AI/read-only/multi-tenant governance contract — see `implementation/adrs/ADR-006-monitoring-intelligent-operations-architecture.md`),
+> this entry covers the backend implementation. **Scope note:** ADR-005's frontend/BFF/platform-actor work
+> is being implemented in a separate work stream — nothing frontend-facing is included here beyond a
+> read-only OpenAPI contract for that stream to integrate against. No live deployment or Anthropic API key
+> was provisioned this session; this is code, migrated schema, and passing tests, not a running system.
+
+### Database — 5 new tables (migrations `0028`–`0032`, chained directly off `0027`)
+
+`ops_insights` (AI-generated Insights, `verified_facts` non-empty enforced by both the application layer
+and a DB `CHECK` constraint), `alert_history` (always-on alert lifecycle, `source` distinguishes
+Alertmanager vs. the pre-existing `compliance_monitoring.ComplianceAlerter`), `capacity_forecasts`,
+`ai_reports` (full evidence + `source_service_calls` inlined for reproducibility), `ops_pattern_signatures`
+(recurring-issue fingerprint counters — plain hashing, no learned/model state). All five follow the
+project's nullable-`tenant_id`-means-platform-wide convention, FK'd to `tenants`. Verified against a real
+Postgres instance: full `alembic upgrade head` / `downgrade 0027` / re-`upgrade head` round-trip, plus a
+real `INSERT` proving the `ops_insights` zero-evidence `CHECK` constraint actually rejects. An earlier draft
+of this branch also added ADR-005-scope migrations (`platform_users`/`pipelines`/`voice_profiles`/
+`notifications`, then numbered `0028`–`0031`) before the ADR-005/ADR-006 scope split was clarified — those
+were removed and the ADR-006 migrations renumbered down to close the gap, to avoid colliding with the
+parallel ADR-005 session's own schema work.
+
+### `src/services/ops_intelligence/` — the Intelligent Analysis Layer
+
+Split into two hard-bounded sub-components per ADR-006 Sec 3.0, enforced by two new
+`scripts/check_boundaries.py` rules (Rule 6: `plumbing/` may not import `reasoning/`; Rule 7: `reasoning/`
+may not import `prometheus_client`/`opentelemetry.sdk`/`opentelemetry.exporter` — telemetry-emission is
+banned there, `plumbing/metrics.py`'s own RED/health gauges are unaffected):
+
+- **`plumbing/`** (always-on, zero LLM dependency): `AlertLifecycleService` (FIRING→ACKNOWLEDGED/ESCALATED→RESOLVED,
+  fingerprint-deduped, per-severity auto-escalation timeouts), `WebhookIngestService` (adapts both
+  Alertmanager webhooks *and* `ComplianceAlerter`'s `compliance.violation_alert` event-bus signals into the
+  one lifecycle — no third alerting engine), a real Starlette `create_webhook_app()` (`POST
+  /webhooks/alertmanager`), and `register_ops_intelligence_consumers()` wiring the compliance-signal
+  handler onto the existing event bus `Consumer`.
+- **`reasoning/`** (killable, feature-flag-gated): `EvidenceBundler` (deterministic regression/anomaly
+  detection — plain-code threshold checks over Prometheus + optional Loki/Jaeger correlation; never lets
+  the LLM decide what's anomalous), `ClaudeReasoningAdapter` (Anthropic Messages API; degrades to a
+  labeled-low-confidence empty result on any HTTP failure or malformed response — never fabricates),
+  `InsightService` (enforces the non-empty-evidence invariant, records recurring-pattern fingerprints,
+  publishes tenant-scoped reasoning-model token spend as a new `saas.ops_intelligence.analysis_performed`
+  usage event; platform-wide runs meter via a Prometheus counter instead, since they're an operating cost,
+  not a tenant-billable one), `ReportGenerator` (all 9 report types; Executive Summary/Health/Performance
+  reports call the **existing** `bi_platform.ExecutiveDashboard`/`ops_analytics.OpsAnalytics` as their sole
+  KPI source and capture a `SourceServiceCall` snapshot — no duplicated computation), `CapacityPlanner`
+  (Vol.7 Ch.12's previously-unimplemented `forecast()`/`headroom()`, honestly labeled
+  `"arima_proxy_linear_trend"` per the `bi_platform.forecasting` precedent), and concrete
+  `PrometheusQueryAdapter`/`LokiQueryAdapter`/`JaegerQueryAdapter`/`EventBusQueryAdapter` HTTP/replay clients
+  implementing the read-only query ports (default URLs match the real Grafana-provisioned datasources from
+  Sprint-027).
+- **`OpsIntelligenceService`** (facade): the *only* two call sites that ever reach `reasoning/` —
+  `run_scheduled_analysis()` (CronJob trigger) and `is_reasoning_enabled()` (the check every BFF read
+  endpoint must call first) — both gated by a `feature_flags.is_enabled("ops_intelligence_reasoning", ...)`
+  check. `src/services/ops_intelligence/default_checks.py` supplies six real `MetricCheckSpec`s (first-audio
+  SLO, availability, STT WER, TTS first-clause latency vs. ADR-004's 750ms budget, LLM TTFT, GPU fleet
+  health) against metrics/recording rules this repo already emits — no new instrumentation.
+- Five concrete Postgres repositories (`src/services/ops_intelligence/repositories/`) implementing every
+  port above, verified against real Postgres (8 integration tests: round-trip, tenant-scoped list isolation,
+  the DB CHECK constraint, alert lifecycle transitions, full report evidence-chain reproducibility).
+- Cost/metering: new `UsageType.OPS_INTELLIGENCE_API_CALL` rate-card entry, new
+  `OpsIntelligenceAnalysisPerformed` domain event, new `UsageCollector.handle_ops_intelligence_analysis_performed()`
+  handler.
+- Composition-root wiring (`deployment/cpu/app.py`): `--serve-ops-intelligence` (binds the webhook receiver
+  on its own port/process, `OPS_INTELLIGENCE_PORT` default 8024, independent of the Twilio call-handling
+  process), `--run-ops-intelligence-analysis` (the CronJob entry point), `--run-ops-intelligence-report=<type>`
+  (daily/weekly/monthly). Real `SecretsManager`+`HVACVaultClient` wiring for the Anthropic credential (no
+  key provisioned this session — narration degrades gracefully until one is). A minimal env-var-driven
+  `_EnvFeatureFlags` stands in for `saas_ops.FeatureFlagService`, which has no concrete Postgres-backed
+  repository anywhere in this codebase yet (a pre-existing, not ADR-006-introduced, gap) — swappable later
+  with zero change to `OpsIntelligenceService` itself.
+- New Helm chart `infra/helm/voiceos-platform/charts/ops-intelligence/` (generated via the existing
+  `scripts/helm/generate_service_charts.sh`, port 8024, `voiceos-ops` namespace — regenerating the script's
+  output for all 25 pre-existing charts produced zero content diffs, confirmed via `git diff --stat`).
+- New `infra/k8s/cronjobs/ops-intelligence-analysis.yaml` (every 5 min) and
+  `ops-intelligence-reports.yaml` (daily 06:00 UTC / weekly Monday 06:00 UTC / monthly 1st 06:00 UTC).
+- New `api-specs/voiceos-monitoring-v1.yaml` — the BFF-facing contract for the AI Insights/AI Reports/Alerts
+  Center/Incident Timeline/Capacity Planning frontend pages (ADR-005 work stream), validated via the
+  existing `scripts/validate_openapi.py`.
+
+### Phase 0 telemetry fix (TT-017)
+
+Found `deployment/gpu/services/{stt,tts}/server.py` already had a real `/metrics` endpoint (from a prior,
+undocumented session) but `evaluator/server.py` did not — added, mirroring the STT server's pattern.
+Separately found `monitoring/prometheus/prometheus.yml`'s `gpu-node` scrape job still targeted
+`217.18.55.96`, a terminated L4 node — corrected to the currently-documented `62.169.159.20`
+(`deployment/GPU_NODE_STATE.md`) and added the evaluator's port. **Not verified against the live GPU node**
+(no SSH access taken this session, per the standing approval-required rule) — code/config-side only. See
+`implementation/BACKLOG.md`'s TT-017 row for the full, corrected status.
+
+### Verification
+
+121 unit tests + 8 real-Postgres integration tests passing; `ruff check` clean; `mypy --strict` clean on
+every new/modified `src/` file; both new `check_boundaries.py` rules clean against the real `src/` tree
+(including a self-test asserting the real repo has zero Rule 6/7 violations).
+
+### Explicitly not done this session
+
+Domain-specific quality signals beyond the six default checks (persona violations, CRM/collections-failure
+correlation — the framework in `EvidenceBundler`/`MetricCheckSpec` supports adding these, none beyond the
+six are wired yet); the broader Phase 0 gaps that are cross-repo, not ops_intelligence-scoped (TT-006 real
+HTTP listeners on ~23 services; `tenant_id` labeling across all existing Prometheus metrics/OTel spans);
+any live deployment, Anthropic API key, or GPU-node verification.
+
+---
+
 ## [Unreleased] — Path-A Runtime Consolidation, Phases 1–8 (2026-07-25)
 
 > Triggered by an explicit pre-Call-002 architecture verification request: a full audit found VoiceOS
@@ -273,6 +380,79 @@ Re-ran `scripts/path_a_phase7_dry_run.py` afterward too, confirming no regressio
 19 new tests across this follow-up (3 session_state, 5 dialogue_response, 2 conversation_engine LLM-fallback
 routing, 4 streaming-pipeline register-guard, 8 register_guard suffix-rule + fallback-constant regression).
 Full regression: 2223 passed / 73 skipped / 0 failed; `check_boundaries.py` clean throughout.
+
+---
+
+## [Unreleased] — Call-002 Live-Trial Readiness (2026-07-25/26)
+
+> Preparing the consolidated Path-A runtime for Call-002 — the first full, free-form (unscripted) live
+> validation of the entire pipeline, as opposed to Call-001's scripted Path-B run — surfaced six real
+> production defects, none of which any existing test caught, because every one of them only manifests
+> when a real WebSocket transport, a real GPU node, and a real hangup are all exercised together.
+
+**TT-028 broadened, then re-verified against a second independent reboot.** The `cloudflared` binary
+download (`github.com`) hit the exact same connect-fine/ServerHello-never-arrives signature as the
+original CPU→GPU Path MTU black-hole, proving it is a general property of the CPU node's outbound network
+path, not GPU-destination-specific. `voiceos-gpu-mss-clamp.service`'s `ExecStart` was broadened from a
+GPU-host-scoped MSS clamp (`-d <gpu-host>`) to an unscoped one (all outbound/inbound TCP SYN), still
+idempotent. Re-verified against a real reboot a second time (this node having since also been reprovisioned
+onto a new IP, 101.53.140.71 — unrelated infrastructure churn): the unit came back `enabled`/`active` with
+the unscoped rules already in place, no manual step. `iptables-persistent` remains deliberately
+uninstalled. Full detail in `implementation/BACKLOG.md`'s TT-028.
+
+**Five real defects found and fixed via a local pipeline smoke test and two live call attempts, before
+declaring the runtime ready:**
+
+1. **`uvicorn` had no WebSocket implementation.** `pyproject.toml` declared bare `uvicorn>=0.30`; Twilio's
+   Media Streams WS upgrade got "Unsupported upgrade request" / a 404 instead of a real connection — the
+   call had no audio path in either direction. No test catches this because every WS integration test
+   drives Starlette's in-process `TestClient`, which never touches uvicorn's real network WS handshake.
+   Fixed: `uvicorn[standard]>=0.30` (websockets/httptools/uvloop/watchfiles/python-dotenv — uvicorn's own
+   documented production extras).
+2. **`STTService.transcribe_stream()` is `async def` but was called without `await`** in
+   `CallOrchestrator._run_turns_one_iteration()`, so `DialogueManager.ingest_stream()` received a bare
+   coroutine and crashed with `TypeError: 'async for' requires an object with __aiter__ method, got
+   coroutine` the instant a real customer spoke. Every prior test mocked `stt_service` with an object whose
+   `transcribe_stream` was itself a plain (non-async) callable returning an async generator — masking this
+   exact mismatch. This was the single most severe defect: it meant no real call could ever process a
+   customer's turn at all.
+3. **The greeting was fully buffered before any audio was sent** — `_speak_greeting()` awaited
+   `speak_scripted_text()` (all TTS clauses) before calling `_send_clauses()`, so the customer heard nothing
+   for the entire synthesis duration (measured 15-19s against the live GPU) instead of audio starting as
+   soon as the first clause was ready.
+4. **The greeting's own protective timeout was shorter than real GPU synthesis sometimes takes** — a 15s
+   timeout aborted a greeting whose 3rd clause alone took ~13s on the live GPU (vs. a 2.8s baseline probe),
+   cutting the customer off mid-sentence.
+5. **`CallOrchestrator.run()` hung forever on a clean hangup.** `_run_turns()` blocks on
+   `await self._turn_ready.wait()`, which `_closing` flipping to `True` does not interrupt — so once the
+   carrier stream ended, the turn loop waited forever for a turn that could never arrive, `run()`'s
+   `asyncio.wait(FIRST_EXCEPTION)` never returned, and `release_adapter()`/`release_session()` never ran (a
+   leaked adapter + audio session per completed call). Invisible until now because every prior call ended
+   by *raising* (defect #2), which unwound normally via `FIRST_EXCEPTION` instead. Fixed by waking
+   `_turn_ready` when closing, guarded so the wake-to-close doesn't try to process a phantom turn.
+
+All five confirmed fixed via a real pipeline smoke test (`scripts/call002_pipeline_smoke.py`, driven
+against real Postgres + the real GPU node, feeding a **real captured customer utterance** rather than a
+synthetic tone — production's `AudioPreprocessorService` runs its full stage set, unlike the resample-only
+config the integration tests use, and a pure sine tone does not reliably survive it as speech for VAD): two
+full turns processed end-to-end (STT → engine → governance → TTS, 64 and 84 audio clauses respectively),
+`run()` completing cleanly in ~71s instead of hitting a watchdog.
+
+**Sprint-029 evaluator: new `POST /evaluate-custom` endpoint** (`deployment/gpu/services/evaluator/`) —
+the founder's acceptance-review prompt is a reviewer-specified 14-point rubric over transcript + timing +
+logs, not audio-perception alone, so the existing `/evaluate` (deliberately audio-only, no verdict) can't
+serve it. Added alongside `/evaluate`, which is untouched. Verified live on the GPU node (round-trip
+856ms for a scripted response).
+
+**Instrumentation added:** `CallRecorder` (`src/services/media_gateway/call_recorder.py`), opt-in via
+`SharedCallDependencies.recording_dir` (env `CALL_RECORDING_DIR`) — per-call JSONL transcript (STT
+latency, dialogue+TTS latency, barge-in, greeting) plus separate customer/Kavya WAV files. No behavior
+change for any deployment that leaves it unset.
+
+Also: a real `CustomerContext`-assembly gap was found and fixed — `_endpoint()` never called
+`ConversationEngine.start_call()`, so every greeting used an empty customer name; and a real Twilio
+signature-validation gap behind a reverse tunnel (`SharedCallDependencies.public_ws_base_url`). Both fixed
+and tested before the first live attempt.
 
 ---
 
