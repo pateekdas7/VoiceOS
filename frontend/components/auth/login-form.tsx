@@ -8,8 +8,29 @@ import { useState } from "react";
 // therefore IdP-only — this form has no password field by design, not by
 // omission. Actor kind (platform vs. tenant) is resolved server-side from
 // which IdP/account the callback belongs to; this form never asserts it.
+
+// The BFF's google_callback redirects failures here as ?error=<code> (see
+// api.py) -- these are the only codes it ever sends.
+const ERROR_MESSAGES: Record<string, string> = {
+  no_account: "No VoiceOS account found for that Google identity. Ask your admin to invite you.",
+  already_registered: "That email is already registered. Just sign in again below.",
+  missing_code: "Google didn't return an authorization code. Please try again.",
+  google_auth_failed: "Google sign-in failed. Please try again.",
+};
+
+// Reads window.location.search directly (not useSearchParams) -- same
+// reasoning as handleGoogleSignIn's `next` read below: this keeps the
+// component out of a Suspense boundary. Guarded for the server-rendered
+// first pass, where `window` doesn't exist yet.
+function initialErrorMessage(): string | null {
+  if (typeof window === "undefined") return null;
+  const code = new URLSearchParams(window.location.search).get("error");
+  if (!code) return null;
+  return ERROR_MESSAGES[code] ?? `Sign-in failed (${code}).`;
+}
+
 export function LoginForm() {
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialErrorMessage);
   const bffUrl = process.env.NEXT_PUBLIC_BFF_URL;
 
   function handleGoogleSignIn() {

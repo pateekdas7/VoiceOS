@@ -99,6 +99,7 @@ from src.services.saas_ops.feature_flags import FeatureFlagService
 from src.services.tenant_management.lifecycle import InvalidTenantTransitionError
 from src.services.tenant_management.service import TenantService
 from src.services.user_management.invitation import (
+    EmailAlreadyRegisteredError,
     InvitationExpiredError,
     InvitationNotFoundError,
     InvitationNotPendingError,
@@ -264,6 +265,8 @@ def create_web_api(
                 activated_user = user_service.activate_invitation(invitation_token, identity.name)
             except (InvitationNotFoundError, InvitationExpiredError, InvitationNotPendingError):
                 return RedirectResponse(f"{frontend_base_url}/signup?error=invalid_invitation", status_code=302)
+            except EmailAlreadyRegisteredError:
+                return RedirectResponse(f"{frontend_base_url}/login?error=already_registered", status_code=302)
 
             # activate_invitation() returns the User as constructed *before*
             # assign_role() ran -- role_assignments on that object is always
