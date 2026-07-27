@@ -82,6 +82,9 @@ class EscalationWorkflow:
     def find_by_call(self, tenant_id: TenantId, call_id: CallId) -> tuple[EscalationRecord, ...]:
         return self._repo.find_by_call(tenant_id, call_id)
 
+    def list_for_tenant(self, tenant_id: TenantId) -> tuple[EscalationRecord, ...]:
+        return self._repo.list_for_tenant(tenant_id)
+
     @staticmethod
     def _default_target(reason: str) -> EscalationTarget:
         if reason in _CRITICAL_REASONS:

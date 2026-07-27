@@ -244,7 +244,7 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["src*"]
+include = ["src*", "monitoring*"]
 
 # ---------------------------------------------------------------------------
 # Ruff — lint + format (see ruff.toml for full config)

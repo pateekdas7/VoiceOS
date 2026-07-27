@@ -105,6 +105,10 @@ class CampaignService:
     def find_active(self, tenant_id: TenantId) -> tuple[Campaign, ...]:
         return self._repo.find_active_for_tenant(tenant_id)
 
+    def list_all(self, tenant_id: TenantId) -> tuple[Campaign, ...]:
+        """Every campaign for a tenant, any status (ADR-005 Sec 6.2 -- Client "Campaigns" list)."""
+        return self._repo.find_all_for_tenant(tenant_id)
+
     # ------------------------------------------------------------------
     # Lifecycle transitions
     # ------------------------------------------------------------------

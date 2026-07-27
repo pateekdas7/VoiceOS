@@ -27,6 +27,8 @@ class TenantRepositoryPort(Protocol):
 
     def get_by_slug(self, slug: str) -> Tenant | None: ...
 
+    def list_all(self) -> tuple[Tenant, ...]: ...
+
     def update_status(
         self,
         tenant_id: TenantId,

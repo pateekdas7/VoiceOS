@@ -64,10 +64,11 @@ class TestMigrationUpgradeDowngrade:
         os.environ["POSTGRES_DSN"] = scratch_dsn
         cfg = Config("alembic.ini")
 
-        # Upgrade from empty database to head — all 27 revisions apply cleanly.
+        # Upgrade from empty database to head — all 33 revisions apply cleanly.
         command.upgrade(cfg, "head")
-        assert _current_revision(scratch_dsn) == "0027"
+        assert _current_revision(scratch_dsn) == "0033"
         assert _table_exists(scratch_dsn, "tenants")
+        assert _table_exists(scratch_dsn, "platform_users")
         assert _table_exists(scratch_dsn, "usage_events")
         assert _table_exists(scratch_dsn, "snapshots")
         assert _table_exists(scratch_dsn, "recovery_log")
@@ -105,6 +106,7 @@ class TestMigrationUpgradeDowngrade:
         command.downgrade(cfg, "base")
         assert _current_revision(scratch_dsn) is None
         assert not _table_exists(scratch_dsn, "tenants")
+        assert not _table_exists(scratch_dsn, "platform_users")
         assert not _table_exists(scratch_dsn, "usage_events")
         assert not _table_exists(scratch_dsn, "snapshots")
         assert not _table_exists(scratch_dsn, "recovery_log")
@@ -139,8 +141,9 @@ class TestMigrationUpgradeDowngrade:
 
         # Upgrade again successfully — revisions are re-runnable from empty.
         command.upgrade(cfg, "head")
-        assert _current_revision(scratch_dsn) == "0027"
+        assert _current_revision(scratch_dsn) == "0033"
         assert _table_exists(scratch_dsn, "tenants")
+        assert _table_exists(scratch_dsn, "platform_users")
         assert _table_exists(scratch_dsn, "customers")
         assert _table_exists(scratch_dsn, "loan_accounts")
         assert _table_exists(scratch_dsn, "promises_to_pay")

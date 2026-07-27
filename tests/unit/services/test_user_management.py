@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from src.libs.contracts.models.user import OrgScope, RoleAssignment, User
+from src.libs.contracts.models.user import OrgScope, Role, RoleAssignment, User
 from src.libs.contracts.primitives import TenantId
 from src.libs.repositories.invitation import Invitation
 from src.services.user_management.invitation import (
@@ -63,6 +63,7 @@ class _FakeUserRepository:
         self.users: list[User] = []
         self.assignments: list[RoleAssignment] = []
         self.deactivated: list[str] = []
+        self.roles: list[Role] = []
 
     def create_user(self, user: User) -> User:
         self.users.append(user)
@@ -84,6 +85,19 @@ class _FakeUserRepository:
     def set_active_status(self, tenant_id: TenantId, user_id: str, *, is_active: bool) -> int:
         self.deactivated.append(user_id)
         return 1
+
+    def create_role(self, role: Role) -> Role:
+        self.roles.append(role)
+        return role
+
+    def get_role(self, tenant_id: TenantId, role_id: str) -> Role | None:
+        return next((r for r in self.roles if r.role_id == role_id), None)
+
+    def get_role_by_name(self, tenant_id: TenantId, name: str) -> Role | None:
+        return next((r for r in self.roles if r.name == name), None)
+
+    def list_roles(self, tenant_id: TenantId) -> tuple[Role, ...]:
+        return tuple(self.roles)
 
 
 def _scope() -> OrgScope:
@@ -142,6 +156,71 @@ class TestUserService:
 
         assert deactivated.is_active is False
         assert users.deactivated == ["u-1"]
+
+    def test_ensure_system_roles_creates_all_five(self) -> None:
+        users = _FakeUserRepository()
+        service = UserService(users, InvitationService(_FakeInvitationRepository(), users))
+
+        roles = service.ensure_system_roles(TENANT_ID)
+
+        assert {r.name for r in roles} == {"ADMIN", "SUPERVISOR", "MANAGER", "AGENT", "AUDITOR"}
+        assert all(r.is_system_role for r in roles)
+        assert len(users.roles) == 5
+
+    def test_ensure_system_roles_permissions_match_authz_vocabulary(self) -> None:
+        users = _FakeUserRepository()
+        service = UserService(users, InvitationService(_FakeInvitationRepository(), users))
+
+        roles = service.ensure_system_roles(TENANT_ID)
+
+        admin_role = next(r for r in roles if r.name == "ADMIN")
+        assert set(admin_role.permissions) == {
+            "read:all",
+            "write:all",
+            "write:campaigns",
+            "write:users",
+            "decide:hitl_items",
+        }
+
+    def test_ensure_system_roles_is_idempotent(self) -> None:
+        users = _FakeUserRepository()
+        service = UserService(users, InvitationService(_FakeInvitationRepository(), users))
+
+        first = service.ensure_system_roles(TENANT_ID)
+        second = service.ensure_system_roles(TENANT_ID)
+
+        assert len(users.roles) == 5  # not 10 -- second call reused the existing rows
+        assert {r.role_id for r in first} == {r.role_id for r in second}
+
+    def test_ensure_system_roles_preserves_an_already_customized_role(self) -> None:
+        """A role that already exists (e.g. seeded at tenant provisioning) is
+        reused as-is, never overwritten -- the DB row stays authoritative."""
+        users = _FakeUserRepository()
+        now = datetime.now(UTC)
+        existing_admin = Role(
+            role_id="custom-admin-id",
+            tenant_id=TENANT_ID,
+            name="ADMIN",
+            permissions=("read:all", "write:all", "write:campaigns", "write:users"),
+            is_system_role=True,
+            created_at=now,
+            updated_at=now,
+        )
+        users.roles.append(existing_admin)
+        service = UserService(users, InvitationService(_FakeInvitationRepository(), users))
+
+        roles = service.ensure_system_roles(TENANT_ID)
+
+        admin_role = next(r for r in roles if r.name == "ADMIN")
+        assert admin_role.role_id == "custom-admin-id"
+        assert len(users.roles) == 5
+
+    def test_list_roles_returns_every_role(self) -> None:
+        users = _FakeUserRepository()
+        service = UserService(users, InvitationService(_FakeInvitationRepository(), users))
+        service.ensure_system_roles(TENANT_ID)
+
+        assert len(service.list_roles(TENANT_ID)) == 5
 
     def test_sso_stub_raises_not_implemented(self) -> None:
         class _FakeConn:
