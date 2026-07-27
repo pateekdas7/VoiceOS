@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Breadcrumbs } from "@/components/client/breadcrumbs";
+import { getPipeline } from "@/lib/local-pipelines";
 
 const TABS = [
   { label: "Leads", segment: "leads" },
@@ -22,6 +23,7 @@ export default function PipelineLayout({
 }) {
   const pathname = usePathname();
   const [ids, setIds] = useState<{ campaignId: string; pipelineId: string } | null>(null);
+  const [pipelineName, setPipelineName] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -33,6 +35,17 @@ export default function PipelineLayout({
     };
   }, [params]);
 
+  useEffect(() => {
+    if (!ids) return;
+    let cancelled = false;
+    getPipeline(ids.campaignId, ids.pipelineId).then((pipeline) => {
+      if (!cancelled) setPipelineName(pipeline?.name ?? null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [ids]);
+
   const base = ids ? `/client/campaigns/${ids.campaignId}/pipelines/${ids.pipelineId}` : "";
 
   return (
@@ -41,7 +54,7 @@ export default function PipelineLayout({
         items={[
           { label: "Campaigns", href: "/client/campaigns" },
           { label: "Pipelines", href: ids ? `/client/campaigns/${ids.campaignId}/pipelines` : undefined },
-          { label: ids?.pipelineId ?? "…" },
+          { label: pipelineName ?? ids?.pipelineId ?? "…" },
         ]}
       />
       <div className="flex gap-1 border-b border-border">

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { listCampaigns, type Campaign } from "@/lib/api/campaigns";
+import { listPipelines, type LocalPipeline } from "@/lib/local-pipelines";
 import { CLIENT_TOP_NAV } from "@/lib/nav";
 
 // Expandable Campaign -> Pipeline product-workflow sidebar. Only "Campaigns"
@@ -54,7 +55,12 @@ export function ClientNavTree({ basePath }: { basePath: string }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+    // Re-fetch on every navigation, not just mount -- a new campaign's
+    // create form redirects to /client/campaigns right after creating one,
+    // so this is what actually picks the new row up. Cheap enough (a small
+    // per-tenant list) that firing on every route change is fine.
+     
+  }, [pathname]);
 
   const pathnameCampaignId = pathname.match(/\/campaigns\/([^/]+)/)?.[1] ?? null;
 
@@ -139,23 +145,34 @@ export function ClientNavTree({ basePath }: { basePath: string }) {
                         </div>
                         {isExpanded ? (
                           <div className="ml-4 flex flex-col gap-0.5 border-l border-sidebar-border pl-2">
-                            {CAMPAIGN_SUB_NAV.map((sub) => {
-                              const subHref = `${campaignHref}/${sub.segment}`;
-                              const isSubActive = pathname === subHref || pathname.startsWith(`${subHref}/`);
-                              return (
-                                <Link
+                            {CAMPAIGN_SUB_NAV.map((sub) =>
+                              sub.segment === "pipelines" ? (
+                                <PipelinesSubNav
                                   key={sub.segment}
-                                  href={subHref}
-                                  className={`rounded-md px-2 py-1 text-xs transition-colors ${
-                                    isSubActive
-                                      ? "bg-white/10 font-medium text-sidebar-foreground-active"
-                                      : "text-sidebar-foreground hover:bg-white/5 hover:text-sidebar-foreground-active"
-                                  }`}
-                                >
-                                  {sub.label}
-                                </Link>
-                              );
-                            })}
+                                  campaignId={c.campaign_id}
+                                  campaignHref={campaignHref}
+                                  pathname={pathname}
+                                />
+                              ) : (
+                                (() => {
+                                  const subHref = `${campaignHref}/${sub.segment}`;
+                                  const isSubActive = pathname === subHref || pathname.startsWith(`${subHref}/`);
+                                  return (
+                                    <Link
+                                      key={sub.segment}
+                                      href={subHref}
+                                      className={`rounded-md px-2 py-1 text-xs transition-colors ${
+                                        isSubActive
+                                          ? "bg-white/10 font-medium text-sidebar-foreground-active"
+                                          : "text-sidebar-foreground hover:bg-white/5 hover:text-sidebar-foreground-active"
+                                      }`}
+                                    >
+                                      {sub.label}
+                                    </Link>
+                                  );
+                                })()
+                              ),
+                            )}
                           </div>
                         ) : null}
                       </div>
@@ -174,5 +191,94 @@ export function ClientNavTree({ basePath }: { basePath: string }) {
         );
       })}
     </nav>
+  );
+}
+
+function PipelinesSubNav({
+  campaignId,
+  campaignHref,
+  pathname,
+}: {
+  campaignId: string;
+  campaignHref: string;
+  pathname: string;
+}) {
+  const listHref = `${campaignHref}/pipelines`;
+  const isListActive = pathname === listHref;
+  const pathnamePipelineId = pathname.startsWith(`${listHref}/`) ? pathname.slice(listHref.length + 1).split("/")[0] : null;
+  const [expanded, setExpanded] = useState(Boolean(pathnamePipelineId));
+  const [pipelines, setPipelines] = useState<LocalPipeline[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    listPipelines(campaignId).then((data) => {
+      if (!cancelled) setPipelines(data);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // Re-fetch on every navigation -- same reasoning as the Campaigns list
+    // above: creating a pipeline redirects into it, so this is what picks
+    // the new sidebar row up.
+     
+  }, [campaignId, pathname]);
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <div className="flex items-center">
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="px-1 py-1 text-xs text-sidebar-foreground hover:text-sidebar-foreground-active"
+          aria-label={expanded ? "Collapse Pipelines" : "Expand Pipelines"}
+        >
+          {expanded ? "▾" : "▸"}
+        </button>
+        <Link
+          href={listHref}
+          className={`flex-1 rounded-md px-1 py-1 text-xs transition-colors ${
+            isListActive
+              ? "bg-white/10 font-medium text-sidebar-foreground-active"
+              : "text-sidebar-foreground hover:bg-white/5 hover:text-sidebar-foreground-active"
+          }`}
+        >
+          Pipelines
+        </Link>
+      </div>
+      {expanded ? (
+        <div className="ml-4 flex flex-col gap-0.5 border-l border-sidebar-border pl-2">
+          {pipelines === null ? (
+            <p className="px-2 py-0.5 text-[11px] text-sidebar-foreground">Loading…</p>
+          ) : pipelines.length === 0 ? (
+            <p className="px-2 py-0.5 text-[11px] text-sidebar-foreground">No pipelines yet.</p>
+          ) : (
+            pipelines.map((p) => {
+              const pipelineHref = `${listHref}/${p.pipeline_id}`;
+              const isActive = pathname === pipelineHref || pathname.startsWith(`${pipelineHref}/`);
+              return (
+                <Link
+                  key={p.pipeline_id}
+                  href={pipelineHref}
+                  title={p.name}
+                  className={`truncate rounded-md px-2 py-0.5 text-[11px] transition-colors ${
+                    isActive
+                      ? "bg-white/10 font-medium text-sidebar-foreground-active"
+                      : "text-sidebar-foreground hover:bg-white/5 hover:text-sidebar-foreground-active"
+                  }`}
+                >
+                  {p.name}
+                </Link>
+              );
+            })
+          )}
+          <Link
+            href={`${listHref}/new`}
+            className="rounded-md px-2 py-0.5 text-[11px] font-medium text-brand hover:underline"
+          >
+            + Create Pipeline
+          </Link>
+        </div>
+      ) : null}
+    </div>
   );
 }
