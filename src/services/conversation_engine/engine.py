@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -64,6 +65,7 @@ from src.services.policy_engine.service import PolicyEngineService
 from src.services.tts.service import TTSService
 from src.services.tts.streaming_pipeline import TrueStreamingPipeline
 
+from .metrics import red as _metrics
 from .session_state import ConversationSessionState
 
 logger = logging.getLogger(__name__)
@@ -564,6 +566,28 @@ class ConversationEngine:
         trace_id: str = "",
     ) -> list[AudioClause]:
         """The actual per-turn pipeline — see :meth:`handle_turn` for the public contract."""
+        _t0 = time.monotonic()
+        try:
+            result = await self.__handle_turn_body(
+                turn, playback, context, intent_history, identity_verified, silence_duration_ms, trace_id
+            )
+        except Exception as exc:
+            _metrics.record_error(type(exc).__name__)
+            _metrics.record_request("error", (time.monotonic() - _t0) * 1000)
+            raise
+        _metrics.record_request("success", (time.monotonic() - _t0) * 1000)
+        return result
+
+    async def __handle_turn_body(
+        self,
+        turn: TurnInput,
+        playback: PlaybackScheduler,
+        context: CustomerContext | None,
+        intent_history: list[str] | None,
+        identity_verified: bool,
+        silence_duration_ms: int,
+        trace_id: str = "",
+    ) -> list[AudioClause]:
         # Step 0 — Sprint-020 (V4 Ch13 §13.7): detective prompt-injection screen.
         # Structural containment (Law of Authority) is the real defense; this
         # only logs a SECURITY signal for monitoring/incident-response (Ch16/17).
