@@ -73,6 +73,7 @@ from src.services.hitl.queue import HITLQueue
 from src.services.ops_intelligence.models import InsightCategory, ReportType
 from src.services.ops_intelligence.plumbing.alert_lifecycle import AlertLifecycleService
 from src.services.ops_intelligence.plumbing.repository import AlertRepositoryPort
+from src.services.ops_intelligence.plumbing.webhook_ingest import WebhookIngestService
 from src.services.ops_intelligence.reasoning.repository import (
     CapacityForecastRepositoryPort,
     InsightRepositoryPort,
@@ -378,8 +379,19 @@ def create_web_api(
     if alert_repository is not None and insight_repository is not None:
         routes.extend(_build_incident_timeline_routes(alert_repository, insight_repository))
 
+    # Alertmanager webhook receiver — no auth required (Alertmanager POSTs
+    # directly without browser cookies). Mount as regular route so the session
+    # middleware sees it but doesn't gate it.
+    if alert_lifecycle is not None:
+        webhook_ingest = WebhookIngestService(alert_lifecycle)
+        routes.extend(_build_webhook_routes(webhook_ingest))
+
+    # Startup handlers for background tasks (GPU polling, daily aggregation).
+    startup_handlers = _build_startup_handlers(gpu_fleet_monitor, analytics_service)
+
     return Starlette(
         routes=routes,
+        on_startup=startup_handlers,
         middleware=[
             # Outermost: the frontend (a different origin -- e.g. localhost:3000 vs.
             # this BFF's localhost:8100 in dev, app.voiceos.ai vs. api.voiceos.ai in
@@ -1774,6 +1786,108 @@ def _serialize_audit_event(event: AuditEvent) -> dict[str, Any]:
         "outcome": event.outcome,
         "recorded_at": event.recorded_at.isoformat(),
     }
+
+
+def _build_webhook_routes(ingest: WebhookIngestService) -> list[Route]:
+    """POST /webhooks/alertmanager — receives Alertmanager webhook_configs POSTs.
+
+    No authentication: Alertmanager is an internal cluster component that
+    cannot supply browser session cookies. The route is intentionally
+    unauthenticated; network-level controls (K8s NetworkPolicy) gate access.
+    """
+
+    async def alertmanager_webhook(request: Request) -> JSONResponse:
+        try:
+            payload = await request.json()
+        except Exception:
+            return JSONResponse({"error": "invalid_json"}, status_code=400)
+        results = ingest.ingest_alertmanager_webhook(payload)
+        return JSONResponse({"ingested": len(results)})
+
+    return [Route("/webhooks/alertmanager", alertmanager_webhook, methods=["POST"])]
+
+
+def _build_startup_handlers(
+    gpu_fleet_monitor: GPUFleetHealthMonitor | None,
+    analytics_service: Any,
+) -> list[Any]:
+    """Return Starlette ``on_startup`` callables for background monitoring tasks."""
+    import asyncio
+    import logging
+    import os
+
+    import httpx
+
+    _log = logging.getLogger("voiceos.web_api.background")
+
+    handlers: list[Any] = []
+
+    # ── GPU node health polling ──────────────────────────────────────────────
+    if gpu_fleet_monitor is not None:
+        gpu_host = os.environ.get("GPU_HOST", "185.216.21.242")
+        gpu_poll_s = int(os.environ.get("GPU_POLL_INTERVAL_S", "30"))
+        # One entry per model-serving port that exposes /health (STT/LLM/TTS).
+        gpu_endpoints: list[tuple[str, int]] = [
+            ("stt", int(os.environ.get("STT_PORT", "8100"))),
+            ("llm", int(os.environ.get("LLM_PORT", "8000"))),
+            ("tts", int(os.environ.get("TTS_PORT", "8200"))),
+        ]
+
+        async def _poll_gpu_nodes() -> None:
+            from monitoring.gpu_fleet.fleet_health import GPUNodeSnapshot
+
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                while True:
+                    for service, port in gpu_endpoints:
+                        node_id = f"{gpu_host}:{port}"
+                        try:
+                            resp = await client.get(f"http://{gpu_host}:{port}/health")
+                            healthy = resp.status_code == 200
+                            data = resp.json() if healthy else {}
+                        except Exception:
+                            healthy = False
+                            data = {}
+                        gpu_fleet_monitor.report_node(
+                            GPUNodeSnapshot(
+                                node_id=node_id,
+                                healthy=healthy,
+                                vram_used_mb=int(data.get("vram_used_mb", 0)),
+                                vram_total_mb=int(data.get("vram_total_mb", 0)),
+                            )
+                        )
+                    gpu_fleet_monitor.fleet_health_score()
+                    await asyncio.sleep(gpu_poll_s)
+
+        def _start_gpu_polling() -> None:
+            asyncio.ensure_future(_poll_gpu_nodes())
+            _log.info("GPU fleet poller started (host=%s interval=%ds)", gpu_host, gpu_poll_s)
+
+        handlers.append(_start_gpu_polling)
+
+    # ── DailyAggregationJob ──────────────────────────────────────────────────
+    if analytics_service is not None and hasattr(analytics_service, "_aggregation_job"):
+
+        async def _run_daily_aggregation() -> None:
+            """Trigger DailyAggregationJob once, then repeat daily at midnight UTC."""
+            job = analytics_service._aggregation_job
+            while True:
+                now = date.today()
+                yesterday = now - timedelta(days=1)
+                _log.info("DailyAggregationJob: would aggregate for %s (no tenant list available at startup)", yesterday)
+
+                # Sleep until next midnight UTC.
+                from datetime import time as _time  # noqa: PLC0415
+                tomorrow_dt = datetime.combine(now + timedelta(days=1), _time.min).replace(tzinfo=UTC)
+                sleep_s = (tomorrow_dt - datetime.now(UTC)).total_seconds()
+                await asyncio.sleep(max(sleep_s, 3600))
+
+        def _start_daily_aggregation() -> None:
+            asyncio.ensure_future(_run_daily_aggregation())
+            _log.info("DailyAggregationJob scheduler started")
+
+        handlers.append(_start_daily_aggregation)
+
+    return handlers
 
 
 __all__ = ["create_web_api"]

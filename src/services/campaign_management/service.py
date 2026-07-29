@@ -20,6 +20,7 @@ from src.libs.contracts.models.campaign import (
 from src.libs.contracts.primitives import CampaignId, TenantId
 from src.libs.event_bus.publisher import Publisher
 
+from . import metrics as _metrics
 from .lifecycle import CampaignLifecycle
 
 if TYPE_CHECKING:
@@ -134,6 +135,7 @@ class CampaignService:
             )
         campaign = self._transition(tenant_id, campaign_id, CampaignStatus.ACTIVE, actor_id=started_by)
         self._repo.update_counts(tenant_id, campaign_id, target_call_count, campaign.completed_call_count)
+        _metrics.record_campaign_activated(str(tenant_id))
         if self._publisher is not None:
             self._publisher.publish(
                 event_type="saas.campaign.started",
@@ -157,6 +159,7 @@ class CampaignService:
     def complete(self, tenant_id: TenantId, campaign_id: CampaignId) -> Campaign:
         """ACTIVE -> COMPLETED. Publishes ``CampaignCompleted`` (V5 Ch6, Sprint-025)."""
         campaign = self._transition(tenant_id, campaign_id, CampaignStatus.COMPLETED, actor_id="system")
+        _metrics.record_campaign_completed(str(tenant_id))
         if self._publisher is not None:
             self._publisher.publish(
                 event_type="saas.campaign.completed",

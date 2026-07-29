@@ -1,0 +1,52 @@
+# DailyAggregationJob CronJob — runs at 00:05 UTC every day to pre-compute the
+# previous day's analytics rollup (analytics_daily table) for the dashboard.
+# Architecture: V5 Ch11 (Analytics Platform — DailyAggregationJob).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "voiceos.fullname" . }}-daily-aggregation
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "voiceos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cronjob
+spec:
+  schedule: "5 0 * * *"          # 00:05 UTC daily
+  timeZone: "UTC"
+  concurrencyPolicy: Forbid      # never overlap two aggregation runs
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 3600
+      template:
+        metadata:
+          labels:
+            {{- include "voiceos.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: cronjob
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: {{ include "voiceos.fullname" . }}
+          containers:
+            - name: daily-aggregation
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command:
+                - python
+                - -m
+                - scripts.run_daily_aggregation
+              env:
+                - name: POSTGRES_DSN
+                  valueFrom:
+                    secretKeyRef:
+                      name: voiceos-secrets
+                      key: postgres-dsn
+                - name: AGGREGATION_DATE
+                  value: ""   # empty = yesterday (script default)
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "256Mi"
+                limits:
+                  cpu: "500m"
+                  memory: "512Mi"

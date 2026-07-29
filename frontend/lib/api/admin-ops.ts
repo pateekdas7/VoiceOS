@@ -1,6 +1,10 @@
 // Typed client for the Admin -> Audit Logs / Security / Compliance / Billing /
 // Infrastructure / Users & Roles / Platform Settings / Analytics / Monitoring
-// BFF routes (ADR-005 §6.8/6.9/6.16-18/12.1-12.4, ADR-006 monitoring).
+// routes (ADR-005 §6.8/6.9/6.16-18/12.1-12.4, ADR-006 monitoring).
+//
+// Routing: all admin calls go to the Python web_api via the /webapi rewrite
+// (next.config.ts), NOT the Node.js BFF /bff rewrite. The two servers handle
+// different concerns: bff.js → campaigns/leads/dialer; web_api → admin/monitoring.
 
 export class ApiError extends Error {
   status: number;
@@ -12,10 +16,8 @@ export class ApiError extends Error {
   }
 }
 
-function bffUrl(): string {
-  const url = process.env.NEXT_PUBLIC_BFF_URL;
-  if (!url) throw new ApiError(0, "NO_BFF_URL", "NEXT_PUBLIC_BFF_URL is not configured");
-  return url;
+function webapiUrl(): string {
+  return process.env.NEXT_PUBLIC_WEBAPI_URL ?? "/webapi";
 }
 
 async function handle<T>(res: Response): Promise<T> {
@@ -27,12 +29,12 @@ async function handle<T>(res: Response): Promise<T> {
 }
 
 async function get<T>(path: string): Promise<T> {
-  return handle<T>(await fetch(`${bffUrl()}${path}`, { credentials: "include" }));
+  return handle<T>(await fetch(`${webapiUrl()}${path}`, { credentials: "include" }));
 }
 
 async function post<T>(path: string, body?: unknown): Promise<T> {
   return handle<T>(
-    await fetch(`${bffUrl()}${path}`, {
+    await fetch(`${webapiUrl()}${path}`, {
       method: "POST",
       credentials: "include",
       headers: body ? { "Content-Type": "application/json" } : undefined,

@@ -65,6 +65,9 @@ from src.services.policy_engine.service import PolicyEngineService
 from src.services.tts.service import TTSService
 from src.services.tts.streaming_pipeline import TrueStreamingPipeline
 
+from src.libs.observability.metrics import call_count_total as _call_count_total
+from src.libs.observability.metrics import negotiation_outcome_total as _negotiation_outcome_total
+
 from .metrics import red as _metrics
 from .session_state import ConversationSessionState
 
@@ -408,8 +411,15 @@ class ConversationEngine:
             self._call_campaign_ids[call_id] = campaign_id
         return context
 
-    def end_call(self, call_id: str) -> None:
-        """Release the cached CustomerContext (and campaign linkage) for a finished call."""
+    def end_call(self, call_id: str, outcome: str = "completed") -> None:
+        """Release the cached CustomerContext (and campaign linkage) for a finished call.
+
+        ``outcome`` is the SLO-level label: "completed" for a normally
+        terminated call, "system_error" for a call terminated by an AI
+        pipeline failure. The availability recording rule in
+        recording_rules.yml partitions on outcome!="system_error".
+        """
+        _call_count_total.labels(outcome=outcome).inc()
         self._call_contexts.pop(call_id, None)
         self._call_campaign_ids.pop(call_id, None)
 
@@ -880,6 +890,7 @@ class ConversationEngine:
             )
             return
 
+        _negotiation_outcome_total.labels(outcome="ptp_created").inc()
         logger.info(
             "Persisted PTP %s for call %s (%s minor %s by %s)",
             ptp.ptp_id,
