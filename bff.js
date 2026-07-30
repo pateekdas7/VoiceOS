@@ -22,16 +22,27 @@ const SESSION_COOKIE  = 'voiceos_session';
 const ACTOR_KIND_COOKIE = 'voiceos_actor_kind';
 
 // ─── PostgreSQL ───────────────────────────────────────────────────────────────
-const pool = new Pool({
-  host: '/data/data/com.termux/files/usr/tmp',
-  database: 'voiceos',
-  user: process.env.USER || 'u0_a295',
-  max: 10,
-});
+const pool = process.env.POSTGRES_DSN
+  ? new Pool({ connectionString: process.env.POSTGRES_DSN, max: 10 })
+  : new Pool({
+      host: process.env.POSTGRES_HOST || '127.0.0.1',
+      port: parseInt(process.env.POSTGRES_PORT || '5432'),
+      database: process.env.POSTGRES_DB || 'voiceos',
+      user: process.env.POSTGRES_USER || 'voiceos',
+      password: process.env.POSTGRES_PASSWORD || '',
+      max: 10,
+    });
 pool.on('error', (err) => console.error('[pg] idle client error:', err.message));
 
 // ─── Redis ────────────────────────────────────────────────────────────────────
-const redis = new Redis({ host: '127.0.0.1', port: 6379, lazyConnect: true, maxRetriesPerRequest: 1 });
+const redisOpts = {
+  host: process.env.REDIS_HOST || '127.0.0.1',
+  port: parseInt(process.env.REDIS_PORT || '6379'),
+  lazyConnect: true,
+  maxRetriesPerRequest: 1,
+};
+if (process.env.REDIS_PASSWORD) redisOpts.password = process.env.REDIS_PASSWORD;
+const redis = new Redis(redisOpts);
 redis.on('error', e => console.warn('[redis]', e.message));
 redis.connect().catch(e => console.warn('[redis] connect failed:', e.message));
 
@@ -39,7 +50,7 @@ redis.connect().catch(e => console.warn('[redis] connect failed:', e.message));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: false })); // Twilio webhooks send form-encoded bodies
 app.use(cookieParser());
-app.use(cors({ origin: 'http://localhost:3000', credentials: true }));
+app.use(cors({ origin: process.env.FRONTEND_BASE_URL || 'http://localhost:3000', credentials: true }));
 
 // ─── Auth helpers ─────────────────────────────────────────────────────────────
 function makeToken(payload) {
@@ -444,7 +455,7 @@ app.post('/auth/logout', (req, res) => {
 });
 app.get('/auth/logout', (req, res) => {
   res.clearCookie(SESSION_COOKIE); res.clearCookie(ACTOR_KIND_COOKIE);
-  res.redirect('http://localhost:3000/login');
+  res.redirect((process.env.FRONTEND_BASE_URL || 'http://localhost:3000') + '/login');
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
