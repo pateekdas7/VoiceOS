@@ -1,0 +1,17 @@
+[Unit]
+Description=VoiceOS Web API (Python/uvicorn)
+After=network.target postgresql.service redis-server.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/voiceos/app
+EnvironmentFile=/opt/voiceos/.env
+ExecStart=/opt/voiceos/venv/bin/uvicorn src.services.web_api.main:create_app \
+    --factory --host 0.0.0.0 --port 8001 --workers 1
+Restart=always
+RestartSec=10
+StandardOutput=append:/opt/voiceos/logs/webapi.log
+StandardError=append:/opt/voiceos/logs/webapi.log
+
+[Install]
+WantedBy=multi-user.target
