@@ -344,7 +344,7 @@ export function SystemXView() {
                 <TableHeaderCell>Services</TableHeaderCell>
                 <TableHeaderCell>Detected</TableHeaderCell>
                 <TableHeaderCell>Downtime</TableHeaderCell>
-                <TableHeaderCell></TableHeaderCell>
+                <TableHeaderCell>{" "}</TableHeaderCell>
               </TableRow>
             </TableHead>
             <TableBody>
