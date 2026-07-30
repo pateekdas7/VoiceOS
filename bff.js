@@ -485,8 +485,8 @@ const AI_PORTS = {
 app.get('/system/health', async (req, res) => {
   const now = new Date().toISOString();
 
-  // Infra pings
-  const [redisResult, dbResult, sttResult, llmResult, ttsResult] = await Promise.all([
+  // Infra pings (concurrent — local, no tunnel)
+  const [redisResult, dbResult] = await Promise.all([
     (async () => {
       try { const t = Date.now(); await redis.ping(); return { status: 'healthy', latencyMs: Date.now() - t }; }
       catch { return { status: 'degraded', latencyMs: null }; }
@@ -495,10 +495,12 @@ app.get('/system/health', async (req, res) => {
       try { const t = Date.now(); await pool.query('SELECT 1'); return { status: 'healthy', latencyMs: Date.now() - t }; }
       catch { return { status: 'degraded', latencyMs: null }; }
     })(),
-    probeHttp(`http://${GPU_HOST}:${AI_PORTS.STT}/health/ready`),
-    probeHttp(`http://${GPU_HOST}:${AI_PORTS.LLM}/health`),
-    probeHttp(`http://${GPU_HOST}:${AI_PORTS.TTS}/health/ready`),
   ]);
+  // GPU probes sequential — WireGuard tunnel is TCP-over-TCP (socat/autossh); concurrent probes
+  // cause head-of-line blocking and timeouts. Sequential adds ~600 ms but reliably succeeds.
+  const sttResult = await probeHttp(`http://${GPU_HOST}:${AI_PORTS.STT}/health/ready`, 12000);
+  const llmResult = await probeHttp(`http://${GPU_HOST}:${AI_PORTS.LLM}/health`,       12000);
+  const ttsResult = await probeHttp(`http://${GPU_HOST}:${AI_PORTS.TTS}/health/ready`, 12000);
 
   res.json([
     { component: 'STT',        status: sttResult.status,   latencyMs: sttResult.latencyMs,   lastChecked: now },
