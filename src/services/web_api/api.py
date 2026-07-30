@@ -394,9 +394,17 @@ def create_web_api(
     # Startup handlers for background tasks (GPU polling, daily aggregation).
     startup_handlers = _build_startup_handlers(gpu_fleet_monitor, analytics_service)
 
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _lifespan(app: Any):
+        for handler in startup_handlers:
+            handler()
+        yield
+
     return Starlette(
         routes=routes,
-        on_startup=startup_handlers,
+        lifespan=_lifespan,
         middleware=[
             # Outermost: the frontend (a different origin -- e.g. localhost:3000 vs.
             # this BFF's localhost:8100 in dev, app.voiceos.ai vs. api.voiceos.ai in
