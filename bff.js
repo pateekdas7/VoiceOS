@@ -495,9 +495,9 @@ app.get('/system/health', async (req, res) => {
       try { const t = Date.now(); await pool.query('SELECT 1'); return { status: 'healthy', latencyMs: Date.now() - t }; }
       catch { return { status: 'degraded', latencyMs: null }; }
     })(),
-    probeHttp(`http://${GPU_HOST}:${AI_PORTS.STT}/health`),
+    probeHttp(`http://${GPU_HOST}:${AI_PORTS.STT}/health/ready`),
     probeHttp(`http://${GPU_HOST}:${AI_PORTS.LLM}/health`),
-    probeHttp(`http://${GPU_HOST}:${AI_PORTS.TTS}/health`),
+    probeHttp(`http://${GPU_HOST}:${AI_PORTS.TTS}/health/ready`),
   ]);
 
   res.json([
