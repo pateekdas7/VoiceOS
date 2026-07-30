@@ -5,6 +5,62 @@ Format: `## [version] — Sprint-NNN — Title (YYYY-MM-DD)`
 
 ---
 
+## [Unreleased] — Engine Integration Completion — All CIL Engines Active Per Turn (2026-07-30)
+
+> Architecture audit found 4 integration gaps where engines were constructed but not
+> fully participating during a real call. All 4 gaps are now fixed and verified.
+
+### GAP 1 Fixed — ConversationStateIntelligence (AdaptiveConversationEngine cross-turn state)
+
+- `CILPort.assemble()` Protocol extended with `conversation_state_tracker: Any = None`
+  and `concession_round: int = 0` (backward-compatible defaults).
+- `ConversationEngine.__init__()` now maintains `_csi_trackers: dict[str, Any]` — one
+  `ConversationStateIntelligence` instance per active call, initialized on first turn.
+- `_make_csi_tracker()` deferred-import helper keeps the boundary Rule 1 clean (no
+  `src/engines/` import at module level in `src/services/`).
+- `__handle_turn_body()` now initializes session and CSI tracker **before** the CIL call
+  and passes both new params — AdaptiveConversationEngine now retains dialogue-state
+  across the full call, not just one turn.
+
+### GAP 2 Fixed — NegotiationEngine concession counter
+
+- `ConversationSessionState` gains `_concession_round: int = 0` with `concession_round`
+  property, `increment_concession_round()`, and full snapshot/restore support.
+- After each CIL call, `ConversationEngine` detects a COUNTER move
+  (`negotiation_envelope` present, `is_finalized_commitment=False`,
+  `proposed_amount_minor is not None`) and increments the per-call counter — from turn
+  2 onward, `NegotiationEngine` receives correct concession context.
+
+### GAP 3 Fixed — WorkingMemoryStore (V2 Ch11) wired end-to-end
+
+- `WorkingMemoryStore(raw_redis)` constructed in `deployment/cpu/app.py` and passed to
+  `ConversationEngine` as optional `working_memory_store` param.
+- After each turn, `__handle_turn_body()` writes a `WorkingMemoryDelta` capturing
+  turn_count, last_intent, extracted_entities, negotiation_state, last_strategy, and
+  customer_utterances — Redis-backed, 4-hour TTL, best-effort (Redis failure never
+  aborts reply generation).
+
+### GAP 4 Fixed — RelationshipMemoryStore (V2 Ch12) wired end-to-end
+
+- `RelationshipMemoryStore(conn)` constructed in `app.py` on a dedicated Postgres
+  connection (clean transaction boundary) and passed to `ConversationEngine`.
+- `start_call()` loads the customer's cross-call memory on connection.
+- `end_call()` now accepts `customer_id` and `sentiment` kwargs; persists a
+  `CallSummary` (sentiment + outcome) so the next call's CIL has longitudinal
+  customer state from turn 1.
+
+### Verified
+
+- `scripts/verify_engine_participation.py` — new script; proves each engine fires and
+  produces non-trivial output on a synthetic Hindi/Hinglish turn.
+- Result on CPU server: IntentEngine ✓, EmotionEngine ✓, EntityExtractor ✓,
+  StrategyEngine ✓, GoalPlanner ✓, AdaptiveConvEngine ✓, DecisionEnvelope 7 records ✓
+- Full unit test suite: **1474 passed, 1 skipped** (pre-existing TTS VRAM hardcode
+  mismatch — unrelated to these changes).
+- 4 new `concession_round` tests in `test_conversation_session_state.py` — all pass.
+
+---
+
 ## [Unreleased] — ADR-006 Monitoring & Intelligent Operations Architecture — Backend Implementation (2026-07-25/26)
 
 > Following ADR-006 Rev. 3's founder approval (repository-wide validation pass, plumbing/reasoning split,
