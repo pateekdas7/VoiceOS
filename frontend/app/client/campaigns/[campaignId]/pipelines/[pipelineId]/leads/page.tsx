@@ -1,12 +1,9 @@
-import { SectionPlaceholder } from "@/components/client/section-placeholder";
+"use client";
 
-export default function PipelineLeadsPage() {
-  return (
-    <SectionPlaceholder
-      title="Leads"
-      description="This pipeline's own lead cohort, once Pipeline exists as a real entity re-keyed off CampaignAudienceMember."
-      columns={["Customer", "Contact", "Stage", "DND", "Included"]}
-      note="0 leads"
-    />
-  );
+import { use } from "react";
+import { PipelineLeadsView } from "@/components/client/pipeline-leads-view";
+
+export default function PipelineLeadsPage({ params }: { params: Promise<{ campaignId: string; pipelineId: string }> }) {
+  const { pipelineId } = use(params);
+  return <PipelineLeadsView pipelineId={pipelineId} />;
 }

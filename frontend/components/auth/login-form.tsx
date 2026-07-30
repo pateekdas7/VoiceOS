@@ -2,65 +2,76 @@
 
 import { useState } from "react";
 
-// VoiceOS has no first-party password storage anywhere in the backend
-// (AuthService accepts mTLS/JWT/API-key only; tokens are minted exclusively
-// by OIDCProvider.exchange_code() against a tenant's own IdP). Sign-in is
-// therefore IdP-only — this form has no password field by design, not by
-// omission. Actor kind (platform vs. tenant) is resolved server-side from
-// which IdP/account the callback belongs to; this form never asserts it.
-
-// The BFF's google_callback redirects failures here as ?error=<code> (see
-// api.py) -- these are the only codes it ever sends.
-const ERROR_MESSAGES: Record<string, string> = {
-  no_account: "No VoiceOS account found for that Google identity. Ask your admin to invite you.",
-  already_registered: "That email is already registered. Just sign in again below.",
-  missing_code: "Google didn't return an authorization code. Please try again.",
-  google_auth_failed: "Google sign-in failed. Please try again.",
-};
-
-// Reads window.location.search directly (not useSearchParams) -- same
-// reasoning as handleGoogleSignIn's `next` read below: this keeps the
-// component out of a Suspense boundary. Guarded for the server-rendered
-// first pass, where `window` doesn't exist yet.
-function initialErrorMessage(): string | null {
-  if (typeof window === "undefined") return null;
-  const code = new URLSearchParams(window.location.search).get("error");
-  if (!code) return null;
-  return ERROR_MESSAGES[code] ?? `Sign-in failed (${code}).`;
-}
-
 export function LoginForm() {
-  const [error, setError] = useState<string | null>(initialErrorMessage);
-  const bffUrl = process.env.NEXT_PUBLIC_BFF_URL;
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  function handleGoogleSignIn() {
-    if (!bffUrl) {
-      setError("Backend not configured (NEXT_PUBLIC_BFF_URL is unset) — cannot sign in yet.");
-      return;
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await fetch("/bff/auth/password/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error === "invalid_credentials" ? "Invalid email or password." : `Error: ${data.error}`);
+        return;
+      }
+      if (data.actor_kind === "platform") {
+        window.location.href = "/admin/dashboard";
+      } else {
+        window.location.href = "/client/dashboard";
+      }
+    } catch {
+      setError("Network error — make sure the backend is running.");
+    } finally {
+      setLoading(false);
     }
-    // The OIDC round-trip is a full server redirect, not a fetch — "next" is
-    // read directly off the current URL (not useSearchParams) so this
-    // component needs no Suspense boundary.
-    const next = new URLSearchParams(window.location.search).get("next");
-    const startUrl = new URL(`${bffUrl}/auth/google/start`);
-    if (next) startUrl.searchParams.set("next", next);
-    window.location.href = startUrl.toString();
   }
 
   return (
-    <div className="flex w-full max-w-sm flex-col gap-4">
-      {error ? <p className="text-sm text-status-critical">{error}</p> : null}
+    <form onSubmit={handleSubmit} className="flex w-full max-w-sm flex-col gap-4">
+      {error ? <p className="text-sm text-red-500">{error}</p> : null}
+      <div className="flex flex-col gap-1">
+        <label className="text-sm font-medium" htmlFor="email">Email</label>
+        <input
+          id="email"
+          type="email"
+          autoComplete="email"
+          required
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          className="rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+          placeholder="you@example.com"
+        />
+      </div>
+      <div className="flex flex-col gap-1">
+        <label className="text-sm font-medium" htmlFor="password">Password</label>
+        <input
+          id="password"
+          type="password"
+          autoComplete="current-password"
+          required
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          className="rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+          placeholder="••••••••"
+        />
+      </div>
       <button
-        type="button"
-        onClick={handleGoogleSignIn}
-        className="rounded-md border border-border bg-surface px-3 py-2 text-sm font-medium hover:bg-background"
+        type="submit"
+        disabled={loading}
+        className="rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
       >
-        Continue with Google
+        {loading ? "Signing in…" : "Sign in"}
       </button>
-      <p className="text-center text-xs text-muted">
-        Your workspace admin can also configure a different identity provider (Okta, Azure AD, etc.)
-        for tenant sign-in.
-      </p>
-    </div>
+    </form>
   );
 }

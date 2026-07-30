@@ -19,6 +19,7 @@ export const ADMIN_NAV: NavItem[] = [
   { label: "AI Insights", href: "/monitoring/ai-insights", module: "ADR-006 §3.2/10" },
   { label: "AI Reports", href: "/monitoring/ai-reports", module: "ADR-006 §6.1" },
   { label: "Capacity Planning", href: "/monitoring/capacity", module: "ADR-006 §3.4" },
+  { label: "System X", href: "/system-x", module: "Sprint-028 (Autonomous Ops)" },
   { label: "Analytics", href: "/analytics", module: "ADR §6.9" },
   { label: "Users & Roles", href: "/users-roles", module: "ADR §6.8" },
   { label: "Audit Logs", href: "/audit-logs", module: "ADR §12.4" },

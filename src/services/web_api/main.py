@@ -289,6 +289,10 @@ def create_app() -> Starlette:
         health_checks.append(RedisHealthCheck(redis.Redis.from_url(redis_url)))
     health_aggregator = HealthAggregator(health_checks)
 
+    from src.services.system_x import SystemXService
+
+    system_x_service = SystemXService(conn)
+
     return create_web_api(
         session_codec=session_codec,
         google_oauth=google_oauth,
@@ -316,6 +320,7 @@ def create_app() -> Starlette:
         insight_repository=insight_repository,
         report_repository=report_repository,
         capacity_forecast_repository=capacity_forecast_repository,
+        system_x_service=system_x_service,
         frontend_base_url=frontend_base_url,
         bff_public_url=bff_public_url,
         health_aggregator=health_aggregator,

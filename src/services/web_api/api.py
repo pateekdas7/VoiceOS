@@ -209,6 +209,7 @@ def create_web_api(
     insight_repository: InsightRepositoryPort | None = None,
     report_repository: ReportRepositoryPort | None = None,
     capacity_forecast_repository: CapacityForecastRepositoryPort | None = None,
+    system_x_service: Any = None,
     frontend_base_url: str,
     bff_public_url: str,
     health_aggregator: HealthAggregator | None = None,
@@ -384,7 +385,11 @@ def create_web_api(
     # middleware sees it but doesn't gate it.
     if alert_lifecycle is not None:
         webhook_ingest = WebhookIngestService(alert_lifecycle)
-        routes.extend(_build_webhook_routes(webhook_ingest))
+        system_x_controller = system_x_service.build_controller() if system_x_service is not None else None
+        routes.extend(_build_webhook_routes(webhook_ingest, system_x_controller))
+
+    if system_x_service is not None:
+        routes.extend(_build_system_x_routes(system_x_service))
 
     # Startup handlers for background tasks (GPU polling, daily aggregation).
     startup_handlers = _build_startup_handlers(gpu_fleet_monitor, analytics_service)
@@ -1788,13 +1793,14 @@ def _serialize_audit_event(event: AuditEvent) -> dict[str, Any]:
     }
 
 
-def _build_webhook_routes(ingest: WebhookIngestService) -> list[Route]:
+def _build_webhook_routes(ingest: WebhookIngestService, system_x_controller: Any = None) -> list[Route]:
     """POST /webhooks/alertmanager — receives Alertmanager webhook_configs POSTs.
 
     No authentication: Alertmanager is an internal cluster component that
     cannot supply browser session cookies. The route is intentionally
     unauthenticated; network-level controls (K8s NetworkPolicy) gate access.
     """
+    import asyncio
 
     async def alertmanager_webhook(request: Request) -> JSONResponse:
         try:
@@ -1802,9 +1808,157 @@ def _build_webhook_routes(ingest: WebhookIngestService) -> list[Route]:
         except Exception:
             return JSONResponse({"error": "invalid_json"}, status_code=400)
         results = ingest.ingest_alertmanager_webhook(payload)
+        # Fire System X for each individual alert in the batch
+        if system_x_controller is not None:
+            for raw_alert in payload.get("alerts", ()):
+                asyncio.ensure_future(system_x_controller.handle_alert(raw_alert))
         return JSONResponse({"ingested": len(results)})
 
     return [Route("/webhooks/alertmanager", alertmanager_webhook, methods=["POST"])]
+
+
+def _build_system_x_routes(system_x_service: Any) -> list[Route]:
+    """GET/POST /admin/system-x/* — System X incident dashboard API."""
+
+    async def list_incidents(request: Request) -> JSONResponse:
+        try:
+            require_platform_permission(request, PERM_PLATFORM_READ_ALL)
+        except (SessionRequiredError, ForbiddenError) as exc:
+            return _error(401 if isinstance(exc, SessionRequiredError) else 403, "forbidden", str(exc))
+        active_only = request.query_params.get("active") == "true"
+        incidents = system_x_service.list_incidents(active_only=active_only)
+        return JSONResponse({
+            "incidents": [
+                {
+                    "incident_id": i.incident_id,
+                    "title": i.title,
+                    "severity": str(i.severity),
+                    "status": str(i.status),
+                    "detected_at": i.detected_at.isoformat(),
+                    "resolved_at": i.resolved_at.isoformat() if i.resolved_at else None,
+                    "affected_services": list(i.affected_services),
+                    "total_downtime_s": i.total_downtime_s,
+                    "root_cause": i.root_cause,
+                    "recovery_summary": i.recovery_summary,
+                }
+                for i in incidents
+            ]
+        })
+
+    async def get_incident(request: Request) -> JSONResponse:
+        try:
+            require_platform_permission(request, PERM_PLATFORM_READ_ALL)
+        except (SessionRequiredError, ForbiddenError) as exc:
+            return _error(401 if isinstance(exc, SessionRequiredError) else 403, "forbidden", str(exc))
+        incident_id = request.path_params["incident_id"]
+        incident = system_x_service.get_incident(incident_id)
+        if not incident:
+            return _error(404, "not_found", f"incident {incident_id} not found")
+        analysis = incident.claude_analysis
+        return JSONResponse({
+            "incident": {
+                "incident_id": incident.incident_id,
+                "title": incident.title,
+                "severity": str(incident.severity),
+                "status": str(incident.status),
+                "detected_at": incident.detected_at.isoformat(),
+                "resolved_at": incident.resolved_at.isoformat() if incident.resolved_at else None,
+                "affected_services": list(incident.affected_services),
+                "alert_fingerprints": list(incident.alert_fingerprints),
+                "root_cause": incident.root_cause,
+                "recovery_summary": incident.recovery_summary,
+                "total_downtime_s": incident.total_downtime_s,
+                "claude_analysis": {
+                    "root_cause": analysis.root_cause,
+                    "confidence": analysis.confidence,
+                    "recommended_actions": list(analysis.recommended_actions),
+                    "recovery_plan": list(analysis.recovery_plan),
+                    "estimated_recovery_time_s": analysis.estimated_recovery_time_s,
+                    "risk_assessment": analysis.risk_assessment,
+                    "model": analysis.model,
+                    "analyzed_at": analysis.analyzed_at.isoformat(),
+                } if analysis else None,
+                "health_after": incident.health_after,
+            }
+        })
+
+    async def get_audit_trail(request: Request) -> JSONResponse:
+        try:
+            require_platform_permission(request, PERM_PLATFORM_READ_ALL)
+        except (SessionRequiredError, ForbiddenError) as exc:
+            return _error(401 if isinstance(exc, SessionRequiredError) else 403, "forbidden", str(exc))
+        incident_id = request.path_params["incident_id"]
+        entries = system_x_service.get_audit_trail(incident_id)
+        return JSONResponse({
+            "audit_trail": [
+                {
+                    "entry_id": e.entry_id,
+                    "recorded_at": e.recorded_at.isoformat(),
+                    "actor": e.actor,
+                    "action": e.action,
+                    "result": e.result,
+                    "rollback_status": e.rollback_status,
+                    "verification_outcome": e.verification_outcome,
+                }
+                for e in entries
+            ]
+        })
+
+    async def get_recovery_actions(request: Request) -> JSONResponse:
+        try:
+            require_platform_permission(request, PERM_PLATFORM_READ_ALL)
+        except (SessionRequiredError, ForbiddenError) as exc:
+            return _error(401 if isinstance(exc, SessionRequiredError) else 403, "forbidden", str(exc))
+        incident_id = request.path_params["incident_id"]
+        actions = system_x_service.get_recovery_actions(incident_id)
+        return JSONResponse({
+            "recovery_actions": [
+                {
+                    "action_id": a.action_id,
+                    "action_type": str(a.action_type),
+                    "target_service": a.target_service,
+                    "status": str(a.status),
+                    "started_at": a.started_at.isoformat(),
+                    "completed_at": a.completed_at.isoformat() if a.completed_at else None,
+                    "result": a.result,
+                    "error": a.error,
+                    "rolled_back": a.rolled_back,
+                }
+                for a in actions
+            ]
+        })
+
+    async def get_notifications(request: Request) -> JSONResponse:
+        try:
+            require_platform_permission(request, PERM_PLATFORM_READ_ALL)
+        except (SessionRequiredError, ForbiddenError) as exc:
+            return _error(401 if isinstance(exc, SessionRequiredError) else 403, "forbidden", str(exc))
+        incident_id = request.path_params["incident_id"]
+        notifications = system_x_service.get_notifications(incident_id)
+        return JSONResponse({
+            "notifications": [
+                {
+                    "notification_id": n.notification_id,
+                    "channel": str(n.channel),
+                    "notification_type": n.notification_type,
+                    "recipient": n.recipient,
+                    "subject": n.subject,
+                    "status": str(n.status),
+                    "sent_at": n.sent_at.isoformat() if n.sent_at else None,
+                    "error": n.error,
+                    "created_at": n.created_at.isoformat(),
+                }
+                for n in notifications
+            ]
+        })
+
+    return [
+        Route("/admin/system-x/incidents", list_incidents, methods=["GET"]),
+        Route("/admin/system-x/incidents/{incident_id}", get_incident, methods=["GET"]),
+        Route("/admin/system-x/incidents/{incident_id}/audit-trail", get_audit_trail, methods=["GET"]),
+        Route("/admin/system-x/incidents/{incident_id}/recovery-actions", get_recovery_actions, methods=["GET"]),
+        Route("/admin/system-x/incidents/{incident_id}/notifications", get_notifications, methods=["GET"]),
+    ]
 
 
 def _build_startup_handlers(

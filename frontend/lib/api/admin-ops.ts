@@ -269,3 +269,84 @@ export type TimelineEntry = {
 };
 
 export const getIncidentTimeline = () => get<TimelineEntry[]>("/admin/incident-timeline");
+
+// -- System X: Autonomous Operations Controller ------------------------------
+
+export type SystemXIncident = {
+  incident_id: string;
+  title: string;
+  severity: "WARNING" | "CRITICAL";
+  status: "DETECTING" | "ANALYZING" | "AWAITING_APPROVAL" | "RECOVERING" | "VERIFYING" | "ROLLING_BACK" | "RESOLVED" | "FAILED";
+  detected_at: string;
+  resolved_at: string | null;
+  affected_services: string[];
+  total_downtime_s: number | null;
+  root_cause: string | null;
+  recovery_summary: string | null;
+};
+
+export type SystemXIncidentDetail = SystemXIncident & {
+  alert_fingerprints: string[];
+  claude_analysis: {
+    root_cause: string;
+    confidence: string;
+    recommended_actions: string[];
+    recovery_plan: string[];
+    estimated_recovery_time_s: number;
+    risk_assessment: string;
+    model: string;
+    analyzed_at: string;
+  } | null;
+  health_after: Record<string, unknown>;
+};
+
+export type SystemXRecoveryAction = {
+  action_id: string;
+  action_type: string;
+  target_service: string | null;
+  status: string;
+  started_at: string;
+  completed_at: string | null;
+  result: string | null;
+  error: string | null;
+  rolled_back: boolean;
+};
+
+export type SystemXAuditEntry = {
+  entry_id: string;
+  recorded_at: string;
+  actor: string;
+  action: string;
+  result: string | null;
+  rollback_status: string | null;
+  verification_outcome: string | null;
+};
+
+export type SystemXNotification = {
+  notification_id: string;
+  channel: string;
+  notification_type: string;
+  recipient: string;
+  subject: string | null;
+  status: string;
+  sent_at: string | null;
+  error: string | null;
+  created_at: string;
+};
+
+export const listSystemXIncidents = (activeOnly = false) =>
+  get<{ incidents: SystemXIncident[] }>(
+    `/admin/system-x/incidents${activeOnly ? "?active=true" : ""}`,
+  );
+
+export const getSystemXIncident = (id: string) =>
+  get<{ incident: SystemXIncidentDetail }>(`/admin/system-x/incidents/${encodeURIComponent(id)}`);
+
+export const getSystemXAuditTrail = (id: string) =>
+  get<{ audit_trail: SystemXAuditEntry[] }>(`/admin/system-x/incidents/${encodeURIComponent(id)}/audit-trail`);
+
+export const getSystemXRecoveryActions = (id: string) =>
+  get<{ recovery_actions: SystemXRecoveryAction[] }>(`/admin/system-x/incidents/${encodeURIComponent(id)}/recovery-actions`);
+
+export const getSystemXNotifications = (id: string) =>
+  get<{ notifications: SystemXNotification[] }>(`/admin/system-x/incidents/${encodeURIComponent(id)}/notifications`);

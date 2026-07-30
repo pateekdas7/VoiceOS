@@ -40,3 +40,10 @@ credentials.json
 .idea/
 .DS_Store
 Thumbs.db
+
+# Node / frontend build artifacts
+node_modules/
+bff.err
+bff.out
+cookies.txt
+vc2.txt
