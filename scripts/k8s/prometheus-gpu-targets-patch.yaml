@@ -1,23 +1,40 @@
 # Prometheus ConfigMap patch — GPU scrape targets via WireGuard (10.99.0.2).
 #
 # Apply with:
-#   kubectl get configmap prometheus-config -n voiceos-ops -o yaml > /tmp/prom-cm.yaml
+#   kubectl get configmap prometheus-config -n voiceos-ops -o json > /tmp/prom-cm-full.json
 #   python3 scripts/k8s/apply-prometheus-gpu-patch.py
-#   kubectl apply -f /tmp/prom-cm-patched.yaml
+#   kubectl patch configmap prometheus-config -n voiceos-ops --patch-file /tmp/prom-patch.json
 #
 # GPU WireGuard IP: 10.99.0.2  (CPU side: 10.99.0.1)
-# Ports: LLM=8000, STT=8100, TTS=8200, Evaluator=8300
-# Health paths: LLM=/health, STT=/health/ready, TTS=/health/ready, Eval=/health/ready
-# Metrics paths: LLM=/metrics, STT=/metrics, TTS=/metrics, Eval=N/A
+# Ports: STT=8100, TTS=8200
+# Health paths: STT=/health/ready, TTS=/health/ready
+# Metrics paths: STT=/metrics, TTS=/metrics
+#
+# NOTE: LLM (port 8000) is intentionally excluded from Prometheus scraping.
+# vLLM's /metrics endpoint returns ~53 KB which takes 25+ seconds over the
+# WireGuard TCP-over-TCP (socat/autossh) tunnel — well past any viable
+# scrape timeout. LLM health is tracked via BFF /system/health instead.
+# scrape_interval/scrape_timeout are overridden per-job (30s/25s) because
+# the tunnel adds 1-10s overhead even for small responses.
 
 gpu_node_scrape_config: |
-  - job_name: gpu-node
+  - job_name: gpu-stt
+    scrape_interval: 30s
+    scrape_timeout: 25s
     static_configs:
-      - targets:
-          - "10.99.0.2:8000"   # LLM (vLLM / Qwen2.5-7B-FP8)
-          - "10.99.0.2:8100"   # STT (Whisper large-v3-turbo)
-          - "10.99.0.2:8200"   # TTS (Veena FP16 + SNAC 24kHz)
+      - targets: ["10.99.0.2:8100"]
         labels:
           node_pool: gpu
           cluster_member: "false"
+          gpu_service: stt
+          gpu_host: "69.19.140.92"
+  - job_name: gpu-tts
+    scrape_interval: 30s
+    scrape_timeout: 25s
+    static_configs:
+      - targets: ["10.99.0.2:8200"]
+        labels:
+          node_pool: gpu
+          cluster_member: "false"
+          gpu_service: tts
           gpu_host: "69.19.140.92"
