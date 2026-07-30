@@ -93,6 +93,16 @@ class RuntimeConfig:
     model_config: ModelConfig | None
 
 
+def _make_csi_tracker() -> Any:
+    """Create a ConversationStateIntelligence tracker without importing from
+    src/engines/ (boundary Rule 1). Deferred import so the import only fires
+    the first time a call needs a fresh tracker — zero cost for callers that
+    never wire conversation_state_tracker at all."""
+    from src.engines.conversation_state.engine import ConversationStateIntelligence  # noqa: PLC0415
+
+    return ConversationStateIntelligence()
+
+
 def _default_response_plan() -> ResponsePlan:
     """A minimal, valid ResponsePlan for speak_scripted_text() calls that
     have no real per-turn plan yet (the call-open greeting, the call-close
@@ -124,6 +134,8 @@ class CILPort(Protocol):
         intent_history: list[str] | None,
         identity_verified: bool,
         silence_duration_ms: int,
+        conversation_state_tracker: Any = None,
+        concession_round: int = 0,
     ) -> tuple[ResponsePlan, DecisionEnvelope]:
         """Run all CIL engines and return (ResponsePlan, DecisionEnvelope)."""
         ...
@@ -303,6 +315,8 @@ class ConversationEngine:
         promise_to_pay_service: PromiseToPayService | None = None,
         dialogue_response: DialogueResponsePort | None = None,
         lender_name: str = "",
+        working_memory_store: Any | None = None,
+        relationship_memory_store: Any | None = None,
     ) -> None:
         self._cil = cil
         self._prompt_builder = prompt_builder
@@ -382,6 +396,21 @@ class ConversationEngine:
         self._dialogue_response = dialogue_response
         self._lender_name = lender_name
 
+        # V2 Ch11 Working Memory: per-call short-term Redis-backed state shared
+        # with CIL engines via the caller-owned CSI tracker pattern. Optional —
+        # None preserves pre-memory-wiring behavior (CIL gets a fresh tracker
+        # each turn, so AdaptiveConversationEngine has no cross-turn state).
+        self._working_memory_store = working_memory_store
+
+        # V2 Ch12 Relationship Memory: cross-call Postgres-backed customer state
+        # loaded at call start and persisted at call end. Optional.
+        self._relationship_memory_store = relationship_memory_store
+
+        # One ConversationStateIntelligence tracker per active call — same
+        # instance passed on every turn so dialogue-state persists across turns.
+        # Typed Any here to avoid importing from src/engines/ (boundary Rule 1).
+        self._csi_trackers: dict[str, Any] = {}
+
     def start_call(
         self, tenant_id: TenantId, customer_id: str, call_id: str, campaign_id: str | None = None
     ) -> CustomerContext:
@@ -409,19 +438,47 @@ class ConversationEngine:
         self._call_contexts[call_id] = context
         if campaign_id is not None:
             self._call_campaign_ids[call_id] = campaign_id
+
+        # V2 Ch12: load relationship memory at call start so it is available
+        # to the CIL's AdaptiveConversationEngine on the very first turn.
+        if self._relationship_memory_store is not None:
+            try:
+                self._relationship_memory_store.get(customer_id)
+            except Exception:
+                logger.warning("RelationshipMemoryStore.get() failed for customer %s", customer_id)
+
         return context
 
-    def end_call(self, call_id: str, outcome: str = "completed") -> None:
+    def end_call(self, call_id: str, outcome: str = "completed", *, customer_id: str = "", sentiment: str = "neutral") -> None:
         """Release the cached CustomerContext (and campaign linkage) for a finished call.
 
         ``outcome`` is the SLO-level label: "completed" for a normally
         terminated call, "system_error" for a call terminated by an AI
         pipeline failure. The availability recording rule in
         recording_rules.yml partitions on outcome!="system_error".
+
+        ``customer_id`` and ``sentiment``: when provided (and
+        ``relationship_memory_store`` is wired), a minimal CallSummary is
+        persisted so the next call can see this call's outcome and sentiment.
         """
         _call_count_total.labels(outcome=outcome).inc()
+
+        # V2 Ch12: persist a cross-call CallSummary before releasing any state.
+        if self._relationship_memory_store is not None and customer_id:
+            try:
+                from src.engines.memory.relationship.schema import CallSummary
+                summary = CallSummary(
+                    call_id=call_id,
+                    sentiment=sentiment,
+                    outcome=outcome,
+                )
+                self._relationship_memory_store.update(customer_id, summary)
+            except Exception:
+                logger.warning("RelationshipMemoryStore.update() failed for call %s", call_id)
+
         self._call_contexts.pop(call_id, None)
         self._call_campaign_ids.pop(call_id, None)
+        self._csi_trackers.pop(call_id, None)
 
     def campaign_id_for_call(self, call_id: str) -> str | None:
         """The campaign that dispatched ``call_id``, if any (Sprint-023)."""
@@ -619,10 +676,19 @@ class ConversationEngine:
         # CampaignPromptNotPinnedError, failing this turn closed, if unpinned.
         self._require_pinned_prompt(TenantId(turn.tenant_id), self._call_campaign_ids.get(turn.call_id))
 
+        # Session and CSI tracker must be initialized before the CIL call so
+        # concession_round and the per-call ConversationStateIntelligence
+        # instance are available as inputs to ResponsePlanningEngine.assemble().
+        session = self._sessions.setdefault(turn.call_id, ConversationSessionState(CallId(turn.call_id)))
+        csi_tracker = self._csi_trackers.setdefault(turn.call_id, _make_csi_tracker())
+
         # Step 1 — Knowledge retrieval.
         snippets: list[Snippet] = await self._knowledge.retrieve(turn.transcript)
 
         # Step 2 — CIL pipeline (all engines via injected protocol).
+        # conversation_state_tracker: same instance across every turn so
+        # AdaptiveConversationEngine's dialogue-state machine persists across turns.
+        # concession_round: how many COUNTER moves have already been made this call.
         response_plan, decision_envelope = self._cil.assemble(
             turn=turn,
             context=context,
@@ -630,7 +696,16 @@ class ConversationEngine:
             intent_history=intent_history,
             identity_verified=identity_verified,
             silence_duration_ms=silence_duration_ms,
+            conversation_state_tracker=csi_tracker,
+            concession_round=session.concession_round,
         )
+
+        # Detect a COUNTER negotiation move (agent proposed a counter-offer but
+        # did not finalize commitment) and advance the per-call concession counter
+        # so the next turn's NegotiationEngine knows how much runway is left.
+        _neg = response_plan.negotiation_envelope
+        if _neg is not None and not _neg.is_finalized_commitment and _neg.proposed_amount_minor is not None:
+            session.increment_concession_round()
 
         # Step 3 — Build deterministic prompt.
         prompt_text, _prompt_hash = self._prompt_builder.build(response_plan, context)
@@ -672,13 +747,37 @@ class ConversationEngine:
         # `entry_id` is the real EventBus stream offset (not decision_envelope's
         # own UUID) — EventTailReplay resumes from it via a literal Redis
         # XRANGE, which rejects anything that is not a genuine stream ID.
-        session = self._sessions.setdefault(turn.call_id, ConversationSessionState(CallId(turn.call_id)))
+        # (session already initialized above before the CIL call)
         session.record_turn(
             intent_label=intent_history[-1] if intent_history else None,
             event_offset=entry_id,
         )
         if self._snapshot_store is not None and session.turn_count % self._snapshot_every_n_turns == 0:
             self._snapshot_store.take_snapshot(session, TenantId(turn.tenant_id), CallId(turn.call_id))
+
+        # V2 Ch11 Working Memory: update the per-call Redis state after each
+        # turn so downstream engines and the next turn's CIL have the latest
+        # extracted intents, entities, and strategy. Best-effort — a Redis
+        # failure must never abort the call's reply generation.
+        if self._working_memory_store is not None:
+            try:
+                from src.engines.memory.working.schema import WorkingMemoryDelta
+                _existing_wm = self._working_memory_store.get(turn.call_id)
+                _primary_intent = response_plan.intents[0].label if response_plan.intents else None
+                _strategy_label = response_plan.strategy.action.value if response_plan.strategy else None
+                _neg_state = "negotiating" if response_plan.negotiation_envelope else "initial"
+                _entities_str = {k: str(v) for k, v in response_plan.entities.items()}
+                _wm_delta = WorkingMemoryDelta(
+                    turn_count=session.turn_count,
+                    last_intent=_primary_intent,
+                    extracted_entities=_entities_str if _entities_str else None,
+                    negotiation_state=_neg_state,
+                    last_strategy=_strategy_label,
+                    customer_utterances=(*_existing_wm.customer_utterances, turn.transcript),
+                )
+                self._working_memory_store.update(turn.call_id, _wm_delta)
+            except Exception:
+                logger.warning("WorkingMemoryStore update failed for call %s — continuing", turn.call_id)
 
         # Step 5 — Reply generation: scripted golden path (Phase 6g) when
         # wired, with a real per-turn LLM fallback when the golden path can't

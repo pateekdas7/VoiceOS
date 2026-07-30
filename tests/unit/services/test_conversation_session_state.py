@@ -155,3 +155,38 @@ class TestConversationSessionState:
         session.apply_event(event)
 
         assert session.turn_count == 0
+
+    def test_concession_round_starts_at_zero(self) -> None:
+        session = ConversationSessionState(CallId("call-1"))
+        assert session.concession_round == 0
+
+    def test_increment_concession_round_returns_new_value(self) -> None:
+        session = ConversationSessionState(CallId("call-1"))
+        assert session.increment_concession_round() == 1
+        assert session.increment_concession_round() == 2
+        assert session.concession_round == 2
+
+    def test_concession_round_survives_snapshot_restore(self) -> None:
+        session = ConversationSessionState(CallId("call-1"))
+        session.increment_concession_round()
+        session.increment_concession_round()
+
+        snap = session.snapshot()
+        restored = ConversationSessionState(CallId("call-1"))
+        restored.restore(snap)
+
+        assert restored.concession_round == 2
+
+    def test_concession_round_defaults_to_zero_in_old_snapshots(self) -> None:
+        """Snapshots taken before concession_round was added must restore cleanly."""
+        session = ConversationSessionState(CallId("call-1"))
+        snap = session.snapshot()
+        # Simulate an old snapshot that lacks the key (StateSnapshot is frozen,
+        # so rebuild via model_copy with updated state dict).
+        old_state = {k: v for k, v in snap.state.items() if k != "concession_round"}
+        old_snap = snap.model_copy(update={"state": old_state})
+
+        restored = ConversationSessionState(CallId("call-1"))
+        restored.restore(old_snap)
+
+        assert restored.concession_round == 0

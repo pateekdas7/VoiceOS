@@ -78,6 +78,12 @@ class ConversationSessionState:
         # readiness entry).
         self._consecutive_else_count: int = 0
 
+        # Negotiation concession counter — incremented once per COUNTER move
+        # (is_finalized_commitment=False AND proposed_amount_minor is not None).
+        # Passed to ResponsePlanningEngine.assemble() so NegotiationEngine can
+        # tighten/widen its concession envelope as the call progresses.
+        self._concession_round: int = 0
+
     @property
     def call_id(self) -> CallId:
         return self._call_id
@@ -205,6 +211,14 @@ class ConversationSessionState:
     def reset_consecutive_else_count(self) -> None:
         self._consecutive_else_count = 0
 
+    @property
+    def concession_round(self) -> int:
+        return self._concession_round
+
+    def increment_concession_round(self) -> int:
+        self._concession_round += 1
+        return self._concession_round
+
     # ------------------------------------------------------------------
     # Recoverable protocol
     # ------------------------------------------------------------------
@@ -227,6 +241,7 @@ class ConversationSessionState:
                 "assistant_replies": self._assistant_replies,
                 "last_empathy_state": self._last_empathy_state,
                 "consecutive_else_count": self._consecutive_else_count,
+                "concession_round": self._concession_round,
             },
             last_event_offset=self._last_event_offset,
         )
@@ -248,6 +263,7 @@ class ConversationSessionState:
         self._assistant_replies = list(snapshot.state.get("assistant_replies", []))
         self._last_empathy_state = str(snapshot.state.get("last_empathy_state", ""))
         self._consecutive_else_count = int(snapshot.state.get("consecutive_else_count", 0))
+        self._concession_round = int(snapshot.state.get("concession_round", 0))
         self._version = snapshot.version
         self._last_event_offset = snapshot.last_event_offset
 

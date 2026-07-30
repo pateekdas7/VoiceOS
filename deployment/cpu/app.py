@@ -314,6 +314,31 @@ def build_cil() -> object:
 # ---------------------------------------------------------------------------
 
 
+def build_working_memory_store(raw_redis: object) -> object:
+    """V2 Ch11: Redis-backed per-call short-term state (WorkingMemoryStore).
+
+    Stores intent, entity, negotiation, and strategy state per active call
+    with a 4-hour TTL. Passed to ConversationEngine so __handle_turn_body
+    updates it after every CIL pipeline run — AdaptiveConversationEngine and
+    downstream engines can retrieve it on subsequent turns via the CSI tracker.
+    """
+    from src.engines.memory.working.store import WorkingMemoryStore
+
+    return WorkingMemoryStore(raw_redis)
+
+
+def build_relationship_memory_store(conn: object) -> object:
+    """V2 Ch12: Postgres-backed cross-call per-customer state (RelationshipMemoryStore).
+
+    Persists PTP history, sentiment trend, escalation count, and last outcome
+    across calls. Loaded at call start and updated at call end so the next
+    call's CIL has this customer's longitudinal context from the first turn.
+    """
+    from src.engines.memory.relationship.store import RelationshipMemoryStore
+
+    return RelationshipMemoryStore(conn)
+
+
 def build_dialogue_response_engine() -> object:
     """The deterministic scripted-response FSM (Path-A Phase 6f) that
     drove Call-001 — zero-arg constructor, same pattern as build_cil()'s
@@ -386,6 +411,12 @@ def build_conversation_engine() -> object:
         # registry exists yet — every real tenant must set this explicitly.
         dialogue_response=build_dialogue_response_engine(),
         lender_name=_env("LENDER_NAME", "Rajat Finance"),
+        # V2 Ch11/12: memory stores wired so every engine that participates
+        # via the CIL pipeline has access to cross-turn and cross-call state.
+        # Relationship store uses a dedicated connection (clean transaction
+        # boundary — same pattern as promise_to_pay_service above).
+        working_memory_store=build_working_memory_store(raw_redis),
+        relationship_memory_store=build_relationship_memory_store(build_postgres_connection()),
     )
     return engine
 
