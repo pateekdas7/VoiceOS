@@ -159,8 +159,7 @@ print(f"  AdaptiveConvEngine  ✓  tracker state after turn: {state_after}")
 if not envelope.decisions:
     failures.append("DecisionEnvelope: no decision records — at least IntentEngine record expected")
 else:
-    engines_in_envelope = {d.source_engine for d in envelope.decisions}
-    print(f"  DecisionEnvelope    ✓  {len(envelope.decisions)} records: {sorted(engines_in_envelope)}")
+    print(f"  DecisionEnvelope    ✓  {len(envelope.decisions)} decision records present")
 
 # ---------------------------------------------------------------------------
 # Report
