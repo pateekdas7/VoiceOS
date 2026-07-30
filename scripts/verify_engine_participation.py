@@ -20,23 +20,27 @@ from datetime import datetime, timezone
 # Build a real TurnInput
 # ---------------------------------------------------------------------------
 
-from src.libs.contracts.response_plan import (
-    IntentLabel,
-    StrategyLabel,
-)
-from src.libs.contracts.turn import TurnInput
+from src.libs.contracts.response_plan import StrategyLabel
+from src.libs.contracts.turn import TurnInput, TurnRole, UtteranceSegment
 
 
 CALL_ID = "verify-001"
 TENANT_ID = "tenant-default"
 
+_transcript = "Mujhe kuch mahine baad bharna hai, abhi paisa nahi hai"
 turn = TurnInput(
     call_id=CALL_ID,
     turn_id="turn-001",
     tenant_id=TENANT_ID,
-    transcript="Mujhe kuch mahine baad bharna hai, abhi paisa nahi hai",
-    audio_duration_ms=3200,
+    role=TurnRole.CUSTOMER,
+    transcript=_transcript,
+    segments=[
+        UtteranceSegment(text=_transcript, start_ms=0, end_ms=3200, confidence=0.92),
+    ],
     created_at=datetime.now(timezone.utc),
+    correlation_id="verify-corr-001",
+    trace_id="verify-trace-001",
+    turn_index=0,
 )
 
 # ---------------------------------------------------------------------------
