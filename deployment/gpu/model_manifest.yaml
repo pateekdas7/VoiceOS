@@ -5,22 +5,28 @@
 # Used by restore.sh → download_models.py to rebuild the GPU node.
 # ==============================================================================
 
-manifest_version: "1.2"
-last_updated: "Phase 0 restoration complete (2026-07-11)"
+manifest_version: "1.3"
+last_updated: "2026-08-03 (Sprint-029 Phase-2 GPU Runtime Redesign)"
 
 # ── GPU node hardware ─────────────────────────────────────────────────────────
+# UPDATED 2026-08-03: Hardware changed from NVIDIA L4 → NVIDIA RTX A6000.
+# A6000 provisioned 2026-07-19. VRAM nearly 2× larger; gpu_memory_utilization
+# recalibrated from 0.55 → 0.32 accordingly. Evaluator (15.3 GiB) now fits.
 gpu:
-  model: "NVIDIA L4"
-  vram_mb: 23034
-  driver_version: "580.126.20"
-  cuda_version: "13.0"          # driver max CUDA compatibility (NOT the PyTorch build version)
+  model: "NVIDIA RTX A6000"
+  architecture: "Ampere"
+  cuda_compute_capability: "8.6"    # sm_86 (NOT Ada Lovelace; no HW FP8)
+  vram_mb: 46068                    # nvidia-smi; spec is 48 GiB = 49152 MiB
+  driver_version: "570.x"           # Driver 570+ (CUDA 12.8 native + CUDA 13.0 compat)
+  cuda_compat: "13.0"               # cuda-compat-13-0 package; LD_LIBRARY_PATH set in systemd
+  ip: "185.216.21.242"              # Production node IP (subject to change on re-provisioning)
 
 # ── Runtime stack (pinned versions) ──────────────────────────────────────────
 runtime:
   python: "3.12.13"
-  torch: "2.11.0+cu128"         # cu128 = CUDA 12.8 PyTorch build (cu130 wheels not published)
-  cuda: "12.8"                  # torch.version.cuda — PyTorch CUDA build version, NOT driver max
-  cudnn: "9.19.0"               # available via torch.backends.cudnn
+  torch: "2.11.0+cu128"         # cu128 = CUDA 12.8 PyTorch build
+  cuda: "12.8"                  # torch.version.cuda (PyTorch CUDA build version)
+  cudnn: "9.19.0"               # torch.backends.cudnn.version() → 91900
   vllm: "0.24.0"
   faster_whisper: "1.2.1"
   ctranslate2: "4.8.0"
@@ -38,9 +44,16 @@ runtime:
 #   Veena 3B BF16 + SNAC:  7,980 MB         (2,048 MB reserved)
 #   Measured total:        21,850 MB used / 695 MB free
 #   vLLM util reduced 0.70 → 0.55 to make room for Veena 3B BF16 (larger than the 2 GB estimate).
-vram_budget_mb: 23034
-vram_budget_spec_mb: 24576
-vram_measured_used_mb: 21850   # Sprint-009 Phase 2, all three services running
+vram_budget_mb: 46068           # A6000 (nvidia-smi); was 23034 on L4
+vram_budget_spec_mb: 49152      # 48 GiB spec; was 24576 on L4
+# A6000 allocation (STT + LLM@0.32 + TTS):
+#   STT:   1,860 MB (model + ctranslate2 workspace)
+#   LLM:  14,742 MB (weights 8.17G + KV 5.72G + CUDA graphs 0.51G @ 0.32 util)
+#   TTS:   7,980 MB (Veena 3B BF16 + SNAC)
+#   Total: 24,582 MB used / 21,486 MB free
+# With evaluator (Sprint-029):
+#   Evaluator: 15,360 MB  → Total ~39,942 MB / ~6,126 MB free
+vram_measured_used_mb: 24582    # Sprint-029 Phase 2, STT+LLM+TTS (evaluator excluded)
 
 # ── Models ────────────────────────────────────────────────────────────────────
 # PRODUCTION BASELINE — locked 2026-07-02.

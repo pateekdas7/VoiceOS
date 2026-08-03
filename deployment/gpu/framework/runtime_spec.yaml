@@ -1,0 +1,284 @@
+# ==============================================================================
+# VoiceOS GPU Runtime Specification
+# Version: 2.0  |  Sprint-29 GPU Runtime Redesign (Local-First)
+# ==============================================================================
+#
+# This is the canonical source of truth for the production GPU runtime.
+# Every GPU server deployment MUST match this specification.
+# DO NOT modify without an ADR and version bump.
+#
+# Compared to v1.0 (model_manifest.yaml):
+#   - Hardware updated from NVIDIA L4 → NVIDIA RTX A6000
+#   - Adds local dev mode specification (VOICEOS_MODE=dev)
+#   - Separates driver CUDA max vs PyTorch CUDA build vs compat version
+#   - Documents all service startup dependencies
+# ==============================================================================
+
+spec_version: "2.0"
+spec_date: "2026-08-03"
+approved_by: "Sprint-29 GPU Runtime Redesign"
+
+# ── Hardware ──────────────────────────────────────────────────────────────────
+hardware:
+  gpu:
+    model: "NVIDIA RTX A6000"
+    architecture: "Ampere"
+    cuda_compute_capability: "8.6"
+    sm_version: "sm_86"
+    vram_mb: 46068                # nvidia-smi reported; spec is 48 GiB = 49152 MiB
+    vram_spec_gb: 48
+    memory_bandwidth_gbps: 768
+    fp8_hardware: false           # FP8 ops require sm_89+ (Ada/Hopper); A6000=Ampere
+    fp16_hardware: true           # Native FP16 tensor cores
+    bf16_hardware: true           # Native BF16 (Ampere A100+; A6000 supports BF16)
+    int8_hardware: true           # INT8 tensor cores available on Ampere
+    nvlink: false                 # A6000 is PCIe-only; no NVLink
+    pcie: "4.0 x16"
+
+  cpu_min_cores: 8
+  system_ram_gb_min: 48
+  nvme_gb_min: 250                # OS(30) + models(~55) + cache(~50) + headroom
+
+# ── Operating System ──────────────────────────────────────────────────────────
+os:
+  distribution: "Ubuntu"
+  version: "22.04"
+  codename: "jammy"
+  arch: "x86_64"
+  kernel_min: "5.15.0"           # LTS kernel series
+
+# ── NVIDIA Driver & CUDA ──────────────────────────────────────────────────────
+nvidia:
+  driver_version: "570.x"        # Driver 570+ on A6000 (natively supports CUDA 12.8)
+  driver_version_min: "525.85"   # Minimum for CUDA 12.x toolkit
+  cuda_max_native: "12.8"        # Max CUDA version natively supported by driver 570.x
+
+  cuda_compat_version: "13.0"    # Installed via: apt-get install cuda-compat-13-0 cuda-nvrtc-13-0
+  cuda_compat_ld_path: "/usr/local/cuda-13.0/compat:/usr/local/cuda-13.0/lib64"
+  # LD_LIBRARY_PATH must include cuda_compat_ld_path for CUDA 13.0 compat to work.
+  # Configured in systemd service files: Environment=LD_LIBRARY_PATH=...
+
+  cudnn_version: "9.19.0"        # torch.backends.cudnn.version() → 91900
+  cudnn_source: "bundled with PyTorch wheel"
+
+  required_apt_packages:
+    - cuda-compat-13-0
+    - cuda-nvrtc-13-0
+
+# ── Python ─────────────────────────────────────────────────────────────────────
+python:
+  version: "3.12.13"
+  version_min: "3.12.0"
+  venv_path: "/opt/voiceos-gpu/venv"
+  executable: "/opt/voiceos-gpu/venv/bin/python"
+  pip_executable: "/opt/voiceos-gpu/venv/bin/pip"
+
+# ── Python Runtime (pinned) ───────────────────────────────────────────────────
+runtime:
+  torch: "2.11.0+cu128"          # PyTorch with CUDA 12.8 build (cu128 index)
+  # torch.version.cuda = "12.8"  # PyTorch's reported CUDA build version
+  # Note: torch runs correctly with CUDA 13.0 compat (backward compatible)
+
+  vllm: "0.24.0"                 # LLM inference engine
+  faster_whisper: "1.2.1"        # STT inference (wraps CTranslate2)
+  ctranslate2: "4.8.0"           # CTranslate2 backend for Whisper
+
+  transformers: "5.12.1"         # HuggingFace Transformers (Veena, Qwen-Omni)
+  tokenizers: "0.22.2"
+  huggingface_hub: "0.28.0"
+  accelerate: "1.7.0"
+  flashinfer: "0.6.12"           # FlashInfer attention (Ampere sm_86 supported)
+  triton: "3.6.0"
+
+  snac: "1.0.0"                  # SNAC 24 kHz codec (Veena TTS output decoder)
+  numpy: "2.3.5"
+
+  fastapi: "0.115.6"
+  uvicorn: "0.30.6"
+  pydantic: "2.10.4"
+  httpx: "0.27.0"
+
+  prometheus_client: "0.20.0"
+  grpcio: "1.64.1"
+  grpcio_tools: "1.64.1"
+  pyyaml: "6.0.2"
+
+  # Sprint-029 Founder Evaluator only (port 8300, isolated from production):
+  qwen_omni_utils: ">=0.0.9"
+  soundfile: ">=0.14.0"
+  librosa: ">=0.11.0"
+
+# ── System Packages ────────────────────────────────────────────────────────────
+system_packages:
+  - curl wget git unzip jq
+  - build-essential pkg-config ninja-build
+  - ca-certificates gnupg lsb-release
+  - net-tools htop iotop
+  - software-properties-common pciutils
+  - ffmpeg
+  # CUDA compat packages:
+  - cuda-compat-13-0
+  - cuda-nvrtc-13-0
+
+# ── Directory Structure ────────────────────────────────────────────────────────
+paths:
+  root: "/opt/voiceos-gpu"
+  venv: "/opt/voiceos-gpu/venv"
+  models: "/opt/voiceos-gpu/models"
+  logs: "/opt/voiceos-gpu/logs"
+  deployment: "/opt/voiceos-gpu/deployment"
+  env_file: "/opt/voiceos-gpu/.env"
+
+  model_paths:
+    whisper: "/opt/voiceos-gpu/models/whisper-large-v3-turbo"
+    qwen_fp8: "/opt/voiceos-gpu/models/qwen2.5-7b-fp8"
+    veena: "/opt/voiceos-gpu/models/veena-fp16"
+    snac: "/opt/voiceos-gpu/models/snac-24khz"
+    qwen_omni: "/opt/voiceos-gpu/models/qwen2.5-omni-7b"
+
+# ── VRAM Budget ───────────────────────────────────────────────────────────────
+vram_budget:
+  total_mb: 46068
+
+  # Service VRAM allocations (measured Sprint-029):
+  services:
+    stt_mb: 1860          # 1,260 model + 600 ctranslate2 CUDA workspace (pre-allocated at warmup)
+    llm_mb: 14742         # vLLM at 0.32 utilization: weights(8.17G) + KV(5.72G) + graphs(0.51G)
+    tts_mb: 7980          # Veena 3B BF16 + SNAC 24 kHz codec
+    evaluator_mb: 15360   # Qwen2.5-Omni-7B BF16 (audio output decoder disabled)
+
+  # Allocation plan:
+  # STT + LLM + TTS (production):  24,582 MB  |  21,486 MB free
+  # Adding evaluator (Sprint-029): ~39,942 MB  |  ~6,126 MB free (A6000 only)
+  #
+  # NOTE: The evaluator (15.3 GiB) fits on A6000 (45 GiB) but NOT on L4 (23 GiB).
+  # Always start LLM first so vLLM claims its allocation before STT warmup.
+
+# ── Production Services ────────────────────────────────────────────────────────
+services:
+  stt:
+    name: "voiceos-stt"
+    systemd_unit: "voiceos-stt.service"
+    script: "/opt/voiceos-gpu/services/stt/server.py"
+    port: 8100
+    device: "cuda"
+    compute_type: "int8_float16"  # INT8 weights, FP16 activations — supported on Ampere
+    model_size: "large-v3-turbo"
+    vram_mb: 1860
+    startup_timeout_s: 120
+    startup_after: ["voiceos-llm"]  # LLM must claim VRAM first
+    endpoints:
+      liveness: "/health/live"
+      readiness: "/health/ready"
+      metrics: "/metrics"
+      inference: "/transcribe"
+    latency_targets:
+      first_word_p95_ms: 500
+    measured_latency_ms: 330          # Measured on A6000
+
+  llm:
+    name: "voiceos-llm"
+    systemd_unit: "voiceos-llm.service"
+    engine: "vllm"
+    port: 8000
+    vram_mb: 14742
+    gpu_memory_utilization: 0.32      # Calibrated for A6000: 14.7 GiB (weights+KV+graphs)
+    max_model_len: 4096
+    dtype: "auto"                     # Reads torch_dtype=bfloat16 from config.json
+    startup_timeout_s: 300
+    startup_after: []                 # Must start first
+    endpoints:
+      health: "/health"
+      metrics: "/metrics"
+      completions: "/v1/chat/completions"
+      models: "/v1/models"
+    latency_targets:
+      ttft_p95_ms: 500
+    measured_ttft_ms: 57              # Measured on A6000
+
+  tts:
+    name: "voiceos-tts"
+    systemd_unit: "voiceos-tts.service"
+    script: "/opt/voiceos-gpu/services/tts/server.py"
+    port: 8200
+    device: "cuda"
+    vram_mb: 7980
+    startup_timeout_s: 180
+    startup_after: ["voiceos-llm"]
+    endpoints:
+      liveness: "/health/live"
+      readiness: "/health/ready"
+      metrics: "/metrics"
+      inference: "/synthesize"
+    audio_format:
+      encoding: "float32_le"
+      sample_rate: 24000
+      channels: 1
+      chunk_samples: 2048           # 85.33ms per chunk
+      chunk_bytes: 8192             # 2048 * 4 bytes
+    latency_targets:
+      first_audio_p95_ms: 750       # ADR-004
+    measured_ttfa_ms: 300           # Clause-level streaming, 21-token window (3 super-frames)
+
+  evaluator:
+    name: "voiceos-evaluator"
+    systemd_unit: "voiceos-evaluator.service"
+    script: "/opt/voiceos-gpu/services/evaluator/server.py"
+    port: 8300
+    vram_mb: 15360
+    startup_timeout_s: 600          # ~3-5 min cold start
+    startup_after: ["voiceos-llm", "voiceos-stt", "voiceos-tts"]
+    isolation: true                 # Not part of production STT→LLM→TTS pipeline
+    sprint: "029"                   # Only active during Sprint-029 Founder Validation
+    endpoints:
+      liveness: "/health/live"
+      readiness: "/health/ready"
+      inference: "/evaluate"
+
+# ── Service Startup Order ──────────────────────────────────────────────────────
+startup_order:
+  - voiceos-llm          # First: vLLM ~90s startup; claims GPU allocation before others
+  - voiceos-stt          # Second: STT warmup allocates ctranslate2 workspace after vLLM
+  - voiceos-tts          # Third: Veena + SNAC ~28s start
+  - voiceos-evaluator    # Last: not time-critical; 3-5 min cold start
+
+# ── Local Development Mode ────────────────────────────────────────────────────
+dev_mode:
+  activate: "VOICEOS_MODE=dev"
+  description: "CPU + mock services for local development without a GPU"
+
+  stt:
+    mode: "mock"                    # Returns synthetic Hindi transcription in 80ms
+    # OR: mode: "cpu" with model_size: "tiny" for real transcription on CPU
+
+  llm:
+    mode: "mock_server"             # Run: python services/llm/mock_server.py
+    description: "OpenAI-compatible mock server returning canned Hindi responses"
+
+  tts:
+    mode: "mock"                    # Returns PCM silence, correct chunk format
+
+  commands:
+    install: "pip install -r requirements.cpu.txt"
+    start_all: "make dev"
+    test: "make test"
+
+# ── Compatibility Notes ────────────────────────────────────────────────────────
+compatibility:
+  fp8_on_a6000:
+    supported: true
+    hardware_fp8: false             # A6000 (sm_86) has no FP8 tensor cores
+    mechanism: "compressed-tensors dequantize FP8→BF16 at compute time"
+    vram_benefit: true              # FP8 storage (8-bit) saves ~50% vs BF16
+    perf_impact: "minimal; compute is BF16, memory bandwidth benefit preserved"
+    recommendation: "Keep FP8 model — memory bandwidth advantage outweighs lack of HW FP8"
+
+  whisper_compute_type:
+    cuda: "int8_float16"            # INT8 weights, FP16 activations — Ampere tensor cores
+    cpu: "int8"                     # int8_float16 not supported on CPU (no CUDA)
+    fp8_ctranslate2: false          # FP8 not supported in CTranslate2 4.8.0 on sm_86
+
+  veena_device_map:
+    cuda: "cuda"                    # BF16, ~7.8 GiB on A6000
+    cpu: "cpu"                      # Possible but extremely slow (~200× slower than GPU)
+    recommendation: "CPU mode is for API contract testing only; always use GPU for production"

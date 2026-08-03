@@ -1,27 +1,29 @@
 #!/usr/bin/env python3
-"""Whisper STT Inference Server — Sprint-009 GPU deployment.
+"""Whisper STT Inference Server — Sprint-029 GPU Runtime Redesign.
 
-Runs on the GPU node (IP ephemeral; see GPU_NODE_STATE.md). Loads Whisper large-v3-turbo via
-faster-whisper with int8_float16 compute type. Exposes a FastAPI HTTP server
-on port 8100 for the CPU-side WhisperAdapter to call.
+Runs on the GPU node or in local dev mode (CPU + mock).
 
 Endpoints:
     GET  /health/live   — liveness probe (always 200 if process is alive)
     GET  /health/ready  — readiness probe (200 only after model is loaded)
+    GET  /metrics       — Prometheus text-format metrics
     POST /transcribe    — transcribe PCM16LE audio, return word-level results
 
-Usage (matches restore.sh):
-    python3 server.py \
-        --model-path /opt/voiceos-gpu/models/whisper-large-v3-turbo \
-        --compute-type int8_float16 \
-        --port 8100
+Usage:
+    # Production (GPU):
+    python3 server.py --model-path /opt/voiceos-gpu/models/whisper-large-v3-turbo \
+        --compute-type int8_float16 --device cuda --port 8100
 
-Architecture: V1 Ch8 (STT); Sprint-009 spec Phase 2.
-VRAM: ~1400 MB (Whisper large-v3-turbo int8_float16 model + ctranslate2 CUDA
-      workspace pre-allocated at warmup). The GPU node's vLLM service must leave
-      ≥1400 MiB VRAM free for ctranslate2 encoder buffers; tight VRAM (<1000 MiB
-      free) causes CUDA allocator fragmentation and periodic STT latency spikes.
-      See GPU_NODE_STATE.md for the validated gpu-memory-utilization setting.
+    # Local dev (CPU, tiny model):
+    python3 server.py --model-path tiny --compute-type int8 --device cpu --port 8100
+
+    # Local dev (mock, no model):
+    python3 server.py --mock --port 8100
+
+Architecture: V1 Ch8 (STT).
+Production VRAM: ~1,860 MiB (1,260 MiB model + 600 MiB ctranslate2 workspace).
+The GPU node's vLLM service must leave ≥1,400 MiB VRAM free for ctranslate2
+encoder buffers; tight VRAM causes CUDA allocator fragmentation and STT spikes.
 """
 
 from __future__ import annotations
@@ -35,11 +37,16 @@ import threading
 import time
 from typing import Any
 
-import numpy as np
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
+
+try:
+    import numpy as np
+    _HAS_NUMPY = True
+except ImportError:
+    _HAS_NUMPY = False
 
 logging.basicConfig(
     level=logging.INFO,
@@ -70,15 +77,56 @@ def _inc(key: str, value: float = 1.0) -> None:
 # Global model state
 # ---------------------------------------------------------------------------
 
-_model: Any = None  # faster_whisper.WhisperModel
+_model: Any = None  # faster_whisper.WhisperModel or _MockSTTModel
 _model_ready: bool = False
 _model_name: str = "large-v3-turbo"
+_mock_mode: bool = False
 
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="VoiceOS STT Service", version="0.9.1")
+app = FastAPI(title="VoiceOS STT Service", version="1.0.0")
+
+
+# ---------------------------------------------------------------------------
+# Mock model — returns a synthetic Hindi response without loading any model.
+# Used in VOICEOS_MODE=dev or when --mock flag is passed.
+# ---------------------------------------------------------------------------
+
+
+class _MockSTTModel:
+    """Drop-in replacement for WhisperModel; returns canned transcription."""
+
+    _MOCK_RESPONSE = "नमस्ते, मैं Kavya बोल रही हूं। आप कैसे हैं?"
+    _MOCK_DELAY_S = 0.08  # Simulate 80ms STT latency
+
+    def transcribe(
+        self, audio: Any, language: str | None = None, beam_size: int = 1, **kwargs: Any
+    ) -> tuple[Any, Any]:
+        import time as _time
+
+        _time.sleep(self._MOCK_DELAY_S)
+
+        class _MockWord:
+            def __init__(self, w: str, start: float, end: float) -> None:
+                self.word = w
+                self.probability = 0.95
+                self.start = start
+                self.end = end
+
+        class _MockSegment:
+            def __init__(self, words: list[Any]) -> None:
+                self.words = words
+
+        class _MockInfo:
+            language = "hi"
+
+        words_text = self._MOCK_RESPONSE.split()
+        words = [
+            _MockWord(w, i * 0.3, (i + 1) * 0.3) for i, w in enumerate(words_text)
+        ]
+        return [_MockSegment(words)], _MockInfo()
 
 # Thread pool dedicated to Whisper inference so ctranslate2 CUDA calls never
 # block uvicorn's async event loop. A single worker serializes requests, which
@@ -173,7 +221,14 @@ async def readiness() -> JSONResponse:
     """Readiness probe — 200 only after Whisper model is fully loaded."""
     if not _model_ready:
         raise HTTPException(status_code=503, detail="Model loading in progress")
-    return JSONResponse({"status": "ready", "model": _model_name, "vram_target_mb": 900})
+    return JSONResponse(
+        {
+            "status": "ready",
+            "model": _model_name,
+            "mock": _mock_mode,
+            "vram_target_mb": 0 if _mock_mode else 1860,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +259,53 @@ async def transcribe(request: TranscribeRequest) -> TranscribeResponse:
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid base64 audio: {exc}") from exc
 
-    # PCM16LE → float32 normalised to [-1.0, 1.0]
+    if not raw_bytes:
+        raise HTTPException(status_code=400, detail="Empty audio")
+
+    # In mock mode bypass numpy PCM conversion entirely — mock model ignores the audio.
+    if _mock_mode:
+        t_start = time.monotonic()
+        duration_ms = len(raw_bytes) // 2 // 16  # PCM16LE at 16 kHz → ms
+        lang = request.language or "hi"
+
+        def _run_mock() -> tuple[Any, Any]:
+            segs, inf = _model.transcribe([], language=lang, beam_size=1)
+            return list(segs), inf
+
+        loop = asyncio.get_running_loop()
+        future = loop.run_in_executor(_stt_executor, _run_mock)
+        try:
+            all_segments, info = await asyncio.wait_for(future, timeout=_TRANSCRIPTION_TIMEOUT_S)
+        except asyncio.TimeoutError as exc:
+            _inc("requests_timeout")
+            raise HTTPException(status_code=504, detail="Transcription timed out") from exc
+        except Exception as exc:
+            _inc("requests_error")
+            raise HTTPException(status_code=500, detail=f"Transcription error: {exc}") from exc
+
+        latency_ms = (time.monotonic() - t_start) * 1000
+        _inc("requests_success")
+        _inc("latency_sum_ms", latency_ms)
+        _inc("latency_count")
+        words = []
+        for seg in all_segments:
+            for w in seg.words or []:
+                words.append(WordResult(
+                    word=w.word.strip(),
+                    confidence=float(w.probability),
+                    start_ms=int(w.start * 1000),
+                    end_ms=int(w.end * 1000),
+                    is_final=True,
+                ))
+        if words:
+            words[-1].is_final = True
+        return TranscribeResponse(words=words, language=info.language,
+                                  duration_ms=duration_ms, latency_ms=latency_ms)
+
+    # Real mode: PCM16LE → float32 → Whisper
+    if not _HAS_NUMPY:
+        raise HTTPException(status_code=503, detail="numpy not installed; start with --mock for local dev")
+
     audio_f32 = _pcm16le_to_float32(raw_bytes)
     if len(audio_f32) == 0:
         raise HTTPException(status_code=400, detail="Empty audio")
@@ -289,73 +390,109 @@ def _pcm16le_to_float32(pcm_bytes: bytes) -> np.ndarray:  # type: ignore[type-ar
 # ---------------------------------------------------------------------------
 
 
-def _load_model(model_path: str, compute_type: str) -> None:
-    """Load the Whisper model into global state, then run a warmup inference.
+def _load_model(model_path: str, compute_type: str, device: str, mock: bool) -> None:
+    """Load the Whisper model (or mock) into global state, then run a warmup.
 
-    The warmup is mandatory. ctranslate2 does not pre-allocate its CUDA workspace
-    buffers at model load time — it allocates them lazily on the first call to
-    model.encode(). If the first real inference request arrives when VRAM is
-    already tight (as it is on this L4 with vLLM + Veena co-resident), the lazy
-    allocation fails with CUDA OOM. Running a warmup transcription immediately
-    after model load forces ctranslate2 to allocate and retain its workspace in
-    the pre-allocated VRAM pool, so all subsequent real requests succeed without
-    any additional large allocation. Observed warmup time: ~1-2s.
+    Mock mode: skip model loading entirely; synthetic responses are returned.
+
+    Real mode: ctranslate2 does not pre-allocate its CUDA workspace at load time
+    — it allocates lazily on the first model.encode() call. On a tight VRAM
+    budget (vLLM + Veena co-resident), this lazy allocation can fail. The warmup
+    here forces ctranslate2 to allocate and retain its workspace upfront so all
+    subsequent requests succeed. Observed warmup time: ~1-2s on GPU.
     """
-    global _model, _model_ready, _model_name
+    global _model, _model_ready, _model_name, _mock_mode
 
-    logger.info("Loading Whisper model from %s (compute_type=%s)...", model_path, compute_type)
+    _mock_mode = mock
+
+    if mock:
+        logger.info("STT mock mode: loading synthetic model (no model weights downloaded)")
+        _model = _MockSTTModel()
+        _model_name = "mock"
+        _model_ready = True
+        logger.info("STT mock ready")
+        return
+
+    logger.info(
+        "Loading Whisper model from %s (device=%s compute_type=%s)...",
+        model_path,
+        device,
+        compute_type,
+    )
     t0 = time.monotonic()
 
     from faster_whisper import WhisperModel  # type: ignore[import-untyped]
 
+    # int8_float16 requires CUDA; fall back to int8 on CPU automatically.
+    effective_compute = compute_type
+    if device == "cpu" and compute_type == "int8_float16":
+        effective_compute = "int8"
+        logger.info("CPU device: compute_type int8_float16 → int8")
+
     _model = WhisperModel(
         model_path,
-        device="cuda",
-        compute_type=compute_type,
+        device=device,
+        compute_type=effective_compute,
         num_workers=1,
     )
-    _model_name = "whisper-large-v3-turbo"
+    _model_name = model_path if "/" not in model_path else model_path.split("/")[-1]
 
     elapsed = (time.monotonic() - t0) * 1000
-    logger.info("Whisper model loaded in %.0f ms. Running CUDA warmup...", elapsed)
+    logger.info("Whisper model loaded in %.0f ms. Running warmup...", elapsed)
 
-    # Warmup: 0.5s silence forces ctranslate2 to allocate its CUDA encoder workspace.
-    # This must succeed before _model_ready is set True; if it fails (VRAM), we
-    # crash at startup rather than serving 500s on every real request.
+    # Warmup: 0.5s silence forces ctranslate2 to allocate its encoder workspace.
+    # On GPU: pre-empts CUDA OOM under tight VRAM. On CPU: pre-JITs kernels.
     t_warmup = time.monotonic()
-    _silence = np.zeros(8000, dtype=np.float32)  # 0.5s at 16kHz
+    _silence = np.zeros(8000, dtype=np.float32)  # 0.5s at 16 kHz
     try:
         segs, _info = _model.transcribe(_silence, language="hi", beam_size=1, word_timestamps=False)
-        list(segs)  # consume generator to trigger actual encoder execution
+        list(segs)
     except Exception:
-        logger.exception("CUDA warmup failed — likely VRAM OOM. Check GPU memory allocations.")
+        logger.exception("Warmup failed — check VRAM / model path / compute_type.")
         raise
 
     warmup_ms = (time.monotonic() - t_warmup) * 1000
-    logger.info("CUDA warmup complete in %.0f ms. STT ready.", warmup_ms)
+    logger.info("Warmup complete in %.0f ms. STT ready.", warmup_ms)
     _model_ready = True
 
 
 def main() -> None:
+    import os
+
     parser = argparse.ArgumentParser(description="VoiceOS STT Inference Server")
     parser.add_argument(
         "--model-path",
-        default="large-v3-turbo",
-        help="Path to the faster-whisper model directory or HuggingFace model ID",
+        default=os.environ.get("WHISPER_MODEL_PATH", "large-v3-turbo"),
+        help="Path to the faster-whisper model directory, HF model ID, or size string",
     )
     parser.add_argument(
         "--compute-type",
-        default="int8_float16",
-        choices=["int8_float16", "float16", "int8"],
-        help="CTranslate2 compute type",
+        default=os.environ.get("STT_COMPUTE_TYPE", "int8_float16"),
+        choices=["int8_float16", "float16", "int8", "float32"],
+        help="CTranslate2 compute type (int8_float16=GPU, int8=CPU)",
     )
-    parser.add_argument("--port", type=int, default=8100, help="HTTP port")
-    parser.add_argument("--host", default="0.0.0.0", help="Bind host")
+    parser.add_argument(
+        "--device",
+        default=os.environ.get("STT_DEVICE", "cuda"),
+        choices=["cuda", "cpu"],
+        help="Inference device (cuda for GPU, cpu for local dev)",
+    )
+    parser.add_argument(
+        "--mock",
+        action="store_true",
+        default=os.environ.get("STT_MOCK", "").lower() == "true",
+        help="Mock mode: return synthetic transcriptions without loading a model",
+    )
+    parser.add_argument("--port", type=int, default=int(os.environ.get("STT_SERVICE_PORT", "8100")))
+    parser.add_argument("--host", default="0.0.0.0")
     args = parser.parse_args()
 
-    _load_model(args.model_path, args.compute_type)
+    _load_model(args.model_path, args.compute_type, args.device, args.mock)
 
-    logger.info("Starting STT server on %s:%d", args.host, args.port)
+    logger.info(
+        "Starting STT server on %s:%d (device=%s mock=%s)",
+        args.host, args.port, args.device, args.mock,
+    )
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 
 

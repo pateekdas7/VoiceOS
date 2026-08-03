@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Veena TTS Inference Server — Sprint-012 Phase 3 (streaming fix).
+"""Veena TTS Inference Server — Sprint-029 GPU Runtime Redesign (local-first).
 
 Streams 85.33ms PCM audio chunks via FastAPI StreamingResponse using a
 sliding-window SNAC decode as tokens are generated. Reduces TTFA from
@@ -39,9 +39,14 @@ from collections.abc import AsyncIterator, Iterator
 from threading import Thread
 from typing import Any, cast
 
-import numpy as np
-import torch  # type: ignore[import-not-found]
 import uvicorn
+
+try:
+    import numpy as np
+    import torch  # type: ignore[import-not-found]
+    _HAS_GPU_DEPS = True
+except ImportError:
+    _HAS_GPU_DEPS = False
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
@@ -80,6 +85,7 @@ _snac_model: Any = None
 _model_ready: bool = False
 _device: str = "cuda"
 _sample_rate: int = 24000
+_mock_mode: bool = False
 
 # ---------------------------------------------------------------------------
 # Veena token constants — verified against maya-research/Veena tokenizer.
@@ -187,10 +193,11 @@ async def readiness() -> JSONResponse:
     return JSONResponse(
         {
             "status": "ready",
-            "model": "maya-research/Veena",
+            "model": "mock" if _mock_mode else "maya-research/Veena",
             "sample_rate": _sample_rate,
             "streaming": True,
-            "vram_target_mb": 7808,
+            "mock": _mock_mode,
+            "vram_target_mb": 0 if _mock_mode else 7808,
         }
     )
 
@@ -234,7 +241,11 @@ async def synthesize(request: SynthesizeRequest) -> StreamingResponse:
 
     async def _audio_gen() -> AsyncIterator[bytes]:
         loop = asyncio.get_running_loop()
-        sync_gen = _stream_synthesis_sync(text, request.speaker, request.voice_config)
+        sync_gen = (
+            _mock_synthesis_sync(text)
+            if _mock_mode
+            else _stream_synthesis_sync(text, request.speaker, request.voice_config)
+        )
 
         # Sentinel pattern: catch StopIteration in the thread (not in the coroutine)
         # because Python 3.12+ raises RuntimeError if StopIteration propagates out
@@ -280,6 +291,24 @@ async def synthesize(request: SynthesizeRequest) -> StreamingResponse:
         )
 
     return StreamingResponse(_audio_gen(), media_type="application/octet-stream")
+
+
+# ---------------------------------------------------------------------------
+# Mock synthesis — returns PCM silence without any model loading.
+# Used in VOICEOS_MODE=dev or when --mock flag is passed.
+# ---------------------------------------------------------------------------
+
+
+def _mock_synthesis_sync(text: str) -> Iterator[bytes]:
+    """Yield one 85ms PCM silence chunk per ~6 characters of text (simulates TTS speed)."""
+    import time as _time
+
+    n_chunks = max(1, len(text) // 6)
+    silence_chunk = bytes(8192)  # 2048 float32 samples = 85.33ms at 24 kHz, all zeros
+    _time.sleep(0.15)  # Simulate 150ms TTFA
+    for _ in range(n_chunks):
+        yield silence_chunk
+        _time.sleep(0.085)  # Simulate real-time audio generation
 
 
 # ---------------------------------------------------------------------------
@@ -466,8 +495,7 @@ def _stream_synthesis_sync(
     # ── Inter-clause silence ─────────────────────────────────────────────────
     if voice_config.pause_ms_after_clause > 0:
         silence_samples = int(voice_config.pause_ms_after_clause * _sample_rate / 1000)
-        silence = np.zeros(silence_samples, dtype=np.float32)
-        yield silence.tobytes()
+        yield bytes(silence_samples * 4)  # float32 LE silence (4 bytes/sample)
 
 
 # ---------------------------------------------------------------------------
@@ -475,11 +503,31 @@ def _stream_synthesis_sync(
 # ---------------------------------------------------------------------------
 
 
-def _load_model(model_path: str, snac_path: str) -> None:
-    """Load Veena BF16 model and SNAC 24 kHz codec into global state."""
-    global _model, _tokenizer, _snac_model, _model_ready
+def _load_model(model_path: str, snac_path: str, device: str = "cuda", mock: bool = False) -> None:
+    """Load Veena BF16 model and SNAC 24 kHz codec into global state.
 
-    logger.info("Loading Veena TTS model from %s ...", model_path)
+    Mock mode: skip all model loading; returns PCM silence on /synthesize.
+    CPU mode: loads models to CPU (very slow inference; dev only for API validation).
+    GPU mode: loads to CUDA; runs kernel warm-up to pre-JIT triton/transformers.
+    """
+    global _model, _tokenizer, _snac_model, _model_ready, _device, _mock_mode
+
+    _device = device
+    _mock_mode = mock
+
+    if mock:
+        logger.info("TTS mock mode: no model weights loaded")
+        _model_ready = True
+        logger.info("TTS mock ready")
+        return
+
+    if not _HAS_GPU_DEPS:
+        raise RuntimeError(
+            "torch and numpy are required for real TTS inference. "
+            "Start with --mock for local dev, or install requirements.txt on a GPU server."
+        )
+
+    logger.info("Loading Veena TTS model from %s (device=%s)...", model_path, device)
     t0 = time.monotonic()
 
     from snac import SNAC  # type: ignore[import-not-found]
@@ -489,18 +537,17 @@ def _load_model(model_path: str, snac_path: str) -> None:
     _model = AutoModelForCausalLM.from_pretrained(
         model_path,
         torch_dtype=torch.bfloat16,
-        device_map=_device,
+        device_map=device,
     )
     _model.eval()
 
     logger.info("Loading SNAC 24 kHz codec from %s ...", snac_path)
-    _snac_model = SNAC.from_pretrained(snac_path).to(_device)
+    _snac_model = SNAC.from_pretrained(snac_path).to(device)
     _snac_model.eval()
 
-    # Warm-up: run one short synthesis to trigger CUDA kernel JIT compilation.
-    # HuggingFace transformers/triton kernels compile on first use; without this
-    # warm-up the first real request pays a ~900ms one-time penalty.
-    logger.info("Running CUDA kernel warm-up synthesis...")
+    # Warm-up: runs one short synthesis to trigger CUDA/CPU kernel JIT compilation.
+    # Without this, the first real request pays a ~900ms one-time JIT penalty.
+    logger.info("Running warm-up synthesis...")
     t_warmup = time.monotonic()
     _warmup_req = VoiceConfigRequest()
     for _ in _stream_synthesis_sync("hello", "kavya", _warmup_req):
@@ -508,20 +555,47 @@ def _load_model(model_path: str, snac_path: str) -> None:
     logger.info("Warm-up complete in %.0f ms", (time.monotonic() - t_warmup) * 1000)
 
     _model_ready = True
-    logger.info("Veena + SNAC loaded in %.0f ms (streaming mode)", (time.monotonic() - t0) * 1000)
+    logger.info(
+        "Veena + SNAC loaded in %.0f ms (device=%s streaming=true)",
+        (time.monotonic() - t0) * 1000,
+        device,
+    )
 
 
 def main() -> None:
+    import os
+
     parser = argparse.ArgumentParser(description="VoiceOS TTS Inference Server (streaming)")
-    parser.add_argument("--model-path", default="maya-research/Veena")
-    parser.add_argument("--snac-path", default="hubertsiuzdak/snac_24khz")
-    parser.add_argument("--port", type=int, default=8200)
+    parser.add_argument(
+        "--model-path",
+        default=os.environ.get("VEENA_MODEL_PATH", "maya-research/Veena"),
+    )
+    parser.add_argument(
+        "--snac-path",
+        default=os.environ.get("SNAC_MODEL_PATH", "hubertsiuzdak/snac_24khz"),
+    )
+    parser.add_argument(
+        "--device",
+        default=os.environ.get("TTS_DEVICE", "cuda"),
+        choices=["cuda", "cpu"],
+        help="Inference device (cuda for GPU, cpu for API-contract validation only)",
+    )
+    parser.add_argument(
+        "--mock",
+        action="store_true",
+        default=os.environ.get("TTS_MOCK", "").lower() == "true",
+        help="Mock mode: return PCM silence without loading any model",
+    )
+    parser.add_argument("--port", type=int, default=int(os.environ.get("TTS_SERVICE_PORT", "8200")))
     parser.add_argument("--host", default="0.0.0.0")
     args = parser.parse_args()
 
-    _load_model(args.model_path, args.snac_path)
+    _load_model(args.model_path, args.snac_path, args.device, args.mock)
 
-    logger.info("Starting streaming TTS server on %s:%d", args.host, args.port)
+    logger.info(
+        "Starting streaming TTS server on %s:%d (device=%s mock=%s)",
+        args.host, args.port, args.device, args.mock,
+    )
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 
 

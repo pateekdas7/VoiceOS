@@ -1,0 +1,59 @@
+# VoiceOS GPU Node — Production Python Dependencies
+# Hardware: NVIDIA RTX A6000 (Ampere, sm_86)
+# CUDA:     12.8 native on driver 570.x; CUDA 13.0 via cuda-compat-13-0 package
+# Python:   3.12.x
+#
+# Install:
+#   pip install -r requirements.txt
+#
+# GPU server must have CUDA compat packages installed:
+#   apt-get install cuda-compat-13-0 cuda-nvrtc-13-0
+# LD_LIBRARY_PATH=/usr/local/cuda-13.0/compat:/usr/local/cuda-13.0/lib64 (set in systemd)
+
+# ── PyTorch (CUDA 12.8 build) ─────────────────────────────────────────────────
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.11.0
+torchvision==0.26.0
+torchaudio==2.11.0
+
+# ── LLM inference engine ──────────────────────────────────────────────────────
+vllm==0.24.0
+
+# ── STT engine ────────────────────────────────────────────────────────────────
+faster-whisper==1.2.1
+ctranslate2==4.8.0
+
+# ── Model utilities ───────────────────────────────────────────────────────────
+transformers==5.12.1
+tokenizers==0.22.2
+huggingface_hub==0.28.0
+accelerate==1.7.0
+flashinfer==0.6.12
+triton==3.6.0
+
+# ── Audio ─────────────────────────────────────────────────────────────────────
+snac==1.0.0
+numpy==2.3.5
+
+# ── HTTP servers ──────────────────────────────────────────────────────────────
+fastapi==0.115.6
+uvicorn[standard]==0.30.6
+pydantic==2.10.4
+httpx==0.27.0
+
+# ── Observability ─────────────────────────────────────────────────────────────
+prometheus-client==0.20.0
+opentelemetry-sdk==1.28.0
+opentelemetry-exporter-otlp==1.28.0
+
+# ── RPC ───────────────────────────────────────────────────────────────────────
+grpcio==1.64.1
+grpcio-tools==1.64.1
+
+# ── Config ────────────────────────────────────────────────────────────────────
+pyyaml==6.0.2
+
+# ── Sprint-029 Evaluator extras (Qwen2.5-Omni, port 8300) ───────────────────
+qwen-omni-utils>=0.0.9
+soundfile>=0.14.0
+librosa>=0.11.0
