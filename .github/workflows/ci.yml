@@ -254,3 +254,84 @@ jobs:
 
       - name: Verify docker-compose.yml is valid
         run: docker compose config --quiet
+
+  # ---------------------------------------------------------------------------
+  # Stage 7 — Performance Regression Gate (Sprint-028 V3 Ch19)
+  #
+  # Runs RegressionDetector unit tests to verify:
+  #   - fixture timings within budget → PASS
+  #   - simulated 15 % STT regression → CI gate FAILS (correct behavior)
+  #
+  # A future Phase 2 step will run this against real benchmark results
+  # stored in the production Postgres performance_baselines table.
+  # ---------------------------------------------------------------------------
+  performance-regression-gate:
+    name: Performance Regression Gate
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dev dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run performance regression gate unit tests
+        run: |
+          pytest tests/unit/libs/test_performance_engineering.py -v \
+            --cov=src/libs/performance_engineering \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage-perf.xml
+
+      - name: Enforce performance engineering coverage ≥ 85 %
+        run: |
+          python -c "
+          import xml.etree.ElementTree as ET
+          tree = ET.parse('coverage-perf.xml')
+          root = tree.getroot()
+          found = False
+          for pkg in root.iter('package'):
+              name = pkg.get('name', '')
+              if 'performance_engineering' in name:
+                  rate = float(pkg.get('line-rate', 0)) * 100
+                  print(f'Performance engineering coverage: {rate:.1f}%')
+                  assert rate >= 85, f'Coverage {rate:.1f}% < 85% gate'
+                  found = True
+          if not found:
+              # Overall coverage check as fallback
+              rate = float(root.get('line-rate', 0)) * 100
+              print(f'Overall coverage: {rate:.1f}%')
+              assert rate >= 85, f'Coverage {rate:.1f}% < 85% gate'
+          print('Performance engineering coverage gate: PASSED')
+          "
+
+      - name: Verify regression gate catches simulated regression
+        run: |
+          python -c "
+          from src.libs.performance_engineering.benchmarks import BenchmarkSuite, RegressionFixtureTimingSource, FixtureTimingSource
+          from src.libs.performance_engineering.profiler import InMemoryBaselineRepository
+          from src.libs.performance_engineering.regression_gate import RegressionDetector
+          from datetime import date
+
+          # Build a baseline from good fixture timings
+          good = BenchmarkSuite(source=FixtureTimingSource()).run_benchmarks('baseline')
+          store = InMemoryBaselineRepository()
+          today = date.today()
+          for s in good.stages:
+              store.record(s.stage, s.p50_ms, s.p95_ms, s.p99_ms, today)
+
+          # Run with regressed source (STT * 1.15)
+          regressed = BenchmarkSuite(source=RegressionFixtureTimingSource()).run_benchmarks('regressed')
+          result = RegressionDetector(store).check(regressed)
+
+          assert not result.passed, 'ERROR: 15% regression was NOT detected — gate is broken'
+          failed = [r.stage for r in result.failed_stages]
+          assert 'stt' in failed, f'STT regression not detected; failed: {failed}'
+          print(f'Regression gate correctly caught 15% regression in stages: {failed}')
+          print('Performance regression gate: WORKING CORRECTLY')
+          "
