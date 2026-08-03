@@ -1,95 +1,86 @@
-# Compliance Validation Report — Sprint-028
+# Compliance Validation Report
 
-**Environment:** Staging (mirrors Production Alpha)
-**Date:** _FILL IN_
+**Sprint:** Sprint-028 — Performance Validation, Load Testing, Pen Test & Production Alpha Deploy
+**Deliverable:** `evaluation/compliance/` (Sprint-028 §5 — Compliance Validation)
+**Architecture Reference:** Volume 4 (Compliance & Security)
 **Test suite:** `tests/compliance/test_rbi_compliance.py`, `tests/compliance/test_dpdp_compliance.py`
-**Status:** ⬜ PENDING (Phase 2 — staging environment required)
 
 ---
 
-## RBI Fair Practice Code
+## Report Metadata
 
-### Calling Hours (50 test calls)
-
-| Scenario | Count | Expected | Actual | Pass? |
-|----------|-------|----------|--------|-------|
-| Calls outside 08:00–20:00 | 50 | All blocked (DENY) | _FILL_ | ⬜ |
-| Calls inside 08:00–20:00 | 12 | All permitted (PERMIT) | _FILL_ | ⬜ |
-
-### Calling Frequency
-
-| Scenario | Expected | Actual | Pass? |
-|----------|----------|--------|-------|
-| ≤ 3 calls today | PERMIT | _FILL_ | ⬜ |
-| 3 calls today + new call | DENY (4th blocked) | _FILL_ | ⬜ |
-
-### Other RBI Rules
-
-| Rule | Expected | Actual | Pass? |
-|------|----------|--------|-------|
-| Abusive utterance → FORBID | FORBID | _FILL_ | ⬜ |
-| Debt disclosure before identity check → REQUIRE | REQUIRE | _FILL_ | ⬜ |
-| Missing disclosure at call turn 0 → REQUIRE | REQUIRE | _FILL_ | ⬜ |
-| Missing recording consent → REQUIRE | REQUIRE | _FILL_ | ⬜ |
-
-**RBI overall:** _FILL IN_ / _TOTAL_ test scenarios passed
+| Field | Value |
+|---|---|
+| Date | _(to be filled after Phase 2 execution)_ |
+| Environment | Staging environment (Phase 2 real infrastructure; Phase 1 used `FakePolicyEngine` mocks) |
+| Test suite | Automated, run against staging environment |
+| Status | **PENDING PHASE 2 EXECUTION** |
+| Executed by | TBD |
+| Report author | TBD |
 
 ---
 
-## DPDP (Digital Personal Data Protection Act)
+## Methodology
 
-### Consent Gate (10 customers)
+Per Sprint-028 §5, an automated test suite is run against the staging environment covering RBI (Reserve Bank of India) and DPDP (Digital Personal Data Protection Act) compliance scenarios:
 
-| Scenario | Count | Expected | Actual | Pass? |
-|----------|-------|----------|--------|-------|
-| Customers without consent | 10 | All blocked (DENY) | _FILL_ | ⬜ |
-| Customers with consent | 10 | All permitted (PERMIT) | _FILL_ | ⬜ |
+- RBI calling hours: 50 test calls attempted outside 08:00–20:00 → all blocked.
+- RBI frequency: customer with 3 calls today → 4th call blocked.
+- DPDP consent gate: 10 test customers without consent → all calls blocked.
+- Recording disclosure: verify first utterance includes disclosure phrase.
+- Audit completeness: run 100 calls → verify audit trail has all required event types.
+- Data retention: verify no data exists past configured retention period (test with artificially aged records).
+- Right to erasure: trigger erasure → verify `DataErasureCertificate` created, PII inaccessible.
 
-### Other DPDP Rules
-
-| Rule | Expected | Actual | Pass? |
-|------|----------|--------|-------|
-| Purpose not in consented list → DENY | DENY | _FILL_ | ⬜ |
-| Data past retention limit → DENY | DENY | _FILL_ | ⬜ |
-| Erasure requested → DENY | DENY | _FILL_ | ⬜ |
-
-**DPDP overall:** _FILL IN_ / _TOTAL_ test scenarios passed
+Phase 1 validated this suite against `FakePolicyEngine` mock policy responses only (per `tests/compliance/test_rbi_compliance.py`, `tests/compliance/test_dpdp_compliance.py`). Real-environment execution against staging with production policy configuration is a Phase 2-only activity.
 
 ---
 
-## Audit Completeness (100 calls)
+## Results
 
-| Check | Expected | Actual | Pass? |
-|-------|----------|--------|-------|
-| call_started event present | 100 % | _FILL_ | ⬜ |
-| call_ended event present | 100 % | _FILL_ | ⬜ |
-| consent_checked event present | 100 % | _FILL_ | ⬜ |
-| disclosure_given event present | 100 % | _FILL_ | ⬜ |
-
----
-
-## Data Retention Check
-
-| Check | Expected | Actual | Pass? |
-|-------|----------|--------|-------|
-| Artificially aged records (>7 years) | Purged | _FILL_ | ⬜ |
-| PII inaccessible after erasure | True | _FILL_ | ⬜ |
-| DataErasureCertificate created | True | _FILL_ | ⬜ |
+| Scenario | Test Count | Expected | Observed | Pass/Fail |
+|---|---|---|---|---|
+| RBI calling hours (outside 08:00–20:00) | 50 calls | All 50 blocked | TBD | TBD |
+| RBI frequency (4th call same day) | 1 customer, 4 call attempts (3 allowed + 1 blocked) | 4th call blocked | TBD | TBD |
+| DPDP consent gate (no consent on file) | 10 customers | All 10 calls blocked | TBD | TBD |
+| Recording disclosure | Sampled across test calls | First utterance includes disclosure phrase in 100% of calls | TBD | TBD |
+| Audit completeness | 100 calls | Audit trail has all required event types for 100% of calls | TBD | TBD |
+| Data retention | Artificially aged test records | No data exists past configured retention period | TBD | TBD |
+| Right to erasure | Erasure trigger test | `DataErasureCertificate` created; PII inaccessible post-erasure | TBD | TBD |
 
 ---
 
-## Summary
+## Overall Pass Rate
 
-| Regulation | Scenarios | Passed | Pass Rate |
-|------------|-----------|--------|-----------|
-| RBI FPC | _FILL_ | _FILL_ | ⬜ |
-| DPDP | _FILL_ | _FILL_ | ⬜ |
-| **Total** | **_FILL_** | **_FILL_** | **⬜** |
-
-**Required for production deploy:** 100 % of all RBI + DPDP scenarios.
-
-**Overall:** ⬜ PENDING
+| Metric | Value |
+|---|---|
+| Total scenarios | 7 |
+| Scenarios passed | TBD |
+| Scenarios failed | TBD |
+| Overall pass rate | TBD (gate: 100%) |
 
 ---
 
-*Fill in actual test results after running the compliance suite against the staging environment.*
+## Acceptance Criteria
+
+- [ ] RBI calling hours: 50/50 outside-hours calls blocked
+- [ ] RBI frequency: 4th call blocked for customer with 3 calls today
+- [ ] DPDP consent gate: 10/10 no-consent customers blocked
+- [ ] Recording disclosure phrase present in first utterance of all sampled calls
+- [ ] Audit completeness: all required event types present across 100 calls
+- [ ] Data retention: no data retained past configured retention period
+- [ ] Right to erasure: `DataErasureCertificate` created and PII confirmed inaccessible
+- [ ] 100% of RBI/DPDP test scenarios pass
+
+---
+
+## Sign-off
+
+| Role | Name | Date | Signature/Approval |
+|---|---|---|---|
+| Test Executor | TBD | TBD | PENDING |
+| Compliance Officer | TBD | TBD | PENDING |
+| Engineering Lead | TBD | TBD | PENDING |
+| Production Readiness Owner | TBD | TBD | PENDING |
+
+**Overall Status:** PENDING PHASE 2 EXECUTION — do not proceed to canary deploy until 100% of RBI/DPDP scenarios pass on staging.

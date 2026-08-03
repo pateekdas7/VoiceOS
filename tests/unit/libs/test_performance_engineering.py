@@ -1,64 +1,68 @@
-"""Unit tests for ContinuousProfiler, BenchmarkSuite, RegressionDetector,
-OptimizationPlaybook (V3 Ch19 — Sprint-028 Phase 1).
+"""Unit tests: src/libs/performance_engineering/ (ContinuousProfiler, BenchmarkSuite, RegressionDetector,
+OptimizationPlaybook) -- Sprint-028 Phase 1 (V3 Ch19).
 
-All tests use fixture/in-memory backends — no real GPU or Postgres required.
+Required per Sprint-028.md's own validation table: "BenchmarkSuite passes
+for fixture data; RegressionDetector fails on simulated 15% regression."
 """
 
 from __future__ import annotations
 
 import time
-from datetime import UTC, date, datetime
+from datetime import date, timedelta
 
 import pytest
+from scripts.check_performance_regression import (
+    default_current_fixture,
+)
+from scripts.check_performance_regression import (
+    evaluate as check_regression_evaluate,
+)
+from scripts.check_performance_regression import (
+    main as check_regression_main,
+)
 
-from src.libs.performance_engineering.benchmarks import (
+from src.libs.performance_engineering import (
     STAGE_BUDGETS_MS,
     BenchmarkReport,
     BenchmarkSuite,
-    FixtureTimingSource,
-    RegressionFixtureTimingSource,
-    StageResult,
-)
-from src.libs.performance_engineering.optimization import OptimizationPlaybook
-from src.libs.performance_engineering.profiler import (
     ContinuousProfiler,
-    InMemoryBaselineRepository,
-)
-from src.libs.performance_engineering.regression_gate import (
-    REGRESSION_THRESHOLD_FRACTION,
+    InMemoryBaselineStore,
+    OptimizationPlaybook,
     RegressionDetector,
+    StageBenchmarkResult,
+    StagePercentiles,
+    StaticFixtureProvider,
+    compute_percentile,
 )
 
 # ---------------------------------------------------------------------------
-# Helpers
+# compute_percentile
 # ---------------------------------------------------------------------------
 
 
-def _make_store_with_baseline(stage: str, p95_ms: float) -> InMemoryBaselineRepository:
-    store = InMemoryBaselineRepository()
-    store.record(stage, p50_ms=p95_ms * 0.85, p95_ms=p95_ms, p99_ms=p95_ms * 1.05, measured_date=date.today())
-    return store
+class TestComputePercentile:
+    def test_single_sample(self) -> None:
+        assert compute_percentile([42.0], 95) == 42.0
 
+    def test_p50_is_median_like(self) -> None:
+        samples = [10.0, 20.0, 30.0, 40.0, 50.0]
+        assert compute_percentile(samples, 50) == 30.0
 
-def _make_report_with_p95(stage_overrides: dict[str, float]) -> BenchmarkReport:
-    """Build a BenchmarkReport with custom p95 values for specified stages."""
-    stages = []
-    for stage, budget in STAGE_BUDGETS_MS.items():
-        p95 = stage_overrides.get(stage, budget * 0.90)
-        stages.append(
-            StageResult(
-                stage=stage,
-                p50_ms=p95 * 0.85,
-                p95_ms=p95,
-                p99_ms=p95 * 1.05,
-                budget_ms=budget,
-            )
-        )
-    return BenchmarkReport(
-        environment="test",
-        timestamp=datetime.now(tz=UTC),
-        stages=tuple(stages),
-    )
+    def test_p95_of_ordered_samples(self) -> None:
+        samples = [float(i) for i in range(1, 101)]  # 1..100
+        p95 = compute_percentile(samples, 95)
+        assert 94.0 <= p95 <= 96.0
+
+    def test_unordered_input_is_sorted_internally(self) -> None:
+        assert compute_percentile([30.0, 10.0, 20.0], 50) == 20.0
+
+    def test_empty_samples_raises(self) -> None:
+        with pytest.raises(ValueError, match="at least one sample"):
+            compute_percentile([], 95)
+
+    def test_out_of_range_percentile_raises(self) -> None:
+        with pytest.raises(ValueError, match="0, 100"):
+            compute_percentile([1.0], 150)
 
 
 # ---------------------------------------------------------------------------
@@ -67,111 +71,98 @@ def _make_report_with_p95(stage_overrides: dict[str, float]) -> BenchmarkReport:
 
 
 class TestContinuousProfiler:
-    def test_profile_stage_returns_function_value(self) -> None:
-        store = InMemoryBaselineRepository()
-        profiler = ContinuousProfiler(store)
-        result = profiler.profile_stage("stt", lambda: 42)
-        assert result.value == 42
+    def test_profile_stage_captures_duration_and_return_value(self) -> None:
+        profiler = ContinuousProfiler(clock=_FakeClock([0.0, 0.05]))
 
-    def test_profile_stage_stage_name_in_result(self) -> None:
-        store = InMemoryBaselineRepository()
-        profiler = ContinuousProfiler(store)
-        result = profiler.profile_stage("llm_ttft", lambda: "token")
-        assert result.stage == "llm_ttft"
+        timing = profiler.profile_stage("stt", lambda: "transcript")
 
-    def test_profile_stage_measures_positive_duration(self) -> None:
-        store = InMemoryBaselineRepository()
-        profiler = ContinuousProfiler(store)
-        result = profiler.profile_stage("tts_first_clause", lambda: None)
-        assert result.duration_ms >= 0.0
+        assert timing.stage_name == "stt"
+        assert timing.duration_ms == pytest.approx(50.0)
+        assert timing.result == "transcript"
 
-    def test_profile_stage_measures_sleep_duration(self) -> None:
-        store = InMemoryBaselineRepository()
-        profiler = ContinuousProfiler(store)
+    def test_profile_stage_accumulates_samples(self) -> None:
+        clock = _FakeClock([0.0, 0.01, 0.02, 0.05])
+        profiler = ContinuousProfiler(clock=clock)
 
-        def slow_fn() -> str:
-            time.sleep(0.02)
-            return "done"
-
-        result = profiler.profile_stage("stt", slow_fn)
-        assert result.duration_ms >= 10.0  # at least half of 20ms sleep
-
-    def test_profile_stage_timestamp_is_utc(self) -> None:
-        store = InMemoryBaselineRepository()
-        profiler = ContinuousProfiler(store)
-        before = datetime.now(tz=UTC)
-        result = profiler.profile_stage("cil", lambda: None)
-        after = datetime.now(tz=UTC)
-        assert before <= result.timestamp <= after
-
-    def test_sample_count_increments_per_call(self) -> None:
-        store = InMemoryBaselineRepository()
-        profiler = ContinuousProfiler(store)
-        assert profiler.sample_count("stt") == 0
         profiler.profile_stage("stt", lambda: None)
         profiler.profile_stage("stt", lambda: None)
-        assert profiler.sample_count("stt") == 2
 
-    def test_flush_persists_p95_to_store(self) -> None:
-        store = InMemoryBaselineRepository()
-        profiler = ContinuousProfiler(store)
-        for _ in range(10):
-            profiler.profile_stage("stt", lambda: None)
-        profiler.flush()
-        p95 = store.fetch_latest_p95("stt")
-        assert p95 is not None
-        assert p95 >= 0.0
+        assert profiler.samples_for("stt") == pytest.approx((10.0, 30.0))
 
-    def test_flush_clears_samples(self) -> None:
-        store = InMemoryBaselineRepository()
-        profiler = ContinuousProfiler(store)
-        profiler.profile_stage("stt", lambda: None)
-        profiler.flush()
-        assert profiler.sample_count("stt") == 0
+    def test_record_sample_for_externally_measured_stage(self) -> None:
+        profiler = ContinuousProfiler()
+        profiler.record_sample("tts_first_clause", 123.4)
+        profiler.record_sample("tts_first_clause", 456.7)
 
-    def test_flush_multiple_stages(self) -> None:
-        store = InMemoryBaselineRepository()
-        profiler = ContinuousProfiler(store)
-        for stage in ["stt", "llm_ttft", "tts_first_clause"]:
-            profiler.profile_stage(stage, lambda: None)
-        profiler.flush()
-        for stage in ["stt", "llm_ttft", "tts_first_clause"]:
-            assert store.fetch_latest_p95(stage) is not None
+        assert profiler.samples_for("tts_first_clause") == (123.4, 456.7)
 
-    def test_flush_empty_samples_is_noop(self) -> None:
-        store = InMemoryBaselineRepository()
-        profiler = ContinuousProfiler(store)
-        profiler.flush()
-        assert store.fetch_latest_p95("stt") is None
+    def test_flush_daily_percentiles_persists_to_baseline_store(self) -> None:
+        store = InMemoryBaselineStore()
+        profiler = ContinuousProfiler(baseline_store=store)
+        for duration in [100.0, 200.0, 300.0, 400.0, 500.0]:
+            profiler.record_sample("stt", duration)
+
+        today = date(2026, 7, 9)
+        flushed = profiler.flush_daily_percentiles(recorded_date=today)
+
+        assert len(flushed) == 1
+        percentiles = flushed[0]
+        assert percentiles.stage_name == "stt"
+        assert percentiles.sample_count == 5
+        assert percentiles.p50_ms == 300.0
+
+        stored = store.percentiles_for("stt", today)
+        assert stored is not None
+        assert stored == percentiles
+
+    def test_flush_with_no_samples_is_a_noop(self) -> None:
+        profiler = ContinuousProfiler()
+        assert profiler.flush_daily_percentiles() == ()
+
+    def test_reset_clears_samples(self) -> None:
+        profiler = ContinuousProfiler()
+        profiler.record_sample("stt", 100.0)
+        profiler.reset()
+        assert profiler.samples_for("stt") == ()
+
+    def test_real_clock_default_produces_nonnegative_duration(self) -> None:
+        profiler = ContinuousProfiler()
+        timing = profiler.profile_stage("vad", lambda: time.sleep(0))
+        assert timing.duration_ms >= 0.0
+
+
+class _FakeClock:
+    """Deterministic ``time.perf_counter``-compatible stand-in for latency assertions."""
+
+    def __init__(self, ticks: list[float]) -> None:
+        self._ticks = iter(ticks)
+
+    def __call__(self) -> float:
+        return next(self._ticks)
 
 
 # ---------------------------------------------------------------------------
-# InMemoryBaselineRepository
+# InMemoryBaselineStore
 # ---------------------------------------------------------------------------
 
 
-class TestInMemoryBaselineRepository:
-    def test_returns_none_for_unknown_stage(self) -> None:
-        store = InMemoryBaselineRepository()
-        assert store.fetch_latest_p95("nonexistent") is None
+class TestInMemoryBaselineStore:
+    def test_percentiles_for_unknown_stage_returns_none(self) -> None:
+        store = InMemoryBaselineStore()
+        assert store.percentiles_for("stt", date(2026, 7, 9)) is None
 
-    def test_record_and_fetch_roundtrip(self) -> None:
-        store = InMemoryBaselineRepository()
-        store.record("stt", p50_ms=250.0, p95_ms=285.0, p99_ms=295.0, measured_date=date(2026, 8, 1))
-        assert store.fetch_latest_p95("stt") == pytest.approx(285.0)
-
-    def test_fetch_returns_latest_date(self) -> None:
-        store = InMemoryBaselineRepository()
-        store.record("stt", p50_ms=250.0, p95_ms=280.0, p99_ms=290.0, measured_date=date(2026, 7, 1))
-        store.record("stt", p50_ms=255.0, p95_ms=283.0, p99_ms=293.0, measured_date=date(2026, 8, 1))
-        assert store.fetch_latest_p95("stt") == pytest.approx(283.0)
-
-    def test_stages_are_isolated(self) -> None:
-        store = InMemoryBaselineRepository()
-        store.record("stt", p50_ms=250.0, p95_ms=280.0, p99_ms=290.0, measured_date=date.today())
-        store.record("llm_ttft", p50_ms=300.0, p95_ms=340.0, p99_ms=350.0, measured_date=date.today())
-        assert store.fetch_latest_p95("stt") == pytest.approx(280.0)
-        assert store.fetch_latest_p95("llm_ttft") == pytest.approx(340.0)
+    def test_record_and_retrieve_round_trip(self) -> None:
+        store = InMemoryBaselineStore()
+        percentiles = StagePercentiles(
+            stage_name="llm_ttft",
+            recorded_date=date(2026, 7, 9),
+            p50_ms=200.0,
+            p95_ms=340.0,
+            p99_ms=400.0,
+            sample_count=100,
+        )
+        store.record_percentiles(percentiles)
+        assert store.percentiles_for("llm_ttft", date(2026, 7, 9)) == percentiles
 
 
 # ---------------------------------------------------------------------------
@@ -180,61 +171,53 @@ class TestInMemoryBaselineRepository:
 
 
 class TestBenchmarkSuite:
-    def test_all_stages_pass_with_fixture_timings(self) -> None:
-        suite = BenchmarkSuite(source=FixtureTimingSource(), n_samples=10)
+    def test_run_benchmarks_passes_for_fixture_data_within_budget(self) -> None:
+        """Required named check: 'BenchmarkSuite passes for fixture data' (Sprint-028.md Phase 1 table)."""
+        fixtures = {
+            "stt": tuple(float(x) for x in range(200, 300)),  # p95 ~295ms, budget 300ms
+            "cil": tuple(float(x) for x in range(50, 115)),  # p95 ~114ms, budget 120ms
+            "llm_ttft": tuple(float(x) for x in range(250, 345)),  # p95 ~340ms, budget 350ms
+            "tts_first_clause": tuple(float(x) for x in range(150, 245)),  # p95 ~240ms, budget 250ms
+        }
+        suite = BenchmarkSuite(StaticFixtureProvider(fixtures))
+
         report = suite.run_benchmarks("ci")
-        assert report.passed, (
-            f"Expected all stages to pass with fixture timings; "
-            f"failing: {[s.stage for s in report.stages if not s.passed]}"
+
+        assert report.environment == "ci"
+        assert len(report.results) == 4
+        assert report.passed is True
+        assert report.failures() == ()
+
+    def test_run_benchmarks_fails_stage_exceeding_budget(self) -> None:
+        fixtures = {"stt": tuple(float(x) for x in range(280, 400))}  # p95 far above 300ms budget
+        suite = BenchmarkSuite(StaticFixtureProvider(fixtures))
+
+        report = suite.run_benchmarks("staging")
+
+        assert report.passed is False
+        failures = report.failures()
+        assert len(failures) == 1
+        assert failures[0].stage_name == "stt"
+
+    def test_stages_with_no_fixture_data_are_skipped(self) -> None:
+        suite = BenchmarkSuite(StaticFixtureProvider({}))
+        report = suite.run_benchmarks("ci")
+        assert report.results == ()
+        assert report.passed is True  # vacuously true — nothing benchmarked, nothing failed
+
+    def test_stage_benchmark_result_within_budget_property(self) -> None:
+        within = StageBenchmarkResult(stage_name="stt", p95_ms=250.0, budget_ms=300.0, sample_count=10)
+        over = StageBenchmarkResult(stage_name="stt", p95_ms=350.0, budget_ms=300.0, sample_count=10)
+        assert within.within_budget is True
+        assert over.within_budget is False
+
+    def test_custom_budgets_override_default(self) -> None:
+        suite = BenchmarkSuite(
+            StaticFixtureProvider({"stt": (50.0, 60.0, 70.0)}),
+            budgets={"stt": 40.0},
         )
-
-    def test_report_contains_all_expected_stages(self) -> None:
-        suite = BenchmarkSuite(source=FixtureTimingSource())
         report = suite.run_benchmarks("ci")
-        stage_names = {s.stage for s in report.stages}
-        assert stage_names == set(STAGE_BUDGETS_MS)
-
-    def test_p95_within_budget_for_all_fixture_stages(self) -> None:
-        suite = BenchmarkSuite(source=FixtureTimingSource())
-        report = suite.run_benchmarks("ci")
-        for stage_result in report.stages:
-            assert stage_result.p95_ms <= stage_result.budget_ms, (
-                f"Stage {stage_result.stage}: p95={stage_result.p95_ms:.1f} > budget={stage_result.budget_ms:.1f}"
-            )
-
-    def test_stage_over_budget_fails_report(self) -> None:
-        suite = BenchmarkSuite(source=RegressionFixtureTimingSource())
-        report = suite.run_benchmarks("regression-test")
-        # STT fixtures are scaled by 1.15x — STT p95 should exceed 300ms budget
-        stt = report.stage("stt")
-        assert stt is not None
-        assert not stt.passed
-
-    def test_report_passed_false_when_any_stage_over_budget(self) -> None:
-        suite = BenchmarkSuite(source=RegressionFixtureTimingSource())
-        report = suite.run_benchmarks("regression-test")
-        assert not report.passed
-
-    def test_stage_result_lookup_by_name(self) -> None:
-        suite = BenchmarkSuite(source=FixtureTimingSource())
-        report = suite.run_benchmarks("ci")
-        assert report.stage("stt") is not None
-        assert report.stage("nonexistent") is None
-
-    def test_report_timestamp_is_recent(self) -> None:
-        before = datetime.now(tz=UTC)
-        suite = BenchmarkSuite(source=FixtureTimingSource())
-        report = suite.run_benchmarks("ci")
-        after = datetime.now(tz=UTC)
-        assert before <= report.timestamp <= after
-
-    def test_stage_result_overage_pct_positive_when_over_budget(self) -> None:
-        result = StageResult(stage="stt", p50_ms=290.0, p95_ms=345.0, p99_ms=360.0, budget_ms=300.0)
-        assert result.overage_pct > 0.0
-
-    def test_stage_result_overage_pct_negative_when_under_budget(self) -> None:
-        result = StageResult(stage="stt", p50_ms=200.0, p95_ms=270.0, p99_ms=295.0, budget_ms=300.0)
-        assert result.overage_pct < 0.0
+        assert report.results[0].within_budget is False
 
 
 # ---------------------------------------------------------------------------
@@ -243,98 +226,83 @@ class TestBenchmarkSuite:
 
 
 class TestRegressionDetector:
-    def test_no_baseline_skips_stage(self) -> None:
-        """When no baseline is stored, the detector skips the stage and passes."""
-        store = InMemoryBaselineRepository()
-        detector = RegressionDetector(store)
-        report = _make_report_with_p95({"stt": 320.0})
-        result = detector.check(report)
-        assert result.passed
-        assert len(result.regressions) == 0
+    def test_no_regression_when_within_threshold(self) -> None:
+        detector = RegressionDetector({"stt": 300.0})
+        current = BenchmarkReport(
+            environment="staging",
+            results=(StageBenchmarkResult(stage_name="stt", p95_ms=320.0, budget_ms=300.0, sample_count=50),),
+        )  # +6.7%, under the 10% threshold
 
-    def test_within_threshold_passes(self) -> None:
-        """5 % above baseline is within the 10 % threshold — should pass."""
-        store = _make_store_with_baseline("stt", p95_ms=280.0)
-        for stage in ["cil", "llm_ttft", "tts_first_clause"]:
-            store.record(stage, 80.0, STAGE_BUDGETS_MS[stage] * 0.90, 95.0, date.today())
-        detector = RegressionDetector(store)
-        # 280 * 1.05 = 294 < 280 * 1.10 = 308 -> passes
-        report = _make_report_with_p95({"stt": 280.0 * 1.05})
-        result = detector.check(report)
-        stt_reg = next((r for r in result.regressions if r.stage == "stt"), None)
-        assert stt_reg is not None
-        assert not stt_reg.exceeded
-        assert result.passed
+        report = detector.check(current)
 
-    def test_exactly_at_threshold_passes(self) -> None:
-        """Exactly 10 % above baseline is at the limit — should pass (≤ threshold)."""
-        baseline = 280.0
-        store = _make_store_with_baseline("stt", p95_ms=baseline)
-        for stage in ["cil", "llm_ttft", "tts_first_clause"]:
-            store.record(stage, 80.0, STAGE_BUDGETS_MS[stage] * 0.90, 95.0, date.today())
-        detector = RegressionDetector(store)
-        exact_threshold = baseline * (1.0 + REGRESSION_THRESHOLD_FRACTION)
-        report = _make_report_with_p95({"stt": exact_threshold})
-        result = detector.check(report)
-        stt_reg = next((r for r in result.regressions if r.stage == "stt"), None)
-        assert stt_reg is not None
-        assert not stt_reg.exceeded
+        assert report.passed is True
+        assert report.regressions() == ()
 
-    def test_15pct_regression_fails_ci(self) -> None:
-        """Sprint-028 required: STT p95 at 115 % of baseline -> CI gate FAILS."""
-        baseline_stt_p95 = 280.0
-        store = _make_store_with_baseline("stt", p95_ms=baseline_stt_p95)
-        for stage in ["cil", "llm_ttft", "tts_first_clause"]:
-            store.record(stage, 80.0, STAGE_BUDGETS_MS[stage] * 0.90, 95.0, date.today())
-        detector = RegressionDetector(store)
-        # 280 * 1.15 = 322 > 280 * 1.10 = 308 -> regression detected
-        regressed_p95 = baseline_stt_p95 * 1.15
-        report = _make_report_with_p95({"stt": regressed_p95})
-        result = detector.check(report)
-        assert not result.passed, "15% regression above baseline must fail the CI gate"
-        failed = result.failed_stages
-        assert len(failed) == 1
-        assert failed[0].stage == "stt"
-        assert failed[0].overage_pct == pytest.approx(15.0, abs=0.01)
+    def test_fails_on_simulated_15_percent_regression(self) -> None:
+        """Required named check: 'RegressionDetector fails on simulated 15% regression' (Sprint-028.md Phase 1 table)."""
+        detector = RegressionDetector({"stt": 300.0})
+        current = BenchmarkReport(
+            environment="staging",
+            results=(StageBenchmarkResult(stage_name="stt", p95_ms=345.0, budget_ms=300.0, sample_count=50),),
+        )  # 300 * 1.15 = 345 -- exactly a 15% regression
 
-    def test_regression_fixture_source_triggers_gate(self) -> None:
-        """End-to-end: RegressionFixtureTimingSource + stored baseline -> gate fails."""
-        # Populate baselines from FixtureTimingSource (represents yesterday's good run)
-        good_suite = BenchmarkSuite(source=FixtureTimingSource())
-        good_report = good_suite.run_benchmarks("baseline-run")
-        store = InMemoryBaselineRepository()
-        today = date.today()
-        for stage_result in good_report.stages:
-            store.record(
-                stage_result.stage,
-                p50_ms=stage_result.p50_ms,
-                p95_ms=stage_result.p95_ms,
-                p99_ms=stage_result.p99_ms,
-                measured_date=today,
-            )
+        report = detector.check(current)
 
-        # Run with regressed source (STT x 1.15)
-        regressed_suite = BenchmarkSuite(source=RegressionFixtureTimingSource())
-        regressed_report = regressed_suite.run_benchmarks("regressed-run")
+        assert report.passed is False
+        regressions = report.regressions()
+        assert len(regressions) == 1
+        assert regressions[0].stage_name == "stt"
+        assert regressions[0].regression_pct == pytest.approx(0.15)
+        assert regressions[0].is_regression is True
 
-        detector = RegressionDetector(store)
-        result = detector.check(regressed_report)
-        assert not result.passed
-        failed_stages = [r.stage for r in result.failed_stages]
-        assert "stt" in failed_stages
+    def test_exactly_at_threshold_is_not_a_regression(self) -> None:
+        detector = RegressionDetector({"stt": 300.0})
+        current = BenchmarkReport(
+            environment="staging",
+            results=(StageBenchmarkResult(stage_name="stt", p95_ms=330.0, budget_ms=300.0, sample_count=50),),
+        )  # exactly +10% -- strictly greater-than is required to fail
 
-    def test_multiple_regressions_all_reported(self) -> None:
-        store = InMemoryBaselineRepository()
-        today = date.today()
-        for stage in STAGE_BUDGETS_MS:
-            store.record(stage, 80.0, STAGE_BUDGETS_MS[stage] * 0.90, 95.0, today)
-        detector = RegressionDetector(store)
-        # Set all stages 20 % above baseline
-        overrides = {stage: STAGE_BUDGETS_MS[stage] * 0.90 * 1.20 for stage in STAGE_BUDGETS_MS}
-        report = _make_report_with_p95(overrides)
-        result = detector.check(report)
-        assert not result.passed
-        assert len(result.failed_stages) == len(STAGE_BUDGETS_MS)
+        report = detector.check(current)
+
+        assert report.passed is True
+
+    def test_stage_with_no_registered_baseline_is_skipped(self) -> None:
+        detector = RegressionDetector({})
+        current = BenchmarkReport(
+            environment="staging",
+            results=(StageBenchmarkResult(stage_name="stt", p95_ms=1000.0, budget_ms=300.0, sample_count=1),),
+        )
+
+        report = detector.check(current)
+
+        assert report.results == ()
+        assert report.passed is True
+
+    def test_from_benchmark_report_seeds_baselines(self) -> None:
+        baseline_report = BenchmarkReport(
+            environment="staging",
+            results=(StageBenchmarkResult(stage_name="stt", p95_ms=280.0, budget_ms=300.0, sample_count=100),),
+        )
+        detector = RegressionDetector.from_benchmark_report(baseline_report)
+
+        current = BenchmarkReport(
+            environment="staging",
+            results=(StageBenchmarkResult(stage_name="stt", p95_ms=290.0, budget_ms=300.0, sample_count=100),),
+        )
+        report = detector.check(current)
+
+        assert report.results[0].baseline_p95_ms == 280.0
+        assert report.passed is True
+
+    def test_nonpositive_baseline_never_reports_a_regression(self) -> None:
+        detector = RegressionDetector({"stt": 0.0})
+        current = BenchmarkReport(
+            environment="staging",
+            results=(StageBenchmarkResult(stage_name="stt", p95_ms=999.0, budget_ms=300.0, sample_count=1),),
+        )
+        report = detector.check(current)
+        assert report.results[0].regression_pct == 0.0
+        assert report.results[0].is_regression is False
 
 
 # ---------------------------------------------------------------------------
@@ -343,43 +311,101 @@ class TestRegressionDetector:
 
 
 class TestOptimizationPlaybook:
-    def test_suggest_returns_actions_for_stt(self) -> None:
-        actions = OptimizationPlaybook.suggest("stt", observed_p95_ms=380.0)
-        assert len(actions) > 0
-        assert all(a.stage == "stt" for a in actions)
+    def test_procedure_for_known_stage(self) -> None:
+        playbook = OptimizationPlaybook()
+        procedure = playbook.procedure_for("tts_first_clause")
+        assert procedure is not None
+        assert procedure.stage_name == "tts_first_clause"
+        assert len(procedure.likely_causes) > 0
+        assert len(procedure.procedure) > 0
 
-    def test_suggest_returns_actions_for_llm_ttft(self) -> None:
-        actions = OptimizationPlaybook.suggest("llm_ttft", observed_p95_ms=420.0)
-        assert len(actions) > 0
+    def test_procedure_for_unknown_stage_returns_none(self) -> None:
+        playbook = OptimizationPlaybook()
+        assert playbook.procedure_for("nonexistent_stage") is None
 
-    def test_suggest_returns_actions_for_cil(self) -> None:
-        actions = OptimizationPlaybook.suggest("cil", observed_p95_ms=150.0)
-        assert len(actions) > 0
+    def test_all_procedures_cover_every_budgeted_stage(self) -> None:
+        playbook = OptimizationPlaybook()
+        covered = {p.stage_name for p in playbook.all_procedures()}
+        for stage_name in STAGE_BUDGETS_MS:
+            assert stage_name in covered
 
-    def test_suggest_returns_actions_for_tts(self) -> None:
-        actions = OptimizationPlaybook.suggest("tts_first_clause", observed_p95_ms=310.0)
-        assert len(actions) > 0
+    def test_stt_procedure_references_known_technical_debt(self) -> None:
+        playbook = OptimizationPlaybook()
+        procedure = playbook.procedure_for("stt")
+        assert procedure is not None
+        assert "TT-010" in procedure.related_technical_debt
 
-    def test_unknown_stage_returns_empty(self) -> None:
-        actions = OptimizationPlaybook.suggest("nonexistent_stage", observed_p95_ms=500.0)
-        assert actions == []
+    def test_tts_procedure_references_ttfa_technical_debt(self) -> None:
+        playbook = OptimizationPlaybook()
+        procedure = playbook.procedure_for("tts_first_clause")
+        assert procedure is not None
+        assert "TT-001-residual" in procedure.related_technical_debt
 
-    def test_actions_sorted_by_expected_improvement_descending(self) -> None:
-        actions = OptimizationPlaybook.suggest("stt", observed_p95_ms=380.0)
-        import itertools
 
-        for a, b in itertools.pairwise(actions):
-            assert a.expected_improvement_pct >= b.expected_improvement_pct
+# ---------------------------------------------------------------------------
+# scripts/check_performance_regression.py (CI gate wiring, Sprint-028 AC)
+# ---------------------------------------------------------------------------
 
-    def test_all_stages_covered(self) -> None:
-        covered = set(OptimizationPlaybook.all_stages())
-        assert set(STAGE_BUDGETS_MS).issubset(covered)
 
-    def test_action_descriptions_are_nonempty(self) -> None:
-        for stage in OptimizationPlaybook.all_stages():
-            for action in OptimizationPlaybook.suggest(stage, 999.0):
-                assert action.description.strip()
+class TestCheckPerformanceRegressionScript:
+    def test_default_current_fixture_passes(self) -> None:
+        """Required: the CI gate is green in the default (no-regression) case."""
+        assert check_regression_main([]) == 0
 
-    def test_custom_budget_overrides_default(self) -> None:
-        actions = OptimizationPlaybook.suggest("stt", observed_p95_ms=500.0, budget_ms=200.0)
-        assert len(actions) > 0
+    def test_simulate_regression_flag_fails(self) -> None:
+        """Required AC: 'RegressionDetector CI gate ... fails correctly on simulated regression'."""
+        assert check_regression_main(["--simulate-regression"]) == 1
+
+    def test_custom_current_file_is_honored(self, tmp_path: object) -> None:
+        import json
+        from pathlib import Path
+
+        current_path = Path(str(tmp_path)) / "current.json"
+        current_path.write_text(json.dumps({"stt": 285.0}), encoding="utf-8")
+
+        assert check_regression_main(["--current", str(current_path)]) == 0
+
+    def test_default_current_fixture_is_under_every_budget(self) -> None:
+        fixture = default_current_fixture()
+        for stage, p95 in fixture.items():
+            assert p95 < STAGE_BUDGETS_MS[stage]
+
+    def test_evaluate_helper_flags_injected_regression(self) -> None:
+        current = default_current_fixture()
+        stage = next(iter(current))
+        current[stage] = STAGE_BUDGETS_MS[stage] * 1.20
+
+        report = check_regression_evaluate(current)
+
+        assert report.passed is False
+        assert any(r.stage_name == stage for r in report.regressions())
+
+
+# ---------------------------------------------------------------------------
+# Cross-module sanity: percentile computation matches Sprint-028's own budgets table
+# ---------------------------------------------------------------------------
+
+
+def test_stage_budgets_match_v1_ch23_literal_values() -> None:
+    assert STAGE_BUDGETS_MS["stt"] == 300.0
+    assert STAGE_BUDGETS_MS["cil"] == 120.0
+    assert STAGE_BUDGETS_MS["llm_ttft"] == 350.0
+    assert STAGE_BUDGETS_MS["tts_first_clause"] == 250.0
+
+
+def test_stage_percentiles_is_stable_across_recorded_dates() -> None:
+    day_one = date(2026, 7, 9)
+    day_two = day_one + timedelta(days=1)
+    store = InMemoryBaselineStore()
+    store.record_percentiles(
+        StagePercentiles(
+            stage_name="stt", recorded_date=day_one, p50_ms=200.0, p95_ms=280.0, p99_ms=300.0, sample_count=10
+        )
+    )
+    store.record_percentiles(
+        StagePercentiles(
+            stage_name="stt", recorded_date=day_two, p50_ms=210.0, p95_ms=290.0, p99_ms=310.0, sample_count=10
+        )
+    )
+    assert store.percentiles_for("stt", day_one).p95_ms == 280.0  # type: ignore[union-attr]
+    assert store.percentiles_for("stt", day_two).p95_ms == 290.0  # type: ignore[union-attr]

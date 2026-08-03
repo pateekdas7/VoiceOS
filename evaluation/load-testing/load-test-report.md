@@ -1,76 +1,106 @@
-# Load Test Report — Sprint-028
+# Load Test Report
 
-**Environment:** Production Alpha (CPU node `101.53.141.75` + GPU node)
-**Date:** _FILL IN_
-**Tool:** Locust (`tests/load/locustfile.py`)
-**Status:** ⬜ PENDING (Phase 2)
-
----
-
-## Test Parameters
-
-| Parameter | Value |
-|-----------|-------|
-| Peak concurrent calls | 500 |
-| Ramp-up | 50 calls/s for 10 minutes |
-| Hold at peak | 30 minutes |
-| Ramp-down | 5 minutes |
-| Total run time | ~45 minutes |
+**Sprint:** Sprint-028 — Performance Validation, Load Testing, Pen Test & Production Alpha Deploy
+**Deliverable:** `evaluation/load-testing/` (Sprint-028 §2 — Load Testing)
+**Architecture Reference:** Volume 1 Ch23 (Latency Budget); Volume 7 Ch15 (Performance Validation)
+**Tool:** Locust or k6
 
 ---
 
-## Acceptance Gates
+## Report Metadata
 
-| Gate | Threshold | Actual | Pass? |
-|------|-----------|--------|-------|
-| First-audio p95 at load | ≤ 1.65 s (10 % degradation budget) | _FILL_ | ⬜ |
-| Error rate | < 0.1 % | _FILL_ | ⬜ |
-| GPU utilization (fleet avg) | ≤ 0.80 | _FILL_ | ⬜ |
-| OOM events | 0 | _FILL_ | ⬜ |
-| Circuit breaker opens (sustained) | 0 | _FILL_ | ⬜ |
-
----
-
-## Locust Statistics at Peak (500 concurrent users)
-
-| Endpoint | Req/s | Median (ms) | 95th % (ms) | 99th % (ms) | Fail % |
-|----------|-------|-------------|-------------|-------------|--------|
-| POST /v1/calls | _FILL_ | _FILL_ | _FILL_ | _FILL_ | _FILL_ |
-| GET /v1/calls/:id | _FILL_ | _FILL_ | _FILL_ | _FILL_ | _FILL_ |
-| GET /v1/customers/:id | _FILL_ | _FILL_ | _FILL_ | _FILL_ | _FILL_ |
-| GET /health/live | _FILL_ | _FILL_ | _FILL_ | _FILL_ | _FILL_ |
+| Field | Value |
+|---|---|
+| Date | _(to be filled after Phase 2 execution)_ |
+| Environment | Production infrastructure (warm GPU, real AI models, 500-concurrent-call target) |
+| Tool used | TBD (Locust or k6) |
+| Test script | `tests/load/locustfile.py` (or `tests/load/k6-script.js`) |
+| Status | **PENDING PHASE 2 EXECUTION** |
+| Executed by | TBD |
+| Report author | TBD |
 
 ---
 
-## GPU Metrics Under Load
+## Methodology
 
-| Metric | Baseline (100 calls) | At Peak (500 calls) | Pass? |
-|--------|---------------------|---------------------|-------|
-| GPU utilization (L4 node) | _FILL_ | _FILL_ | ⬜ |
-| VRAM used (MiB) | _FILL_ | _FILL_ | ⬜ |
-| STT queue depth (p95) | _FILL_ | _FILL_ | ⬜ |
-| LLM batch size (avg) | _FILL_ | _FILL_ | ⬜ |
+Per Sprint-028 §2 scenario:
 
----
+1. Ramp to 500 concurrent calls over 10 minutes.
+2. Hold at 500 concurrent calls for 30 minutes.
+3. Ramp down over 5 minutes.
+4. Assert throughout hold phase:
+   - First-audio p95 ≤ 1.65s (10% degradation budget at load, relative to the 1.5s baseline gate)
+   - GPU utilization ≤ 0.80 (fleet average; no node at 100%)
+   - Error rate < 0.1%
+   - No OOM events
+   - No circuit breaker opens (sustained)
 
-## Locust Command Used
-
-```bash
-locust -f tests/load/locustfile.py \
-    --host http://<api-platform-host>:8000 \
-    --users 500 --spawn-rate 50 \
-    --run-time 45m --headless \
-    --csv evaluation/load-testing/results
-```
+This report captures the template/shell for that execution. Load testing requires real GPU infrastructure and is a Phase 2-only activity; Phase 1 only produces and syntactically validates the load test scripts.
 
 ---
 
-## Result
+## Test Timeline
 
-**Overall:** ⬜ PENDING
-
-_Notes:_
+| Phase | Duration | Target Concurrency | Status |
+|---|---|---|---|
+| Ramp-up | 10 minutes | 0 → 500 concurrent calls | TBD |
+| Hold | 30 minutes | 500 concurrent calls (steady state) | TBD |
+| Ramp-down | 5 minutes | 500 → 0 concurrent calls | TBD |
 
 ---
 
-*Fill in actual measurements after running the load test against the production alpha stack.*
+## Results
+
+### Assertions
+
+| Assertion | Threshold | Observed | Pass/Fail |
+|---|---|---|---|
+| First-audio p95 (at 500 concurrent) | ≤ 1.65s (10% degradation budget) | TBD | TBD |
+| GPU utilization (fleet average) | ≤ 0.80 | TBD | TBD |
+| GPU utilization (any single node) | < 1.00 (no node at 100%) | TBD | TBD |
+| Error rate | < 0.1% | TBD | TBD |
+| OOM events | 0 | TBD | TBD |
+| Circuit breaker opens (sustained) | 0 | TBD | TBD |
+
+### Latency Distribution Under Load
+
+| Percentile | First-Audio Latency (ms) |
+|---|---|
+| p50 | TBD |
+| p95 | TBD |
+| p99 | TBD |
+
+### GPU Utilization Samples (logged every 60s during hold phase)
+
+| Timestamp | Node | Utilization | VRAM Used |
+|---|---|---|---|
+| TBD | TBD | TBD | TBD |
+
+_(to be filled after Phase 2 execution — full 60s-interval sample series appended as a linked artifact or additional table rows)_
+
+### Errors / Circuit Breaker Events
+
+_(to be filled after Phase 2 execution — none expected per exit criteria)_
+
+---
+
+## Acceptance Criteria
+
+- [ ] Load test: p95 ≤ 1.65s at 500 concurrent calls
+- [ ] GPU utilization ≤ 0.80 (fleet average; no node at 100%) at 500 concurrent calls
+- [ ] Error rate < 0.1%
+- [ ] No OOM events recorded in Kubernetes events during load test
+- [ ] No sustained circuit breaker opens
+- [ ] `BenchmarkSuite.run_benchmarks()` passes for all stages (all p95 values within budget) during/after load
+
+---
+
+## Sign-off
+
+| Role | Name | Date | Signature/Approval |
+|---|---|---|---|
+| Test Executor | TBD | TBD | PENDING |
+| Engineering Lead | TBD | TBD | PENDING |
+| Production Readiness Owner | TBD | TBD | PENDING |
+
+**Overall Status:** PENDING PHASE 2 EXECUTION — do not proceed to canary deploy until all assertions pass.

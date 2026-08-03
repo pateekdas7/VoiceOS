@@ -1,118 +1,127 @@
-# Production Alpha Report — Sprint-028
+# Production Alpha Deployment Report
 
-**Milestone:** M-7 Production Alpha
-**Date:** _FILL IN_
-**Sprint:** Sprint-028
-**Status:** ⬜ PENDING (Phase 2)
+**Sprint:** Sprint-028 — Performance Validation, Load Testing, Pen Test & Production Alpha Deploy
+**Deliverable:** `evaluation/production-alpha-report.md` (Sprint-028 §6 — Production Alpha Deployment)
+**Milestone:** M-7 — Production Alpha
+**Architecture Reference:** Volume 7 Ch4 (Deployment Strategy — canary 5%→25%→50%→100%), Ch7 (Monitoring), Ch20 (Business Continuity)
 
 ---
 
-## Gate Summary
+## Report Metadata
 
-| Gate | Requirement | Status |
-|------|-------------|--------|
-| G-1: Latency validation | first-audio p95 ≤ 1.5 s | ⬜ PENDING |
-| G-2: Load test | p95 ≤ 1.65 s at 500 concurrent; error rate < 0.1 % | ⬜ PENDING |
-| G-3: Chaos engineering | All 5 scenarios pass their gates | ⬜ PENDING |
-| G-4: Security pen test | ZERO critical; ZERO exploitable high | ⬜ PENDING |
-| G-5: Compliance validation | 100 % RBI + DPDP scenarios | ⬜ PENDING |
-| G-6: Canary rollout | 5 %→25 %→50 %→100 % without auto-rollback | ⬜ PENDING |
+| Field | Value |
+|---|---|
+| Date | _(to be filled after Phase 2 execution)_ |
+| Environment | Production infrastructure — full canary rollout to 100% of traffic |
+| Rollout mechanism | Feature flag or Argo Rollouts |
+| Status | **PENDING PHASE 2 EXECUTION** |
+| Executed by | TBD |
+| Report author | TBD |
+
+---
+
+## Methodology
+
+Per Sprint-028 §6, the production alpha canary rollout procedure is:
+
+1. Deploy to 5% of traffic (feature flag or Argo Rollouts).
+2. Hold 30 minutes: monitor SLO dashboards, error rate, latency.
+3. Auto-rollback trigger: if error rate > 1% OR first-audio p95 > 2s → automatic rollback.
+4. If passing: promote to 25% → hold 1 hour → promote to 50% → hold 1 hour → promote to 100%.
+5. Notify on-call team at each promotion step.
+
+This canary rollout is gated on all prior evaluation reports (latency, load, chaos, pen test, compliance) passing their respective acceptance criteria. Canary execution against real production traffic is a Phase 2-only activity.
+
+---
+
+## Auto-Rollback Trigger
+
+**Rollback fires automatically if, at any traffic percentage:**
+- Error rate > 1%, **OR**
+- First-audio p95 > 2s
+
+**Rollback procedure:**
+- Automatic: Argo Rollouts or feature flag rollback.
+- Manual: `argocd app rollback voiceos-platform` or `helm rollback voiceos-platform`.
 
 ---
 
 ## Canary Rollout Log
 
-### Phase 1: 5 % Traffic
+| Step | Traffic % | Hold Duration | Error Rate | p95 Latency (first-audio) | Decision |
+|---|---|---|---|---|---|
+| 1 | 5% | 30 minutes | TBD | TBD | PENDING |
+| 2 | 25% | 1 hour | TBD | TBD | PENDING |
+| 3 | 50% | 1 hour | TBD | TBD | PENDING |
+| 4 | 100% | N/A (final) | TBD | TBD | PENDING |
 
-| Metric | Threshold | Observed | Pass? |
-|--------|-----------|----------|-------|
-| Error rate | < 1 % | _FILL_ | ⬜ |
-| first-audio p95 | < 2 s | _FILL_ | ⬜ |
-| Duration held | 30 min | _FILL_ | ⬜ |
-| Promoted to 25 %? | Yes | _FILL_ | ⬜ |
-
-### Phase 2: 25 % Traffic
-
-| Metric | Threshold | Observed | Pass? |
-|--------|-----------|----------|-------|
-| Error rate | < 1 % | _FILL_ | ⬜ |
-| first-audio p95 | < 2 s | _FILL_ | ⬜ |
-| Duration held | 60 min | _FILL_ | ⬜ |
-| Promoted to 50 %? | Yes | _FILL_ | ⬜ |
-
-### Phase 3: 50 % Traffic
-
-| Metric | Threshold | Observed | Pass? |
-|--------|-----------|----------|-------|
-| Error rate | < 1 % | _FILL_ | ⬜ |
-| first-audio p95 | < 2 s | _FILL_ | ⬜ |
-| Duration held | 60 min | _FILL_ | ⬜ |
-| Promoted to 100 %? | Yes | _FILL_ | ⬜ |
-
-### Phase 4: 100 % Traffic
-
-| Metric | Threshold | Observed | Pass? |
-|--------|-----------|----------|-------|
-| Error rate | < 1 % | _FILL_ | ⬜ |
-| first-audio p95 | < 1.5 s | _FILL_ | ⬜ |
-| GPU utilization | ≤ 0.80 | _FILL_ | ⬜ |
-
-**Canary rollout result:** ⬜ PENDING
+**Rollback events during rollout:** _(to be filled after Phase 2 execution — none expected)_
 
 ---
 
-## Rollback Commands
+## On-Call Notifications
 
-```bash
-# Automatic (Argo Rollouts)
-argocd app rollback voiceos-platform
-
-# Manual (Helm)
-helm rollback voiceos-platform -n voiceos-runtime
-
-# Manual (feature flag)
-kubectl set env deployment/api-platform -n voiceos-runtime CANARY_PCT=0
-```
+| Step | Traffic % | Notification Sent | Timestamp |
+|---|---|---|---|
+| 1 | 5% | TBD | TBD |
+| 2 | 25% | TBD | TBD |
+| 3 | 50% | TBD | TBD |
+| 4 | 100% | TBD | TBD |
 
 ---
 
-## Auto-Rollback Triggers
+## Evaluation Reports Rollup
 
-- Error rate > 1 % for > 2 minutes → automatic rollback to previous version
-- first-audio p95 > 2 s for > 5 minutes → automatic rollback
+This report consolidates the gate status from all Sprint-028 evaluation reports. The production alpha canary rollout (above) must not begin until all of the following report gates are green:
 
----
-
-## On-Call Notifications Sent
-
-| Step | Time | Notified | Channel |
-|------|------|----------|---------|
-| 5 % → 25 % | _FILL_ | _FILL_ | PagerDuty |
-| 25 % → 50 % | _FILL_ | _FILL_ | PagerDuty |
-| 50 % → 100 % | _FILL_ | _FILL_ | PagerDuty |
+| Report | Path | Gate | Status |
+|---|---|---|---|
+| Latency Validation | [`evaluation/latency-validation/latency-report.md`](./latency-validation/latency-report.md) | First-audio p95 ≤ 1.5s (100 calls, production AI) | PENDING PHASE 2 |
+| Load Testing | [`evaluation/load-testing/load-test-report.md`](./load-testing/load-test-report.md) | p95 ≤ 1.65s @ 500 concurrent; GPU util ≤ 0.80; error rate < 0.1% | PENDING PHASE 2 |
+| Chaos Engineering | [`evaluation/chaos/chaos-engineering-report.md`](./chaos/chaos-engineering-report.md) | All 5 scenarios pass their gates | PENDING PHASE 2 |
+| Security Pen Test | [`evaluation/security/pen-test-report.md`](./security/pen-test-report.md) | ZERO critical, ZERO exploitable high findings | PENDING PHASE 2 |
+| Security Remediation Log | [`evaluation/security/remediation-log.md`](./security/remediation-log.md) | Medium findings tracked with plan + timeline | PENDING PHASE 2 |
+| Compliance Validation | [`evaluation/compliance/compliance-validation-report.md`](./compliance/compliance-validation-report.md) | 100% RBI/DPDP scenarios pass | PENDING PHASE 2 |
 
 ---
 
-## Milestone M-7 Verification
+## GPU / Infrastructure Health During Canary
 
-- [ ] Production alpha live at 100 % traffic
-- [ ] SLO dashboards (Grafana) showing live p95 ≤ 1.5 s
-- [ ] All evaluation reports committed and linked below
-- [ ] Regression suite (2091+ tests) passing on production alpha
-- [ ] BACKLOG.md, DONE.md, PROJECT_STATUS.md, CHANGELOG.md updated
-
-### Report Links
-
-| Report | Location |
-|--------|----------|
-| Latency validation | `evaluation/latency-validation/latency-report.md` |
-| Load test | `evaluation/load-testing/load-test-report.md` |
-| Chaos engineering | `evaluation/chaos/chaos-engineering-report.md` |
-| Penetration test | `evaluation/security/pen-test-report.md` |
-| Compliance validation | `evaluation/compliance/compliance-validation-report.md` |
+| Check | Threshold | Observed | Status |
+|---|---|---|---|
+| Grafana SLO dashboard first-audio p95 | < 2s (auto-rollback trigger) | TBD | TBD |
+| Error rate (all traffic percentages) | < 1% | TBD | TBD |
+| GPU utilization at 500 concurrent calls | ≤ 0.80 | TBD | TBD |
+| GPU OOM events | 0 | TBD | TBD |
 
 ---
 
-**Production Alpha Status:** ⬜ PENDING
+## Milestone M-7 (Production Alpha) — Acceptance Criteria
 
-*Complete this report after all gates pass and the canary rollout reaches 100 %.*
+_Copied verbatim from Sprint-028.md "Acceptance Criteria" section._
+
+- [ ] First-audio p95 ≤ 1.5s on latency validation run (100 calls, production AI models)
+- [ ] Load test: p95 ≤ 1.65s at 500 concurrent calls; GPU utilization ≤ 0.80; error rate < 0.1%
+- [ ] Chaos: GPU failure → ≤ 5 calls dropped; Redis failure → calls continue; Postgres failure → no PTP duplication
+- [ ] Security: ZERO critical findings; ZERO exploitable high findings; pen test report signed off
+- [ ] Compliance: 100% of RBI/DPDP test scenarios pass
+- [ ] Canary: 5%→25%→50%→100% completed without auto-rollback trigger
+- [ ] All evaluation reports committed to `evaluation/`
+- [ ] `BenchmarkSuite.run_benchmarks()` passes for all stages (all p95 values within budget)
+- [ ] `RegressionDetector` CI gate is wired into `.github/workflows/` and fails correctly on simulated regression
+- [ ] `docs/security/threat-model.md` exists with all 6 STRIDE categories covered
+- [ ] `docs/security/threat-registry.md` has ≥ 20 threat entries with controls documented
+- [ ] Threat model reviewed and signed off by engineering lead
+
+---
+
+## Sign-off
+
+| Role | Name | Date | Signature/Approval |
+|---|---|---|---|
+| Deployment Lead | TBD | TBD | PENDING |
+| Engineering Lead | TBD | TBD | PENDING |
+| Production Readiness Owner | TBD | TBD | PENDING |
+| On-Call Lead | TBD | TBD | PENDING |
+
+**Overall Status:** PENDING PHASE 2 EXECUTION — Milestone M-7 (Production Alpha) is not verified until this report and all six referenced evaluation reports are complete with all gates passing.

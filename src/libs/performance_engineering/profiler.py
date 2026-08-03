@@ -1,138 +1,175 @@
-"""ContinuousProfiler — per-stage latency profiling harness, always-on in staging (V3 Ch19).
+"""ContinuousProfiler -- per-stage latency profiling harness, always-on in staging (V3 Ch19, Sprint-028).
 
-Architecture: V3 Ch19 (Performance Engineering).
+Wraps every pipeline stage (Media GW -> ASM -> Preprocessing -> VAD -> STT ->
+CIL -> LLM (TTFT) -> TTS (first clause) -> Playback) with automated timing
+capture and computes daily p50/p95/p99 per stage, persisted through the
+injected :class:`BaselineStore` port -- a real deployment backs this with
+the ``performance_baselines`` Postgres table (``src.libs.repositories.
+performance_baseline.PerformanceBaselineRepository``, additive migration
+``0027``); Phase 1 unit tests use :class:`InMemoryBaselineStore` (Sprint-028.md's
+own "Stage timing: Fixed-duration fixtures" Phase 1 mock-backend note).
+
+Architecture: V1 Ch23 (Latency Budget); V3 Ch19 (Performance Engineering).
 """
 
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
-from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
-from typing import Generic, Protocol, TypeVar
-
-T = TypeVar("T")
-
-
-def _percentile(sorted_values: list[float], p: float) -> float:
-    """Linear-interpolation percentile of a pre-sorted list (p in 0-100 scale)."""
-    if not sorted_values:
-        return 0.0
-    if len(sorted_values) == 1:
-        return sorted_values[0]
-    idx = (p / 100.0) * (len(sorted_values) - 1)
-    lo = int(idx)
-    hi = lo + 1
-    if hi >= len(sorted_values):
-        return sorted_values[-1]
-    frac = idx - lo
-    return sorted_values[lo] + frac * (sorted_values[hi] - sorted_values[lo])
+from collections import defaultdict
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from datetime import date as date_
+from typing import Any, Protocol
 
 
-@dataclass
-class TimingResult(Generic[T]):  # noqa: UP046
-    """The outcome of one profiled stage execution — timing metadata and the stage's return value."""
+def compute_percentile(samples: Sequence[float], percentile: float) -> float:
+    """Nearest-rank percentile of ``samples`` (0 <= percentile <= 100).
 
-    stage: str
+    Deterministic, dependency-free (no ``numpy``/``statistics.quantiles``
+    interpolation surprises) -- the same nearest-rank method used
+    throughout this project's other percentile calculations.
+    """
+    if not samples:
+        raise ValueError("compute_percentile() requires at least one sample")
+    if not 0 <= percentile <= 100:
+        raise ValueError(f"percentile must be within [0, 100], got {percentile}")
+    ordered = sorted(samples)
+    if len(ordered) == 1:
+        return ordered[0]
+    index = min(len(ordered) - 1, max(0, round(percentile / 100 * (len(ordered) - 1))))
+    return ordered[index]
+
+
+@dataclass(frozen=True)
+class TimingResult:
+    """Result of one :meth:`ContinuousProfiler.profile_stage` invocation."""
+
+    stage_name: str
     duration_ms: float
-    timestamp: datetime
-    value: T
+    recorded_at: datetime
+    result: Any = None
+    """The wrapped callable's own return value, so instrumentation never discards it."""
 
 
-class BaselineRepository(Protocol):
-    """Persistence contract for per-stage performance baselines."""
+@dataclass(frozen=True)
+class StagePercentiles:
+    """One stage's p50/p95/p99 for one calendar day -- the ``performance_baselines`` row shape."""
 
-    def record(
-        self,
-        stage: str,
-        p50_ms: float,
-        p95_ms: float,
-        p99_ms: float,
-        measured_date: date,
-    ) -> None:
-        """Persist one day's p50/p95/p99 for ``stage``."""
-        ...
-
-    def fetch_latest_p95(self, stage: str) -> float | None:
-        """Return the most-recently stored p95 for ``stage``, or ``None`` if no record exists."""
-        ...
+    stage_name: str
+    recorded_date: date_
+    p50_ms: float
+    p95_ms: float
+    p99_ms: float
+    sample_count: int
 
 
-@dataclass
-class InMemoryBaselineRepository:
-    """In-memory baseline store — used in unit tests and Phase 1 validation."""
+class BaselineStore(Protocol):
+    """Injected persistence port for daily per-stage percentiles.
 
-    _records: dict[tuple[str, date], dict[str, float]] = field(default_factory=dict)
+    Structural (no inheritance required) -- ``PerformanceBaselineRepository``
+    (Postgres-backed, Phase 2) satisfies this by method signature alone,
+    same "port defined where it's consumed" precedent as
+    ``src.services.cost_optimizer.tracker.ConversationUsageSource``.
+    """
 
-    def record(
-        self,
-        stage: str,
-        p50_ms: float,
-        p95_ms: float,
-        p99_ms: float,
-        measured_date: date,
-    ) -> None:
-        self._records[(stage, measured_date)] = {
-            "p50": p50_ms,
-            "p95": p95_ms,
-            "p99": p99_ms,
-        }
+    def record_percentiles(self, percentiles: StagePercentiles) -> None: ...
 
-    def fetch_latest_p95(self, stage: str) -> float | None:
-        matching = [(k, v) for k, v in self._records.items() if k[0] == stage]
-        if not matching:
-            return None
-        _, record = max(matching, key=lambda kv: kv[0][1])
-        return record["p95"]
+    def percentiles_for(self, stage_name: str, recorded_date: date_) -> StagePercentiles | None: ...
+
+
+class InMemoryBaselineStore:
+    """Default, in-process :class:`BaselineStore` -- Phase 1 fixture-driven backend."""
+
+    def __init__(self) -> None:
+        self._store: dict[tuple[str, date_], StagePercentiles] = {}
+
+    def record_percentiles(self, percentiles: StagePercentiles) -> None:
+        self._store[(percentiles.stage_name, percentiles.recorded_date)] = percentiles
+
+    def percentiles_for(self, stage_name: str, recorded_date: date_) -> StagePercentiles | None:
+        return self._store.get((stage_name, recorded_date))
 
 
 class ContinuousProfiler:
-    """Always-on per-stage latency profiling harness (V3 Ch19).
+    """Per-stage latency profiling harness -- always-on in staging (V3 Ch19).
 
-    Call ``profile_stage(name, fn)`` to time a zero-argument callable; the
-    result carries both the function's return value and the measured duration.
-    Call ``flush()`` at the end of each day's observation window to persist
-    accumulated p50/p95/p99 to the baseline store.
+    ``profile_stage`` is the synchronous instrumentation point: call it
+    around any single stage invocation to capture its duration without
+    losing the wrapped callable's return value. Samples accumulate
+    in-process across a run; :meth:`flush_daily_percentiles` computes and
+    persists p50/p95/p99 for everything sampled so far.
     """
 
-    def __init__(self, store: BaselineRepository) -> None:
-        self._store = store
-        self._stage_samples: dict[str, list[float]] = {}
+    def __init__(
+        self,
+        baseline_store: BaselineStore | None = None,
+        *,
+        clock: Callable[[], float] = time.perf_counter,
+    ) -> None:
+        self._baseline_store = baseline_store or InMemoryBaselineStore()
+        self._clock = clock
+        self._samples: dict[str, list[float]] = defaultdict(list)
 
-    def profile_stage(self, stage_name: str, fn: Callable[[], T]) -> TimingResult[T]:
-        """Call ``fn``, measure its wall-clock duration, and return a ``TimingResult``.
+    def profile_stage(self, stage_name: str, fn: Callable[[], Any]) -> TimingResult:
+        """Time one invocation of ``fn``, tagged as ``stage_name``.
 
-        The timing is also accumulated internally; call ``flush()`` to persist.
+        Returns a :class:`TimingResult` carrying both the measured
+        duration and ``fn``'s own return value (``.result``).
         """
-        start = time.perf_counter()
+        start = self._clock()
         value = fn()
-        elapsed_ms = (time.perf_counter() - start) * 1000.0
-
-        self._stage_samples.setdefault(stage_name, []).append(elapsed_ms)
-
-        return TimingResult(
-            stage=stage_name,
+        elapsed_ms = (self._clock() - start) * 1000.0
+        timing = TimingResult(
+            stage_name=stage_name,
             duration_ms=elapsed_ms,
-            timestamp=datetime.now(tz=UTC),
-            value=value,
+            recorded_at=datetime.now(UTC),
+            result=value,
         )
+        self._samples[stage_name].append(elapsed_ms)
+        return timing
 
-    def flush(self) -> None:
-        """Persist accumulated p50/p95/p99 per stage to the baseline store and reset."""
-        today = date.today()
-        for stage, samples in self._stage_samples.items():
+    def record_sample(self, stage_name: str, duration_ms: float) -> None:
+        """Record an externally-measured duration for ``stage_name``.
+
+        For stages measured out-of-process (e.g. a GPU-node HTTP probe's
+        own reported latency) where wrapping a local callable isn't
+        possible.
+        """
+        self._samples[stage_name].append(duration_ms)
+
+    def samples_for(self, stage_name: str) -> tuple[float, ...]:
+        return tuple(self._samples.get(stage_name, ()))
+
+    def flush_daily_percentiles(self, recorded_date: date_ | None = None) -> tuple[StagePercentiles, ...]:
+        """Compute and persist ``recorded_date``'s (default: today, UTC) p50/p95/p99 for every sampled stage."""
+        day = recorded_date or datetime.now(UTC).date()
+        computed: list[StagePercentiles] = []
+        for stage_name, samples in self._samples.items():
             if not samples:
                 continue
-            sorted_s = sorted(samples)
-            self._store.record(
-                stage=stage,
-                p50_ms=_percentile(sorted_s, 50),
-                p95_ms=_percentile(sorted_s, 95),
-                p99_ms=_percentile(sorted_s, 99),
-                measured_date=today,
+            percentiles = StagePercentiles(
+                stage_name=stage_name,
+                recorded_date=day,
+                p50_ms=compute_percentile(samples, 50),
+                p95_ms=compute_percentile(samples, 95),
+                p99_ms=compute_percentile(samples, 99),
+                sample_count=len(samples),
             )
-        self._stage_samples.clear()
+            self._baseline_store.record_percentiles(percentiles)
+            computed.append(percentiles)
+        return tuple(computed)
 
-    def sample_count(self, stage: str) -> int:
-        """Number of samples accumulated for ``stage`` since the last flush."""
-        return len(self._stage_samples.get(stage, []))
+    def reset(self) -> None:
+        """Clear all accumulated samples (e.g. between benchmark runs in a long-lived test process)."""
+        self._samples.clear()
+
+
+__all__ = [
+    "BaselineStore",
+    "ContinuousProfiler",
+    "InMemoryBaselineStore",
+    "StagePercentiles",
+    "TimingResult",
+    "compute_percentile",
+]

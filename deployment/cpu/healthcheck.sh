@@ -88,10 +88,9 @@ else
 fi
 
 # PostgreSQL schema (Sprint-014 — Alembic migration version + table count;
-# head bumped to 0026 by Sprint-026's src/services/saas_ops/ migration --
-# found stale at "0025" during Sprint-027's own live healthcheck.sh run
-# (Sprint-027 itself adds no new migration); same recurring "stale
-# hardcoded migration-head" bug class as every prior sprint, see
+# head bumped to 0027 by Sprint-028's performance_baselines migration --
+# same recurring "stale hardcoded migration-head" bug class as every prior
+# sprint, fixed proactively this time instead of found stale, see
 # CHANGELOG.md)
 #
 # Sprint-016 fix: alembic.ini's env.py reads POSTGRES_DSN to build the

@@ -1,5 +1,11 @@
-"""Performance Engineering library — ContinuousProfiler, BenchmarkSuite,
-RegressionDetector, OptimizationPlaybook (V3 Ch19).
+"""Performance Engineering -- profiling harness, benchmark suite, regression gate, optimization playbook (V3 Ch19).
+
+Sprint-028.md's literal path is ``src/libs/performance-engineering/`` --
+not a valid Python package name (hyphens are not permitted in module
+identifiers). Renamed to ``performance_engineering`` following the same
+dashed-path-to-underscore deviation precedent as ``monitoring/gpu_fleet``
+(Sprint-027), ``src/services/cost_optimizer`` (Sprint-027), and
+``src/services/ops_analytics`` (Sprint-027).
 
 Architecture: V3 Ch19 (Performance Engineering).
 """
@@ -7,38 +13,46 @@ Architecture: V3 Ch19 (Performance Engineering).
 from __future__ import annotations
 
 from src.libs.performance_engineering.benchmarks import (
+    STAGE_BUDGETS_MS,
     BenchmarkReport,
     BenchmarkSuite,
-    FixtureTimingSource,
-    StageResult,
-    StageTimingSource,
+    StageBenchmarkResult,
+    StageFixtureProvider,
+    StaticFixtureProvider,
 )
-from src.libs.performance_engineering.optimization import OptimizationAction, OptimizationPlaybook
+from src.libs.performance_engineering.optimization import OptimizationPlaybook, OptimizationProcedure
 from src.libs.performance_engineering.profiler import (
-    BaselineRepository,
+    BaselineStore,
     ContinuousProfiler,
-    InMemoryBaselineRepository,
+    InMemoryBaselineStore,
+    StagePercentiles,
     TimingResult,
+    compute_percentile,
 )
 from src.libs.performance_engineering.regression_gate import (
+    REGRESSION_THRESHOLD,
     RegressionDetector,
+    RegressionReport,
     RegressionResult,
-    StageRegression,
 )
 
 __all__ = [
-    "BaselineRepository",
+    "REGRESSION_THRESHOLD",
+    "STAGE_BUDGETS_MS",
+    "BaselineStore",
     "BenchmarkReport",
     "BenchmarkSuite",
     "ContinuousProfiler",
-    "FixtureTimingSource",
-    "InMemoryBaselineRepository",
-    "OptimizationAction",
+    "InMemoryBaselineStore",
     "OptimizationPlaybook",
+    "OptimizationProcedure",
     "RegressionDetector",
+    "RegressionReport",
     "RegressionResult",
-    "StageRegression",
-    "StageResult",
-    "StageTimingSource",
+    "StageBenchmarkResult",
+    "StageFixtureProvider",
+    "StagePercentiles",
+    "StaticFixtureProvider",
     "TimingResult",
+    "compute_percentile",
 ]

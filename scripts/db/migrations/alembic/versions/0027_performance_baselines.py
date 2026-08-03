@@ -1,50 +1,54 @@
-"""Sprint-028: performance_baselines — per-stage p50/p95/p99 latency baselines
-stored by ContinuousProfiler for regression detection (V3 Ch19).
+"""Sprint-028: performance_baselines (ContinuousProfiler daily per-stage percentiles, V3 Ch19)
 
 Revision ID: 0027
 Revises: 0026
-Create Date: 2026-08-03
+Create Date: 2026-07-09
 
-Additive only — no existing table is altered or dropped. This migration adds:
-
-  * ``performance_baselines`` — one row per (stage, measured_date).
-    ``stage`` is the pipeline stage identifier (e.g. 'stt', 'llm_ttft').
-    ``measured_date`` is the UTC calendar date the samples were collected.
-    The (stage, measured_date) pair is the natural unique key: ContinuousProfiler
-    writes one row per stage per day via ``flush()``. The ``RegressionDetector``
-    reads the latest row for each stage to establish the allowed threshold.
+One row per (stage_name, environment, recorded_date) -- ContinuousProfiler's
+``flush_daily_percentiles()`` upserts here once per stage per day. Not
+tenant-scoped: this is fleet-level operational data (pipeline-stage
+latency), not customer data, so it deliberately does not follow the
+mechanically tenant-scoped ``BaseRepository`` pattern every domain
+repository since Sprint-014 has used.
 """
 
 from __future__ import annotations
 
-import sqlalchemy as sa
+from collections.abc import Sequence
+
 from alembic import op
 
-revision = "0027"
-down_revision = "0026"
-branch_labels = None
-depends_on = None
+revision: str = "0027"
+down_revision: str | None = "0026"
+branch_labels: Sequence[str] | None = None
+depends_on: Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.execute("""
+    op.execute(
+        """
         CREATE TABLE IF NOT EXISTS performance_baselines (
-            id              BIGSERIAL PRIMARY KEY,
-            stage           TEXT        NOT NULL,
-            measured_date   DATE        NOT NULL,
-            p50_ms          DOUBLE PRECISION NOT NULL,
-            p95_ms          DOUBLE PRECISION NOT NULL,
-            p99_ms          DOUBLE PRECISION NOT NULL,
-            recorded_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            CONSTRAINT uq_performance_baselines_stage_date
-                UNIQUE (stage, measured_date)
-        )
-    """)
-    op.execute("""
-        CREATE INDEX IF NOT EXISTS ix_performance_baselines_stage_date
-            ON performance_baselines (stage, measured_date DESC)
-    """)
+            performance_baseline_id UUID             PRIMARY KEY DEFAULT gen_random_uuid(),
+            stage_name              TEXT             NOT NULL,
+            environment              TEXT             NOT NULL DEFAULT 'production',
+            recorded_date            DATE             NOT NULL,
+            p50_ms                   DOUBLE PRECISION NOT NULL CHECK (p50_ms >= 0),
+            p95_ms                   DOUBLE PRECISION NOT NULL CHECK (p95_ms >= 0),
+            p99_ms                   DOUBLE PRECISION NOT NULL CHECK (p99_ms >= 0),
+            sample_count             BIGINT           NOT NULL CHECK (sample_count > 0),
+            created_at               TIMESTAMPTZ      NOT NULL DEFAULT NOW()
+        );
+        """
+    )
+    op.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_performance_baselines_stage_env_date "
+        "ON performance_baselines (stage_name, environment, recorded_date);"
+    )
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS idx_performance_baselines_stage_date "
+        "ON performance_baselines (stage_name, recorded_date DESC);"
+    )
 
 
 def downgrade() -> None:
-    op.execute("DROP TABLE IF EXISTS performance_baselines")
+    op.execute("DROP TABLE IF EXISTS performance_baselines CASCADE;")

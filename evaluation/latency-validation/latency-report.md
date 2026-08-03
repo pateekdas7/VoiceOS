@@ -1,65 +1,97 @@
-# Latency Validation Report — Sprint-028
+# Latency Validation Report
 
-**Environment:** Production Alpha (CPU node `101.53.141.75` + GPU node)
-**Date:** _FILL IN_
-**Run by:** _FILL IN_
-**Call count:** 100 test calls over 30 minutes
-**Status:** ⬜ PENDING (Phase 2)
+**Sprint:** Sprint-028 — Performance Validation, Load Testing, Pen Test & Production Alpha Deploy
+**Deliverable:** `evaluation/latency-validation/` (Sprint-028 §1 — Latency Validation)
+**Architecture Reference:** Volume 1 Ch23 (Latency Budget — per-stage targets); Volume 3 Ch19 (Performance Engineering)
 
 ---
 
-## Gate: First-Audio p95 ≤ 1.5s
+## Report Metadata
 
-| Metric | Target | Actual | Pass? |
-|--------|--------|--------|-------|
-| First-audio p50 | ≤ 1.0 s | _FILL IN_ | ⬜ |
-| First-audio p95 | ≤ 1.5 s | _FILL IN_ | ⬜ |
-| First-audio p99 | ≤ 2.0 s | _FILL IN_ | ⬜ |
-
----
-
-## Per-Stage Breakdown (p50 / p95 / p99)
-
-| Stage | Budget (V1 Ch23) | p50 | p95 | p99 | Pass? |
-|-------|-----------------|-----|-----|-----|-------|
-| Media GW endpoint | 120 ms | _FILL_ | _FILL_ | _FILL_ | ⬜ |
-| Audio preprocessing | 30 ms | _FILL_ | _FILL_ | _FILL_ | ⬜ |
-| VAD / endpointing | 20 ms | _FILL_ | _FILL_ | _FILL_ | ⬜ |
-| STT (Whisper) | 300 ms | _FILL_ | _FILL_ | _FILL_ | ⬜ |
-| CIL (intent) | 120 ms | _FILL_ | _FILL_ | _FILL_ | ⬜ |
-| LLM TTFT (Qwen2.5-7B) | 350 ms | _FILL_ | _FILL_ | _FILL_ | ⬜ |
-| TTS first clause (Veena) | 250 ms | _FILL_ | _FILL_ | _FILL_ | ⬜ |
-| Playback start | 30 ms | _FILL_ | _FILL_ | _FILL_ | ⬜ |
+| Field | Value |
+|---|---|
+| Date | _(to be filled after Phase 2 execution)_ |
+| Environment | Production infrastructure (warm GPU, real AI models) |
+| Test window | 30 minutes |
+| Call volume | 100 test calls |
+| Instrumentation | OpenTelemetry spans, per stage |
+| Status | **PENDING PHASE 2 EXECUTION** |
+| Executed by | TBD |
+| Report author | TBD |
 
 ---
 
 ## Methodology
 
-- Instrumentation: OpenTelemetry spans in each stage
-- Audio input: 2-second Hinglish utterances (synthetic, representative of production)
-- AI models: Whisper Large-v3 Turbo FP8, Qwen2.5-7B-Instruct-FP8, Veena TTS FP16
-- GPU warm: all models pre-loaded before first test call
-- Distributed tracing: Jaeger trace IDs logged per call
+Per Sprint-028 §1 procedure:
+
+1. Use production infrastructure (warm GPU, real AI models) — no synthetic/mocked stages.
+2. Inject 100 test calls over 30 minutes.
+3. Instrument every stage with OpenTelemetry spans.
+4. Record per-stage p50/p95/p99 latency for the following pipeline stages, in order:
+   Media GW → ASM → Preprocessing → VAD → STT → CIL (Conversation Intelligence Layer) → LLM (TTFT) → TTS (first clause) → Playback start.
+5. Assert first-audio p95 ≤ 1.5s. If exceeded: FAIL the run, identify the bottleneck stage, optimize (model size, batching, caching), and re-run. Do NOT proceed to canary deploy until first-audio p95 ≤ 1.5s.
+6. Compare observed per-stage p50 figures against the architecture's per-stage budget (Volume 1 Ch23):
+   endpoint 120ms + STT 300ms + context+prompt 90ms + LLM TTFT 350ms + validate 40ms + TTS 250ms + resample 30ms = **~1060ms p50 headroom** (total budget across the accounted stages).
+
+This report captures the template/shell for that execution. All data cells below are placeholders pending Phase 2 (real GPU infrastructure) execution — Phase 1 of Sprint-028 explicitly excludes latency validation, which "requires real GPU" and is Phase 2-only.
 
 ---
 
-## Action on Failure
+## Results
 
-If first-audio p95 exceeds 1.5 s:
+### Top-Line Gate
 
-1. Identify stage with highest p95 contribution
-2. Apply `OptimizationPlaybook.suggest(stage, observed_p95)` for actions
-3. Re-run validation after fix
-4. Do NOT proceed to canary deploy until gate passes
+| Metric | Threshold | Observed | Pass/Fail |
+|---|---|---|---|
+| First-audio p95 | ≤ 1.5s (1500ms) | TBD | TBD |
+
+### Per-Stage Latency (ms)
+
+| Stage | p50 (ms) | p95 (ms) | p99 (ms) | Budget (ms) | Pass/Fail |
+|---|---|---|---|---|---|
+| Media GW | TBD | TBD | TBD | _(endpoint budget, see note)_ 120 | TBD |
+| ASM | TBD | TBD | TBD | _(included in endpoint 120ms)_ | TBD |
+| Preprocessing | TBD | TBD | TBD | _(included in endpoint 120ms)_ | TBD |
+| VAD | TBD | TBD | TBD | _(included in endpoint 120ms)_ | TBD |
+| STT | TBD | TBD | TBD | 300 | TBD |
+| CIL (Conversation Intelligence Layer) | TBD | TBD | TBD | 90 (context+prompt) | TBD |
+| LLM (TTFT) | TBD | TBD | TBD | 350 | TBD |
+| TTS (first clause) | TBD | TBD | TBD | 250 | TBD |
+| Playback start | TBD | TBD | TBD | 30 (resample) + 40 (validate) | TBD |
+
+**Total p50 budget headroom (V1 Ch23):** endpoint 120ms + STT 300ms + context+prompt 90ms + LLM TTFT 350ms + validate 40ms + TTS 250ms + resample 30ms = **~1060ms**
+
+> Note: Media GW / ASM / Preprocessing / VAD are sub-stages within the architecture's "endpoint" budget line (120ms) and "validate" budget line (40ms); STT, CIL, LLM, TTS, and resample map 1:1 to their respective budget lines above. Observed sub-stage breakdowns will be recorded individually in Phase 2 even though the architecture's budget is expressed at the aggregate level.
 
 ---
 
-## Result
+## Bottleneck Analysis
 
-**Overall:** ⬜ PENDING
+_(to be filled after Phase 2 execution)_
 
-_Notes:_
+If first-audio p95 > 1.5s: identify the stage(s) exceeding budget, root cause, and remediation applied (model size / batching / caching), followed by re-run results.
 
 ---
 
-*Report generated by Sprint-028 Phase 2 validation. Fill in actual measurements after running the latency validation procedure.*
+## Acceptance Criteria
+
+- [ ] First-audio p95 ≤ 1.5s on latency validation run (100 calls, production AI models)
+- [ ] Per-stage p50/p95/p99 recorded for all stages: Media GW, ASM, Preprocessing, VAD, STT, CIL, LLM (TTFT), TTS (first clause), Playback start
+- [ ] STT TTFW ≤ 500ms (GPU baseline validation)
+- [ ] LLM TTFT ≤ 500ms (GPU baseline validation)
+- [ ] TTS first-clause ≤ 300ms (GPU baseline validation)
+- [ ] No stage exceeds its Volume 1 Ch23 budget at p50
+- [ ] Re-run confirms fix if initial run failed the p95 ≤ 1.5s gate
+
+---
+
+## Sign-off
+
+| Role | Name | Date | Signature/Approval |
+|---|---|---|---|
+| Test Executor | TBD | TBD | PENDING |
+| Engineering Lead | TBD | TBD | PENDING |
+| Production Readiness Owner | TBD | TBD | PENDING |
+
+**Overall Status:** PENDING PHASE 2 EXECUTION — do not proceed to canary deploy until this report is completed with first-audio p95 ≤ 1.5s confirmed.

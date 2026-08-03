@@ -1,86 +1,99 @@
-"""RegressionDetector — CI gate that fails if any stage p95 regresses > 10% above baseline (V3 Ch19).
+"""RegressionDetector -- CI gate: fails if any stage p95 exceeds its baseline by >10% (V3 Ch19, Sprint-028).
 
-Architecture: V3 Ch19 (Performance Engineering).
+Prevents performance regressions from merging silently. Compares a
+current :class:`~.benchmarks.BenchmarkReport`'s per-stage p95 measurements
+against a set of registered baselines (typically yesterday's
+``performance_baselines`` row per stage, via
+:meth:`RegressionDetector.from_benchmark_report` seeded from a prior
+:class:`~.benchmarks.BenchmarkSuite` run). ``scripts/check_performance_regression.py``
+wires this into ``.github/workflows/ci.yml`` as a blocking gate.
+
+Architecture: V3 Ch19 (Performance Engineering -- regression-detection gates).
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
-from src.libs.performance_engineering.benchmarks import BenchmarkReport
-from src.libs.performance_engineering.profiler import BaselineRepository
+from .benchmarks import BenchmarkReport
 
-REGRESSION_THRESHOLD_FRACTION = 0.10
-"""Fraction above baseline p95 that triggers a regression (10 %)."""
-
-
-@dataclass(frozen=True)
-class StageRegression:
-    """Regression record for one pipeline stage."""
-
-    stage: str
-    baseline_p95_ms: float
-    current_p95_ms: float
-
-    @property
-    def threshold_ms(self) -> float:
-        """Maximum acceptable p95 — baseline x (1 + threshold fraction)."""
-        return self.baseline_p95_ms * (1.0 + REGRESSION_THRESHOLD_FRACTION)
-
-    @property
-    def exceeded(self) -> bool:
-        """True if current p95 is above the allowed threshold."""
-        return self.current_p95_ms > self.threshold_ms
-
-    @property
-    def overage_pct(self) -> float:
-        """How far above baseline p95 the current result is (percentage)."""
-        return (self.current_p95_ms - self.baseline_p95_ms) / self.baseline_p95_ms * 100.0
+REGRESSION_THRESHOLD = 0.10
+"""A stage regresses if its measured p95 exceeds its registered baseline by more than this fraction."""
 
 
 @dataclass(frozen=True)
 class RegressionResult:
-    """Outcome of one regression check across all benchmarked stages."""
+    """One stage's regression check outcome."""
 
-    regressions: tuple[StageRegression, ...]
+    stage_name: str
+    baseline_p95_ms: float
+    measured_p95_ms: float
+
+    @property
+    def regression_pct(self) -> float:
+        """Fractional change vs. baseline (0.15 == +15%). 0.0 if the baseline itself is non-positive."""
+        if self.baseline_p95_ms <= 0:
+            return 0.0
+        return (self.measured_p95_ms - self.baseline_p95_ms) / self.baseline_p95_ms
+
+    @property
+    def is_regression(self) -> bool:
+        return self.regression_pct > REGRESSION_THRESHOLD
+
+
+@dataclass(frozen=True)
+class RegressionReport:
+    """Output of :meth:`RegressionDetector.check` -- every stage compared against its baseline."""
+
+    results: tuple[RegressionResult, ...]
 
     @property
     def passed(self) -> bool:
-        """True if no stage exceeds its regression threshold."""
-        return not any(r.exceeded for r in self.regressions)
+        """``True`` iff no stage regressed by more than :data:`REGRESSION_THRESHOLD`."""
+        return not any(r.is_regression for r in self.results)
 
-    @property
-    def failed_stages(self) -> tuple[StageRegression, ...]:
-        """Stages that exceeded their regression threshold."""
-        return tuple(r for r in self.regressions if r.exceeded)
+    def regressions(self) -> tuple[RegressionResult, ...]:
+        return tuple(r for r in self.results if r.is_regression)
 
 
 class RegressionDetector:
-    """Compares a ``BenchmarkReport`` against stored baselines and returns a ``RegressionResult``.
+    """CI gate: fails if any stage's measured p95 is more than 10% above its registered baseline."""
 
-    If no baseline is stored for a stage, that stage is skipped — the first run
-    always passes (it establishes the baseline rather than measuring against one).
-    """
+    def __init__(self, baselines: Mapping[str, float]) -> None:
+        self._baselines = dict(baselines)
 
-    def __init__(self, store: BaselineRepository) -> None:
-        self._store = store
+    @classmethod
+    def from_benchmark_report(cls, baseline_report: BenchmarkReport) -> RegressionDetector:
+        """Build a detector from a prior :class:`~.benchmarks.BenchmarkReport` (e.g. yesterday's baseline run)."""
+        return cls({r.stage_name: r.p95_ms for r in baseline_report.results})
 
-    def check(self, report: BenchmarkReport) -> RegressionResult:
-        """Evaluate ``report`` against stored baselines.
+    def check(self, current_report: BenchmarkReport) -> RegressionReport:
+        """Compare ``current_report``'s per-stage p95 against this detector's registered baselines.
 
-        Returns a ``RegressionResult`` whose ``passed`` property indicates whether
-        CI should succeed (True) or fail (False).
+        Stages present in ``current_report`` with no registered baseline
+        are skipped (nothing to regress against yet -- a new stage's
+        first benchmark run establishes its baseline, it cannot fail
+        against itself).
         """
-        stage_regressions: list[StageRegression] = []
-        for stage_result in report.stages:
-            baseline = self._store.fetch_latest_p95(stage_result.stage)
+        results: list[RegressionResult] = []
+        for stage_result in current_report.results:
+            baseline = self._baselines.get(stage_result.stage_name)
             if baseline is None:
                 continue
-            stage_regressions.append(
-                StageRegression(
-                    stage=stage_result.stage,
+            results.append(
+                RegressionResult(
+                    stage_name=stage_result.stage_name,
                     baseline_p95_ms=baseline,
-                    current_p95_ms=stage_result.p95_ms,
+                    measured_p95_ms=stage_result.p95_ms,
                 )
             )
-        return RegressionResult(regressions=tuple(stage_regressions))
+        return RegressionReport(results=tuple(results))
+
+
+__all__ = [
+    "REGRESSION_THRESHOLD",
+    "RegressionDetector",
+    "RegressionReport",
+    "RegressionResult",
+]

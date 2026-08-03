@@ -82,12 +82,22 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Run unit tests
+        env:
+          # Distinct data-file name so this job's raw coverage data can be
+          # combined with integration-tests' below without collision.
+          # --cov-fail-under=0 overrides pyproject.toml's global fail_under=85
+          # for THIS invocation only — this job exercises unit+invariants tests
+          # alone, a partial slice of src/, so the 85% *overall* gate must not
+          # be evaluated here. It is enforced for real in the combined-coverage
+          # job below, against unit+integration data together.
+          COVERAGE_FILE: coverage-unit.data
         run: |
           pytest tests/unit/ tests/invariants/ \
             --cov=src/libs/contracts \
             --cov=src/libs/invariants \
             --cov-report=term-missing \
             --cov-report=xml:coverage.xml \
+            --cov-fail-under=0 \
             -v
 
       - name: Enforce coverage gate — contracts ≥90%
@@ -126,6 +136,14 @@ jobs:
         with:
           files: coverage.xml
           fail_ci_if_error: false
+
+      - name: Upload raw coverage data (unit)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-data-unit
+          path: coverage-unit.data
+          if-no-files-found: error
 
   # ---------------------------------------------------------------------------
   # Stage 4 — Integration tests (Postgres, Redis, MongoDB via Docker Compose)
@@ -199,12 +217,78 @@ jobs:
           POSTGRES_DSN: postgresql://voiceos:voiceos_dev_pw@localhost:5432/voiceos_dev
           REDIS_URL: redis://localhost:6379/0
           MONGODB_URI: mongodb://localhost:27017/voiceos_dev
+          # Distinct data-file name so this job's raw coverage data can be
+          # combined with unit-tests' above without collision. --cov-fail-under=0
+          # overrides pyproject.toml's global fail_under=85 for THIS invocation
+          # only — this job exercises integration tests alone, a partial slice
+          # of src/, so the 85% *overall* gate must not be evaluated here. It is
+          # enforced for real in the combined-coverage job below.
+          COVERAGE_FILE: coverage-integration.data
         run: |
-          pytest tests/integration/ -v --tb=short
+          pytest tests/integration/ -v --tb=short --cov-fail-under=0
+
+      - name: Upload raw coverage data (integration)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-data-integration
+          path: coverage-integration.data
+          if-no-files-found: error
 
       - name: Stop Docker Compose services
         if: always()
         run: docker compose down -v
+
+  # ---------------------------------------------------------------------------
+  # Stage 4.5 — Combined coverage gate (unit + integration combined, ≥85% overall)
+  #
+  # unit-tests and integration-tests each exercise only a slice of src/ and run
+  # on separate runners, so each disables its own coverage fail-under
+  # (--cov-fail-under=0) and instead uploads its raw .data file. This job
+  # downloads both, merges them with `coverage combine` (pyproject.toml's
+  # [tool.coverage.paths] already maps both runners' checkout paths to `src`),
+  # and enforces pyproject.toml's [tool.coverage.report] fail_under=85 against
+  # the true combined total — the "overall project minimum" the config's own
+  # comment describes.
+  # ---------------------------------------------------------------------------
+  coverage-gate:
+    name: Combined Coverage Gate
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dev dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Download unit coverage data
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-data-unit
+
+      - name: Download integration coverage data
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-data-integration
+
+      - name: Combine coverage and enforce overall 85% gate
+        run: |
+          coverage combine coverage-unit.data coverage-integration.data
+          coverage report --fail-under=85 -m
+          coverage xml -o coverage-combined.xml
+
+      - name: Upload combined coverage report
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: coverage-combined.xml
+          fail_ci_if_error: false
 
   # ---------------------------------------------------------------------------
   # Stage 5 — Secrets scan (gitleaks + trufflehog, Sprint-019 V4 Ch7 §7.12)
@@ -256,19 +340,12 @@ jobs:
         run: docker compose config --quiet
 
   # ---------------------------------------------------------------------------
-  # Stage 7 — Performance Regression Gate (Sprint-028 V3 Ch19)
-  #
-  # Runs RegressionDetector unit tests to verify:
-  #   - fixture timings within budget → PASS
-  #   - simulated 15 % STT regression → CI gate FAILS (correct behavior)
-  #
-  # A future Phase 2 step will run this against real benchmark results
-  # stored in the production Postgres performance_baselines table.
+  # Stage 7 — Performance regression gate (RegressionDetector, Sprint-028 V3 Ch19)
   # ---------------------------------------------------------------------------
   performance-regression-gate:
     name: Performance Regression Gate
     runs-on: ubuntu-latest
-    needs: unit-tests
+    needs: static-analysis
     steps:
       - uses: actions/checkout@v4
 
@@ -281,57 +358,5 @@ jobs:
       - name: Install dev dependencies
         run: pip install -e ".[dev]"
 
-      - name: Run performance regression gate unit tests
-        run: |
-          pytest tests/unit/libs/test_performance_engineering.py -v \
-            --cov=src/libs/performance_engineering \
-            --cov-report=term-missing \
-            --cov-report=xml:coverage-perf.xml
-
-      - name: Enforce performance engineering coverage ≥ 85 %
-        run: |
-          python -c "
-          import xml.etree.ElementTree as ET
-          tree = ET.parse('coverage-perf.xml')
-          root = tree.getroot()
-          found = False
-          for pkg in root.iter('package'):
-              name = pkg.get('name', '')
-              if 'performance_engineering' in name:
-                  rate = float(pkg.get('line-rate', 0)) * 100
-                  print(f'Performance engineering coverage: {rate:.1f}%')
-                  assert rate >= 85, f'Coverage {rate:.1f}% < 85% gate'
-                  found = True
-          if not found:
-              # Overall coverage check as fallback
-              rate = float(root.get('line-rate', 0)) * 100
-              print(f'Overall coverage: {rate:.1f}%')
-              assert rate >= 85, f'Coverage {rate:.1f}% < 85% gate'
-          print('Performance engineering coverage gate: PASSED')
-          "
-
-      - name: Verify regression gate catches simulated regression
-        run: |
-          python -c "
-          from src.libs.performance_engineering.benchmarks import BenchmarkSuite, RegressionFixtureTimingSource, FixtureTimingSource
-          from src.libs.performance_engineering.profiler import InMemoryBaselineRepository
-          from src.libs.performance_engineering.regression_gate import RegressionDetector
-          from datetime import date
-
-          # Build a baseline from good fixture timings
-          good = BenchmarkSuite(source=FixtureTimingSource()).run_benchmarks('baseline')
-          store = InMemoryBaselineRepository()
-          today = date.today()
-          for s in good.stages:
-              store.record(s.stage, s.p50_ms, s.p95_ms, s.p99_ms, today)
-
-          # Run with regressed source (STT * 1.15)
-          regressed = BenchmarkSuite(source=RegressionFixtureTimingSource()).run_benchmarks('regressed')
-          result = RegressionDetector(store).check(regressed)
-
-          assert not result.passed, 'ERROR: 15% regression was NOT detected — gate is broken'
-          failed = [r.stage for r in result.failed_stages]
-          assert 'stt' in failed, f'STT regression not detected; failed: {failed}'
-          print(f'Regression gate correctly caught 15% regression in stages: {failed}')
-          print('Performance regression gate: WORKING CORRECTLY')
-          "
+      - name: check_performance_regression.py — RegressionDetector CI gate (blocking, Sprint-028)
+        run: python scripts/check_performance_regression.py

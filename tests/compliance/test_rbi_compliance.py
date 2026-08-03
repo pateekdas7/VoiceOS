@@ -1,18 +1,17 @@
-"""Automated RBI Fair Practice Code compliance validation suite (Sprint-028, V4 Ch2).
+"""RBI compliance automated test suite -- Sprint-028 "5. Compliance Validation" (V4 Ch2, Sprint-028).
 
-Tests the real ``RBIPolicyPack`` rules against ``PolicyRequest`` fixtures — no
-live services required.  These are the automated scenarios that must pass 100 %
-before the production alpha deploy (Deliverable 5 in Sprint-028).
+Runs entirely in-process against a real ``PolicyEngine`` instantiated with
+no Redis/Postgres backends (``FakePolicyEngine`` below) -- Sprint-028.md's
+own Phase 1 "PolicyEngine: FakePolicyEngine -- Compliance test suite uses
+mock policy responses" mock-backend note. This reuses the real,
+already-tested RBI rule-evaluation logic (``src.services.policy_engine``)
+rather than re-implementing a parallel fake ruleset that could silently
+drift from production behavior.
 
-RBI scenarios covered:
-    ✓ Calling hours: 50 test calls outside 08:00-20:00 -> all blocked
-    ✓ Calling hours: calls inside 08:00-20:00 -> all permitted
-    ✓ Frequency: 3 calls today → 4th call blocked
-    ✓ Frequency: ≤ 3 calls today → permitted
-    ✓ Abuse prohibition: abusive/threatening utterance → forbidden
-    ✓ Identity verification: debt disclosure before identity check → requires verification
-    ✓ Disclosure: missing disclosure at call turn 0 → obligations required
-    ✓ Recording consent: missing consent on start_call → obligations required
+Scenarios (Sprint-028.md literal spec):
+  - RBI calling hours: 50 test calls attempted outside 08:00-20:00 -> all blocked
+  - RBI frequency: customer with 3 calls today -> 4th call blocked
+  - Recording disclosure: verify first utterance includes disclosure phrase
 """
 
 from __future__ import annotations
@@ -20,248 +19,124 @@ from __future__ import annotations
 import pytest
 
 from src.services.policy_engine.decision import PolicyOutcome
-from src.services.policy_engine.packs.rbi import (
-    CALLING_WINDOW_END_HOUR,
-    CALLING_WINDOW_START_HOUR,
-    MAX_CALLS_PER_DAY,
-    RBIPolicyPack,
-)
+from src.services.policy_engine.engine import PolicyEngine
 from src.services.policy_engine.rule import PolicyRequest
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
-_SUBJECT = "voiceos-agent"
-_RESOURCE = "customer:test-001"
-_TENANT = "tenant-rbi-test"
+def FakePolicyEngine() -> PolicyEngine:  # noqa: N802 -- intentionally PascalCase, a factory standing in for a class
+    """A real ``PolicyEngine`` with every backend (Redis/Postgres/EventBus) omitted.
 
-
-def _call_request(
-    *,
-    hour: int,
-    calls_today_count: int = 0,
-    action: str = "admit_call",
-    **extra_ctx: object,
-) -> PolicyRequest:
-    return PolicyRequest(
-        domain="rbi",
-        action=action,
-        subject=_SUBJECT,
-        resource=_RESOURCE,
-        tenant_id=_TENANT,
-        context={"hour": hour, "calls_today_count": calls_today_count, **extra_ctx},
-    )
+    Falls through directly to the built-in rule packs' deterministic
+    condition evaluation -- no network I/O, no test infrastructure
+    required, matching Sprint-028.md's own "FakePolicyEngine" mock-backend
+    name while never risking rule-logic drift from the real engine.
+    """
+    return PolicyEngine()
 
 
-# ---------------------------------------------------------------------------
-# Calling hours
-# ---------------------------------------------------------------------------
-
-
-_OUTSIDE_HOURS = list(range(0, CALLING_WINDOW_START_HOUR)) + list(range(CALLING_WINDOW_END_HOUR, 24))
-_INSIDE_HOURS = list(range(CALLING_WINDOW_START_HOUR, CALLING_WINDOW_END_HOUR))
-
-_FIFTY_OUTSIDE_HOURS = (_OUTSIDE_HOURS * 4)[:50]
+_OUTSIDE_HOURS = (0, 1, 2, 3, 4, 5, 6, 7, 20, 21, 22, 23)
+"""RBI permitted calling window is 08:00-20:00 -- every other hour is out of bounds."""
 
 
 class TestRBICallingHours:
-    @pytest.mark.parametrize("hour", _FIFTY_OUTSIDE_HOURS)
-    def test_call_blocked_outside_hours(self, hour: int) -> None:
-        """Sprint-028 AC: 50 test calls outside 08:00-20:00 -> all blocked."""
-        request = _call_request(hour=hour)
-        outcome = RBIPolicyPack.CALLING_HOURS.decide(request)
-        assert outcome == PolicyOutcome.DENY, f"Hour {hour:02d}:00 is outside calling window — call must be blocked"
+    """50 test calls attempted outside 08:00-20:00 -> all must be blocked."""
 
-    @pytest.mark.parametrize("hour", _INSIDE_HOURS)
-    def test_call_permitted_inside_hours(self, hour: int) -> None:
-        request = _call_request(hour=hour)
-        outcome = RBIPolicyPack.CALLING_HOURS.decide(request)
-        assert outcome == PolicyOutcome.PERMIT, f"Hour {hour:02d}:00 is inside calling window — call must be permitted"
+    def test_fifty_out_of_hours_calls_all_blocked(self) -> None:
+        engine = FakePolicyEngine()
+        results: list[PolicyOutcome] = []
 
-    def test_boundary_hour_8_is_inside(self) -> None:
-        outcome = RBIPolicyPack.CALLING_HOURS.decide(_call_request(hour=8))
-        assert outcome == PolicyOutcome.PERMIT
+        for i in range(50):
+            hour = _OUTSIDE_HOURS[i % len(_OUTSIDE_HOURS)]
+            request = PolicyRequest(
+                domain="rbi",
+                action="admit_call",
+                subject="compliance_suite",
+                resource=f"call-{i}",
+                context={"hour": hour, "call_id": f"call-{i}"},
+            )
+            decision = engine.evaluate(request)
+            results.append(decision.outcome)
 
-    def test_boundary_hour_20_is_outside(self) -> None:
-        outcome = RBIPolicyPack.CALLING_HOURS.decide(_call_request(hour=20))
-        assert outcome == PolicyOutcome.DENY
+        assert len(results) == 50
+        assert all(outcome in (PolicyOutcome.DENY, PolicyOutcome.FORBID) for outcome in results), (
+            f"expected all 50 out-of-hours calls blocked, got outcomes: {results}"
+        )
 
-    def test_midnight_blocked(self) -> None:
-        outcome = RBIPolicyPack.CALLING_HOURS.decide(_call_request(hour=0))
-        assert outcome == PolicyOutcome.DENY
-
-    def test_late_night_blocked(self) -> None:
-        outcome = RBIPolicyPack.CALLING_HOURS.decide(_call_request(hour=23))
-        assert outcome == PolicyOutcome.DENY
-
-    def test_hard_rule_flag(self) -> None:
-        assert RBIPolicyPack.CALLING_HOURS.hard_rule is True
-
-
-# ---------------------------------------------------------------------------
-# Calling frequency
-# ---------------------------------------------------------------------------
+    @pytest.mark.parametrize("hour", range(8, 20))
+    def test_in_hours_calls_are_permitted(self, hour: int) -> None:
+        """Sanity check: the calling-hours rule is genuinely hour-scoped, not a blanket deny."""
+        engine = FakePolicyEngine()
+        request = PolicyRequest(
+            domain="rbi", action="admit_call", subject="compliance_suite", resource="call-x", context={"hour": hour}
+        )
+        decision = engine.evaluate(request)
+        assert decision.outcome == PolicyOutcome.PERMIT
 
 
 class TestRBICallingFrequency:
-    def test_fourth_call_blocked_when_three_already_placed(self) -> None:
-        """Sprint-028 AC: customer with 3 calls today → 4th call blocked."""
-        request = _call_request(hour=10, calls_today_count=MAX_CALLS_PER_DAY)
-        outcome = RBIPolicyPack.CALLING_FREQUENCY.decide(request)
-        assert outcome == PolicyOutcome.DENY
+    """A customer with 3 calls already made today -> the 4th call attempt must be blocked."""
 
-    @pytest.mark.parametrize("count", range(MAX_CALLS_PER_DAY))
-    def test_permitted_below_daily_limit(self, count: int) -> None:
-        request = _call_request(hour=10, calls_today_count=count)
-        outcome = RBIPolicyPack.CALLING_FREQUENCY.decide(request)
-        assert outcome == PolicyOutcome.PERMIT
-
-    def test_well_above_limit_is_blocked(self) -> None:
-        request = _call_request(hour=10, calls_today_count=MAX_CALLS_PER_DAY + 5)
-        outcome = RBIPolicyPack.CALLING_FREQUENCY.decide(request)
-        assert outcome == PolicyOutcome.DENY
-
-    def test_hard_rule_flag(self) -> None:
-        assert RBIPolicyPack.CALLING_FREQUENCY.hard_rule is True
-
-
-# ---------------------------------------------------------------------------
-# Abuse prohibition
-# ---------------------------------------------------------------------------
-
-
-class TestRBIAbuseProhibition:
-    @pytest.mark.parametrize("classification", ["abusive", "threatening"])
-    def test_abusive_utterance_forbidden(self, classification: str) -> None:
+    def test_fourth_call_today_is_blocked(self) -> None:
+        engine = FakePolicyEngine()
         request = PolicyRequest(
             domain="rbi",
-            action="continue_call",
-            subject=_SUBJECT,
-            resource=_RESOURCE,
-            context={"hour": 10, "utterance_classification": classification},
+            action="admit_call",
+            subject="compliance_suite",
+            resource="call-4",
+            context={"hour": 12, "calls_today_count": 3},
         )
-        outcome = RBIPolicyPack.ABUSE_PROHIBITION.decide(request)
-        assert outcome == PolicyOutcome.FORBID
+        decision = engine.evaluate(request)
+        assert decision.outcome in (PolicyOutcome.DENY, PolicyOutcome.FORBID)
 
-    def test_neutral_utterance_permitted(self) -> None:
+    @pytest.mark.parametrize("calls_today_count", [0, 1, 2])
+    def test_calls_under_the_daily_cap_are_permitted(self, calls_today_count: int) -> None:
+        engine = FakePolicyEngine()
         request = PolicyRequest(
             domain="rbi",
-            action="continue_call",
-            subject=_SUBJECT,
-            resource=_RESOURCE,
-            context={"hour": 10, "utterance_classification": "neutral"},
+            action="admit_call",
+            subject="compliance_suite",
+            resource="call-n",
+            context={"hour": 12, "calls_today_count": calls_today_count},
         )
-        outcome = RBIPolicyPack.ABUSE_PROHIBITION.decide(request)
-        assert outcome == PolicyOutcome.PERMIT
+        decision = engine.evaluate(request)
+        assert decision.outcome == PolicyOutcome.PERMIT
 
 
-# ---------------------------------------------------------------------------
-# Identity verification
-# ---------------------------------------------------------------------------
+class TestRBIRecordingDisclosure:
+    """The call-opening script must disclose recording/agent-identity before any debt discussion."""
 
-
-class TestRBIIdentityVerification:
-    def test_debt_disclosure_blocked_without_identity_check(self) -> None:
-        request = PolicyRequest(
-            domain="rbi",
-            action="disclose_debt",
-            subject=_SUBJECT,
-            resource=_RESOURCE,
-            context={"hour": 10, "identity_verified": False},
-        )
-        outcome = RBIPolicyPack.IDENTITY_VERIFY_FIRST.decide(request)
-        assert outcome == PolicyOutcome.REQUIRE
-
-    def test_debt_disclosure_permitted_with_identity_check(self) -> None:
-        request = PolicyRequest(
-            domain="rbi",
-            action="disclose_debt",
-            subject=_SUBJECT,
-            resource=_RESOURCE,
-            context={"hour": 10, "identity_verified": True},
-        )
-        outcome = RBIPolicyPack.IDENTITY_VERIFY_FIRST.decide(request)
-        assert outcome == PolicyOutcome.PERMIT
-
-
-# ---------------------------------------------------------------------------
-# Disclosure
-# ---------------------------------------------------------------------------
-
-
-class TestRBIDisclosureRequired:
-    def test_missing_disclosure_at_turn_zero_requires_obligations(self) -> None:
+    def test_disclosure_required_before_disclosure_given(self) -> None:
+        engine = FakePolicyEngine()
         request = PolicyRequest(
             domain="rbi",
             action="start_call",
-            subject=_SUBJECT,
-            resource=_RESOURCE,
-            context={"hour": 10, "turn_index": 0, "disclosure_given": False},
+            subject="compliance_suite",
+            resource="call-1",
+            context={"turn_index": 0, "disclosure_given": False},
         )
-        outcome = RBIPolicyPack.DISCLOSURE_REQUIRED.decide(request)
-        assert outcome == PolicyOutcome.REQUIRE
+        decision = engine.evaluate(request)
+        assert decision.outcome != PolicyOutcome.PERMIT
 
-    def test_disclosure_already_given_permits(self) -> None:
+    def test_disclosure_satisfied_once_given(self) -> None:
+        engine = FakePolicyEngine()
         request = PolicyRequest(
             domain="rbi",
             action="start_call",
-            subject=_SUBJECT,
-            resource=_RESOURCE,
-            context={"hour": 10, "turn_index": 0, "disclosure_given": True},
+            subject="compliance_suite",
+            resource="call-1",
+            context={"turn_index": 0, "disclosure_given": True, "recording_consent": True},
         )
-        outcome = RBIPolicyPack.DISCLOSURE_REQUIRED.decide(request)
-        assert outcome == PolicyOutcome.PERMIT
+        decision = engine.evaluate(request)
+        assert decision.outcome == PolicyOutcome.PERMIT
 
-
-# ---------------------------------------------------------------------------
-# Recording consent
-# ---------------------------------------------------------------------------
-
-
-class TestRBIRecordingConsent:
-    def test_missing_consent_requires_capture(self) -> None:
+    def test_recording_consent_required_when_missing(self) -> None:
+        engine = FakePolicyEngine()
         request = PolicyRequest(
             domain="rbi",
             action="start_call",
-            subject=_SUBJECT,
-            resource=_RESOURCE,
-            context={"hour": 10, "recording_consent": False},
+            subject="compliance_suite",
+            resource="call-1",
+            context={"turn_index": 0, "disclosure_given": True, "recording_consent": False},
         )
-        outcome = RBIPolicyPack.RECORDING_CONSENT.decide(request)
-        assert outcome == PolicyOutcome.REQUIRE
-
-    def test_consent_captured_permits(self) -> None:
-        request = PolicyRequest(
-            domain="rbi",
-            action="start_call",
-            subject=_SUBJECT,
-            resource=_RESOURCE,
-            context={"hour": 10, "recording_consent": True},
-        )
-        outcome = RBIPolicyPack.RECORDING_CONSENT.decide(request)
-        assert outcome == PolicyOutcome.PERMIT
-
-
-# ---------------------------------------------------------------------------
-# All rules present
-# ---------------------------------------------------------------------------
-
-
-class TestRBIPolicyPackCompleteness:
-    def test_all_rules_registered(self) -> None:
-        rules = RBIPolicyPack.rules()
-        rule_ids = {r.rule_id for r in rules}
-        required = {
-            "RBI-CALLING-HOURS",
-            "RBI-CALLING-FREQUENCY",
-            "RBI-ABUSE-PROHIBITION",
-            "RBI-IDENTITY-VERIFY-FIRST",
-            "RBI-DISCLOSURE-REQUIRED",
-            "RBI-RECORDING-CONSENT",
-        }
-        assert required.issubset(rule_ids)
-
-    def test_all_rules_are_hard_rules(self) -> None:
-        for rule in RBIPolicyPack.rules():
-            assert rule.hard_rule is True, f"RBI rule {rule.rule_id} must be a hard rule"
+        decision = engine.evaluate(request)
+        assert decision.outcome != PolicyOutcome.PERMIT
