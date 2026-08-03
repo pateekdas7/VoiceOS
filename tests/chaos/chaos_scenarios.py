@@ -75,9 +75,9 @@ def run_s01_gpu_node_failure(namespace: str) -> ChaosOutcome:
         _log("S-01: Pod deleted — waiting 30s for failover")
         time.sleep(30)
         pods = _kubectl(["get", "pods", "-l", "app=stt-service", "-o", "json"], namespace)
-        pod_data: dict[str, object] = json.loads(pods.stdout)
+        pod_data = json.loads(pods.stdout)
         items = pod_data.get("items", [])
-        running = [p for p in items if isinstance(p, dict) and p.get("status", {}).get("phase") == "Running"]  # type: ignore[union-attr]
+        running = [p for p in items if isinstance(p, dict) and p.get("status", {}).get("phase") == "Running"]
         return ChaosOutcome(
             scenario_id="S-01",
             scenario_name="GPU node-0 failure",
@@ -113,7 +113,7 @@ def run_s02_redis_primary_failure(namespace: str) -> ChaosOutcome:
         pods = _kubectl(["get", "pods", "-l", "app=redis,role=master", "-o", "json"], namespace)
         pod_data = json.loads(pods.stdout)
         items = pod_data.get("items", [])
-        new_master = [p for p in items if isinstance(p, dict) and p.get("status", {}).get("phase") == "Running"]  # type: ignore[union-attr]
+        new_master = [p for p in items if isinstance(p, dict) and p.get("status", {}).get("phase") == "Running"]
         return ChaosOutcome(
             scenario_id="S-02",
             scenario_name="Redis primary failure",
@@ -196,7 +196,7 @@ def run_s04_postgres_failure(namespace: str) -> ChaosOutcome:
         pods = _kubectl(["get", "pods", "-l", "app=postgres", "-o", "json"], namespace)
         pod_data = json.loads(pods.stdout)
         items = pod_data.get("items", [])
-        running = [p for p in items if isinstance(p, dict) and p.get("status", {}).get("phase") == "Running"]  # type: ignore[union-attr]
+        running = [p for p in items if isinstance(p, dict) and p.get("status", {}).get("phase") == "Running"]
         return ChaosOutcome(
             scenario_id="S-04",
             scenario_name="Postgres primary failure",
@@ -238,7 +238,7 @@ def run_s05_conversation_engine_failure(namespace: str) -> ChaosOutcome:
         new_pods = _kubectl(["get", "pods", "-l", "app=conversation-engine", "-o", "json"], namespace)
         pod_data = json.loads(new_pods.stdout)
         items = pod_data.get("items", [])
-        running = [p for p in items if isinstance(p, dict) and p.get("status", {}).get("phase") == "Running"]  # type: ignore[union-attr]
+        running = [p for p in items if isinstance(p, dict) and p.get("status", {}).get("phase") == "Running"]
         return ChaosOutcome(
             scenario_id="S-05",
             scenario_name="Conversation engine pod failure",
