@@ -4,8 +4,8 @@ VoiceOS GPU Validation Suite
 ==============================
 Canonical pre-deployment validation for the VoiceOS GPU runtime.
 
-Runs 24 checks covering driver, CUDA, Python, dependencies, models,
-services, ports, and end-to-end inference. Produces a PASS/FAIL report.
+Runs 46 checks covering driver, CUDA, Python, dependencies, models,
+services, ports, infrastructure, and end-to-end inference. Produces a PASS/FAIL report.
 
 Usage:
     python scripts/gpu_validation_suite.py [--output /path/to/report.txt] [--json]
@@ -70,6 +70,20 @@ SPEC = {
     "stt_infer_url": "http://localhost:8100/transcribe",
     "llm_infer_url": "http://localhost:8000/v1/chat/completions",
     "tts_infer_url": "http://localhost:8200/synthesize",
+    "stt_live_url": "http://localhost:8100/health/live",
+    "tts_live_url": "http://localhost:8200/health/live",
+    "ctranslate2_version": "4.8.0",
+    "nvidia_ctk_version": "1.19.0",
+    "docker_version_min": "29.3",
+    "min_free_disk_gb": 20,
+    "min_ram_gb": 16,
+    "min_cpu_cores": 8,
+    "voiceos_install_path": "/opt/voiceos-gpu",
+    "env_file_path": "/opt/voiceos-gpu/.env",
+    "log_dir": "/opt/voiceos-gpu/logs",
+    "llm_model_id": "qwen2.5-7b-instruct-fp8",
+    "unit_dir": "/etc/systemd/system",
+    "unit_names": ["voiceos-llm.service", "voiceos-stt.service", "voiceos-tts.service"],
 }
 
 # ---------------------------------------------------------------------------
@@ -531,7 +545,7 @@ def check_v21_stt_inference() -> CheckResult:
 
     ok, status, body, _ = _http_post_json(
         SPEC["stt_infer_url"],
-        {"audio_bytes_b64": audio_b64, "language": "en"},
+        {"audio_b64": audio_b64, "language": "en"},
         timeout=30,
     )
     if not ok or status not in (200, 422):
@@ -625,6 +639,345 @@ def check_v24_tts_streaming() -> CheckResult:
     )
 
 
+def check_v25_cudnn() -> CheckResult:
+    ok, out = _venv_python_run(
+        "import torch; v=torch.backends.cudnn.version(); print(v if v else 'unavailable')"
+    )
+    if not ok or out.strip() in ("unavailable", "None", ""):
+        return CheckResult("V-25", "cuDNN available", False, out.strip() or "cuDNN not available")
+    ver_int = int(out.strip())
+    major = ver_int // 1000
+    minor = (ver_int % 1000) // 100
+    patch = ver_int % 100
+    return CheckResult("V-25", "cuDNN available", True, f"cuDNN {major}.{minor}.{patch} (int: {ver_int})")
+
+
+def check_v26_nvidia_ctk() -> CheckResult:
+    rc, out, err = _run(["nvidia-ctk", "--version"])
+    if rc != 0:
+        return CheckResult("V-26", "NVIDIA Container Toolkit", False, f"nvidia-ctk not found: {err}")
+    version_line = out.strip().splitlines()[0] if out.strip() else ""
+    spec_ver = SPEC["nvidia_ctk_version"]
+    return CheckResult(
+        "V-26",
+        "NVIDIA Container Toolkit",
+        True,
+        f"{version_line} (spec: {spec_ver})",
+    )
+
+
+def check_v27_docker_version() -> CheckResult:
+    rc, out, err = _run(["docker", "--version"])
+    if rc != 0:
+        return CheckResult("V-27", "Docker installed", False, f"docker not found: {err}")
+    return CheckResult("V-27", "Docker installed", True, out.strip())
+
+
+def check_v28_docker_nvidia_runtime() -> CheckResult:
+    import json as json_mod
+
+    daemon_json = Path("/etc/docker/daemon.json")
+    if not daemon_json.exists():
+        return CheckResult(
+            "V-28", "Docker NVIDIA default runtime", False, "/etc/docker/daemon.json missing"
+        )
+    try:
+        with open(daemon_json) as f:
+            config = json_mod.load(f)
+        default_runtime = config.get("default-runtime", "")
+        if default_runtime != "nvidia":
+            return CheckResult(
+                "V-28",
+                "Docker NVIDIA default runtime",
+                False,
+                f"default-runtime is '{default_runtime}', expected 'nvidia'",
+            )
+        return CheckResult("V-28", "Docker NVIDIA default runtime", True, "default-runtime: nvidia")
+    except Exception as exc:  # noqa: BLE001
+        return CheckResult("V-28", "Docker NVIDIA default runtime", False, f"Parse error: {exc}")
+
+
+def check_v29_disk_space() -> CheckResult:
+    install_path = SPEC["voiceos_install_path"]
+    path = Path(install_path) if Path(install_path).exists() else Path("/")
+    stat = shutil.disk_usage(str(path))
+    free_gb = stat.free // (1024**3)
+    total_gb = stat.total // (1024**3)
+    min_free = SPEC["min_free_disk_gb"]
+    if free_gb < min_free:
+        return CheckResult(
+            "V-29",
+            "Disk space available",
+            False,
+            f"Free: {free_gb} GB — spec requires ≥ {min_free} GB (total: {total_gb} GB) at {path}",
+        )
+    return CheckResult(
+        "V-29",
+        "Disk space available",
+        True,
+        f"Free: {free_gb} GB / Total: {total_gb} GB at {path}",
+    )
+
+
+def check_v30_ram() -> CheckResult:
+    import io as _io
+
+    rc, out, err = _run(["free", "-m"])
+    if rc != 0:
+        return CheckResult("V-30", "RAM available", False, f"free command failed: {err}")
+    for line in out.splitlines():
+        if line.startswith("Mem:"):
+            parts = line.split()
+            total_mb = int(parts[1])
+            avail_mb = int(parts[-1])
+            min_gb = SPEC["min_ram_gb"]
+            if total_mb < min_gb * 1024:
+                return CheckResult(
+                    "V-30",
+                    "RAM available",
+                    False,
+                    f"Total RAM: {total_mb // 1024} GB — spec requires ≥ {min_gb} GB",
+                )
+            return CheckResult(
+                "V-30",
+                "RAM available",
+                True,
+                f"Total: {total_mb // 1024} GB / Available: {avail_mb // 1024} GB",
+            )
+    return CheckResult("V-30", "RAM available", False, f"Could not parse free output: {out[:100]}")
+
+
+def check_v31_cpu_cores() -> CheckResult:
+    import os as _os
+
+    cpu_count = _os.cpu_count() or 0
+    min_cores = SPEC["min_cpu_cores"]
+    if cpu_count < min_cores:
+        return CheckResult(
+            "V-31",
+            "CPU cores",
+            False,
+            f"Got {cpu_count} cores — spec requires ≥ {min_cores}",
+        )
+    return CheckResult("V-31", "CPU cores", True, f"{cpu_count} logical cores")
+
+
+def _systemd_unit_file_exists(unit: str) -> bool:
+    unit_path = Path(SPEC["unit_dir"]) / unit
+    return unit_path.exists()
+
+
+def _systemd_unit_enabled(unit: str) -> bool:
+    rc, out, _ = _run(["systemctl", "is-enabled", unit])
+    return out.strip() == "enabled"
+
+
+def check_v32_unit_llm_exists() -> CheckResult:
+    unit = "voiceos-llm.service"
+    if _systemd_unit_file_exists(unit):
+        return CheckResult("V-32", f"{unit} unit file exists", True, f"{SPEC['unit_dir']}/{unit}")
+    return CheckResult("V-32", f"{unit} unit file exists", False, f"Not found at {SPEC['unit_dir']}/{unit}")
+
+
+def check_v33_unit_stt_exists() -> CheckResult:
+    unit = "voiceos-stt.service"
+    if _systemd_unit_file_exists(unit):
+        return CheckResult("V-33", f"{unit} unit file exists", True, f"{SPEC['unit_dir']}/{unit}")
+    return CheckResult("V-33", f"{unit} unit file exists", False, f"Not found at {SPEC['unit_dir']}/{unit}")
+
+
+def check_v34_unit_tts_exists() -> CheckResult:
+    unit = "voiceos-tts.service"
+    if _systemd_unit_file_exists(unit):
+        return CheckResult("V-34", f"{unit} unit file exists", True, f"{SPEC['unit_dir']}/{unit}")
+    return CheckResult("V-34", f"{unit} unit file exists", False, f"Not found at {SPEC['unit_dir']}/{unit}")
+
+
+def check_v35_unit_llm_enabled() -> CheckResult:
+    unit = "voiceos-llm.service"
+    if _systemd_unit_enabled(unit):
+        return CheckResult("V-35", f"{unit} enabled", True, "enabled")
+    return CheckResult("V-35", f"{unit} enabled", False, "not enabled (run: systemctl enable voiceos-llm)")
+
+
+def check_v36_unit_stt_enabled() -> CheckResult:
+    unit = "voiceos-stt.service"
+    if _systemd_unit_enabled(unit):
+        return CheckResult("V-36", f"{unit} enabled", True, "enabled")
+    return CheckResult("V-36", f"{unit} enabled", False, "not enabled (run: systemctl enable voiceos-stt)")
+
+
+def check_v37_unit_tts_enabled() -> CheckResult:
+    unit = "voiceos-tts.service"
+    if _systemd_unit_enabled(unit):
+        return CheckResult("V-37", f"{unit} enabled", True, "enabled")
+    return CheckResult("V-37", f"{unit} enabled", False, "not enabled (run: systemctl enable voiceos-tts)")
+
+
+def check_v38_env_file() -> CheckResult:
+    env_path = Path(SPEC["env_file_path"])
+    if not env_path.exists():
+        return CheckResult(
+            "V-38",
+            ".env file exists",
+            False,
+            f"{env_path} not found — provision from secure store",
+        )
+    line_count = sum(1 for _ in env_path.open())
+    return CheckResult("V-38", ".env file exists", True, f"{env_path} ({line_count} lines)")
+
+
+def check_v39_log_dir_writable() -> CheckResult:
+    log_dir = Path(SPEC["log_dir"])
+    if not log_dir.exists():
+        return CheckResult(
+            "V-39",
+            "Log directory writable",
+            False,
+            f"{log_dir} does not exist — run deploy.sh step 7",
+        )
+    if not os.access(str(log_dir), os.W_OK):
+        return CheckResult(
+            "V-39",
+            "Log directory writable",
+            False,
+            f"{log_dir} exists but is not writable by current user",
+        )
+    return CheckResult("V-39", "Log directory writable", True, str(log_dir))
+
+
+def check_v40_gpu_utilization_idle() -> CheckResult:
+    rc, out, err = _run(
+        ["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"]
+    )
+    if rc != 0:
+        return CheckResult("V-40", "GPU compute utilization", False, f"nvidia-smi failed: {err}")
+    try:
+        util_pct = int(out.strip())
+    except ValueError:
+        return CheckResult("V-40", "GPU compute utilization", False, f"Unexpected output: {out!r}")
+    # ≤ 95% is fine during live service; this check warns if GPU is pegged at 100%
+    if util_pct >= 100:
+        return CheckResult(
+            "V-40",
+            "GPU compute utilization",
+            False,
+            f"GPU at {util_pct}% — another process may be monopolizing the GPU",
+        )
+    return CheckResult("V-40", "GPU compute utilization", True, f"GPU utilization: {util_pct}%")
+
+
+def check_v41_uvicorn_version() -> CheckResult:
+    ok, out = _venv_python_run("import uvicorn; print(uvicorn.__version__)")
+    if not ok:
+        return CheckResult("V-41", "uvicorn version", False, out)
+    version = out.strip()
+    if version != SPEC["uvicorn_version"]:
+        return CheckResult(
+            "V-41",
+            "uvicorn version",
+            False,
+            f"Got {version}, spec requires {SPEC['uvicorn_version']}",
+        )
+    return CheckResult("V-41", "uvicorn version", True, f"uvicorn {version}")
+
+
+def check_v42_ctranslate2_version() -> CheckResult:
+    ok, out = _venv_python_run("import ctranslate2; print(ctranslate2.__version__)")
+    if not ok:
+        return CheckResult("V-42", "ctranslate2 version", False, out)
+    version = out.strip()
+    if version != SPEC["ctranslate2_version"]:
+        return CheckResult(
+            "V-42",
+            "ctranslate2 version",
+            False,
+            f"Got {version}, spec requires {SPEC['ctranslate2_version']}",
+        )
+    return CheckResult("V-42", "ctranslate2 version", True, f"ctranslate2 {version}")
+
+
+def check_v43_whisper_model_integrity() -> CheckResult:
+    model_dir = Path(SPEC["whisper_model_dir"])
+    required = ["config.json", "model.bin"]
+    missing = [f for f in required if not (model_dir / f).exists()]
+    if missing:
+        return CheckResult(
+            "V-43",
+            "Whisper model integrity (key files present)",
+            False,
+            f"Missing files in {model_dir}: {missing}",
+        )
+    model_bin_mb = (model_dir / "model.bin").stat().st_size // (1024 * 1024)
+    return CheckResult(
+        "V-43",
+        "Whisper model integrity (key files present)",
+        True,
+        f"model.bin: {model_bin_mb} MB, config.json present",
+    )
+
+
+def check_v44_qwen_model_integrity() -> CheckResult:
+    model_dir = Path(SPEC["qwen_model_dir"])
+    if not model_dir.exists():
+        return CheckResult(
+            "V-44",
+            "Qwen model integrity (key files present)",
+            False,
+            f"{model_dir} does not exist",
+        )
+    config = model_dir / "config.json"
+    if not config.exists():
+        return CheckResult(
+            "V-44",
+            "Qwen model integrity (key files present)",
+            False,
+            f"config.json missing in {model_dir}",
+        )
+    # At least one safetensors or bin file expected
+    safetensors = list(model_dir.glob("*.safetensors"))
+    bins = list(model_dir.glob("*.bin"))
+    if not safetensors and not bins:
+        return CheckResult(
+            "V-44",
+            "Qwen model integrity (key files present)",
+            False,
+            f"No .safetensors or .bin files in {model_dir}",
+        )
+    weight_count = len(safetensors) or len(bins)
+    ext = "safetensors" if safetensors else "bin"
+    return CheckResult(
+        "V-44",
+        "Qwen model integrity (key files present)",
+        True,
+        f"config.json present; {weight_count} .{ext} shard(s)",
+    )
+
+
+def check_v45_stt_liveness() -> CheckResult:
+    ok, status, body = _http_get(SPEC["stt_live_url"])
+    if not ok or status != 200:
+        return CheckResult(
+            "V-45",
+            "STT /health/live returns 200",
+            False,
+            f"HTTP {status} from {SPEC['stt_live_url']}: {body[:200]}",
+        )
+    return CheckResult("V-45", "STT /health/live returns 200", True, f"HTTP {status}")
+
+
+def check_v46_tts_liveness() -> CheckResult:
+    ok, status, body = _http_get(SPEC["tts_live_url"])
+    if not ok or status != 200:
+        return CheckResult(
+            "V-46",
+            "TTS /health/live returns 200",
+            False,
+            f"HTTP {status} from {SPEC['tts_live_url']}: {body[:200]}",
+        )
+    return CheckResult("V-46", "TTS /health/live returns 200", True, f"HTTP {status}")
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -654,6 +1007,28 @@ ALL_CHECKS: list[Callable[[], CheckResult]] = [
     check_v22_llm_inference,
     check_v23_tts_inference,
     check_v24_tts_streaming,
+    check_v25_cudnn,
+    check_v26_nvidia_ctk,
+    check_v27_docker_version,
+    check_v28_docker_nvidia_runtime,
+    check_v29_disk_space,
+    check_v30_ram,
+    check_v31_cpu_cores,
+    check_v32_unit_llm_exists,
+    check_v33_unit_stt_exists,
+    check_v34_unit_tts_exists,
+    check_v35_unit_llm_enabled,
+    check_v36_unit_stt_enabled,
+    check_v37_unit_tts_enabled,
+    check_v38_env_file,
+    check_v39_log_dir_writable,
+    check_v40_gpu_utilization_idle,
+    check_v41_uvicorn_version,
+    check_v42_ctranslate2_version,
+    check_v43_whisper_model_integrity,
+    check_v44_qwen_model_integrity,
+    check_v45_stt_liveness,
+    check_v46_tts_liveness,
 ]
 
 
