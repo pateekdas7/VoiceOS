@@ -1032,6 +1032,11 @@ ALL_CHECKS: list[Callable[[], CheckResult]] = [
 ]
 
 
+def run_all_checks(verbose: bool = False) -> ValidationReport:
+    """Alias for run_all — used by acceptance gates and report generator."""
+    return run_all(verbose=verbose)
+
+
 def run_all(verbose: bool = True) -> ValidationReport:
     report = ValidationReport()
 
