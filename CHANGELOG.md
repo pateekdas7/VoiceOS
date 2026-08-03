@@ -5,6 +5,48 @@ Format: `## [version] — Sprint-NNN — Title (YYYY-MM-DD)`
 
 ---
 
+## [0.28.0] — Sprint-028 Phase 1 — Performance Engineering, Compliance & Production Alpha Artifacts (2026-08-03)
+
+### Added
+
+**Performance Engineering Library (`src/libs/performance_engineering/`)**
+- `profiler.py`: `ContinuousProfiler` — always-on per-stage wall-clock timing harness; `InMemoryBaselineRepository` for CI/Phase 1; `BaselineRepository` Protocol for Postgres wiring in Phase 2
+- `benchmarks.py`: `BenchmarkSuite` with `FixtureTimingSource` (CI-green, all stages within V1 Ch23 budgets: STT ≤300ms, CIL ≤120ms, LLM TTFT ≤350ms, TTS ≤250ms) and `RegressionFixtureTimingSource` (STT ×1.15, proves gate fires)
+- `regression_gate.py`: `RegressionDetector` — fails CI when any stage p95 exceeds stored baseline by >10%; `RegressionResult` and `StageRegression` types
+- `optimization.py`: `OptimizationPlaybook` — per-stage remediation actions sorted by expected improvement
+
+**Alembic Migration**
+- `0027_performance_baselines.py`: creates `performance_baselines` table (BIGSERIAL, stage, measured_date UNIQUE, p50/p95/p99, recorded_at)
+
+**Test Suites (156 passing)**
+- `tests/unit/libs/test_performance_engineering.py`: 38 unit tests across all four library modules including the critical Sprint-028 regression gate test (`test_15pct_regression_fails_ci`)
+- `tests/compliance/test_rbi_compliance.py`: 83 RBI Fair Practice Code scenarios (calling hours, frequency cap, abuse prohibition, identity verification, disclosure, recording consent)
+- `tests/compliance/test_dpdp_compliance.py`: 35 DPDP Act scenarios (consent gate, purpose limitation, retention schedule, right-to-erasure)
+
+**Load & Chaos Scripts (Phase 2)**
+- `tests/load/locustfile.py`: Locust `VoiceOSCallUser` targeting 500 concurrent calls
+- `tests/chaos/chaos_scenarios.py`: 5 kubectl-based chaos scenarios (S-01 GPU node, S-02 Redis primary, S-03 RTP packet loss, S-04 Postgres primary, S-05 conversation engine)
+
+**Security Documentation**
+- `docs/security/threat-model.md`: STRIDE analysis across 6 threat categories, 4 trust zones, 16 system components
+- `docs/security/threat-registry.md`: 24 threat entries (T-01 to T-24) with controls and residual risk rating
+- `docs/security/dfd-level0.svg`: Level 0 DFD (system boundary + 5 external entities)
+- `docs/security/dfd-level1.svg`: Level 1 DFD (DMZ / Application / AI Inference / Data trust zones)
+
+**Evaluation Templates**
+- `evaluation/latency-validation/latency-report.md`
+- `evaluation/load-testing/load-test-report.md`
+- `evaluation/chaos/chaos-engineering-report.md`
+- `evaluation/security/pen-test-report.md`
+- `evaluation/compliance/compliance-validation-report.md`
+- `evaluation/production-alpha-report.md`
+
+### Changed
+- `.github/workflows/ci.yml`: Stage 7 "Performance Regression Gate" — runs pytest on performance engineering tests + inline regression-fixture verification
+- `pyproject.toml`: mypy overrides for `locust` and `sqlalchemy/alembic`
+
+---
+
 ## [Unreleased] — Post-Sprint-027 Full Production Readiness Audit (2026-07-08)
 
 > Independent, read-only audit against both the repository and the live CPU/Kubernetes node (`101.53.141.75`), requested to verify Sprint-001–027's claimed-complete status against real infrastructure rather than status markers alone. GPU node not accessed (standing per-instance approval rule). Findings appended to `implementation/BACKLOG.md` as **TT-018 through TT-023**.
