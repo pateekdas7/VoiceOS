@@ -167,8 +167,11 @@ def test_pipeline_tts_produces_audio(
 ) -> None:
     result = _run_pipeline(silence_b64, stt_client, llm_client, tts_client)
     assert result.tts_bytes > 0
-    # Must be 4-byte aligned (float32 LE PCM)
-    assert result.tts_bytes % 4 == 0
+    # Must be 2-byte aligned (PCM16LE — 2 bytes/sample)
+    assert result.tts_bytes % 2 == 0, (
+        f"TTS output {result.tts_bytes} bytes is not PCM16LE-aligned. "
+        "PCM16LE requires 2 bytes per sample."
+    )
 
 
 def test_pipeline_e2e_latency_under_2s(
@@ -227,13 +230,17 @@ def test_pipeline_multiple_turns(
         assert result.e2e_latency_ms < 3000, f"Turn {turn + 1} E2E latency too high"
 
 
-def test_pipeline_audio_is_valid_pcm(
+def test_pipeline_audio_is_valid_pcm16le(
     stt_client: httpx.Client,
     llm_client: httpx.Client,
     tts_client: httpx.Client,
     silence_b64: str,
 ) -> None:
-    """All TTS audio chunks should contain valid float32 samples."""
+    """All TTS audio chunks must be valid PCM16LE (not float32).
+
+    The CPU-side AudioOutput.convert() expects PCM16LE (audioop.ratecv width=2).
+    Float32 from TTS would be misread, causing the "Na--mas--te" audio failure.
+    """
     tts_all: list[bytes] = []
 
     # Run STT + LLM first
@@ -269,7 +276,12 @@ def test_pipeline_audio_is_valid_pcm(
                 tts_all.append(chunk)
 
     audio = b"".join(tts_all)
-    assert len(audio) % 4 == 0, "Audio not float32-aligned"
-    n = len(audio) // 4
-    samples = struct.unpack(f"<{n}f", audio)
-    assert all(-100.0 < s < 100.0 for s in samples), "Audio contains invalid float32 samples"
+    # PCM16LE: must be 2-byte aligned
+    assert len(audio) % 2 == 0, "Audio not PCM16LE-aligned (requires 2 bytes per sample)"
+    n = len(audio) // 2
+    samples = struct.unpack(f"<{n}h", audio)
+    # int16 range: all samples must be in [-32768, 32767]
+    assert all(-32768 <= s <= 32767 for s in samples), (
+        "Audio contains samples outside int16 range — this would indicate float32 output "
+        "being misread as PCM16LE (the 'Na--mas--te' failure mode)"
+    )

@@ -3,11 +3,18 @@
 Validates the complete HTTP contract of the TTS service:
 - Health endpoints (liveness + readiness)
 - Metrics endpoint
-- Streaming synthesis (float32 PCM chunks)
-- Audio chunk format (size, alignment)
+- Streaming synthesis (PCM16LE chunks — NOT float32)
+- Audio chunk format (size = 4096 bytes = 2048 int16 samples = 85.33ms)
 - Input validation
 - Speaker validation
 - Time-to-first-audio measurement
+
+IMPORTANT — output format:
+    The TTS server outputs PCM16LE (signed 16-bit, 2 bytes/sample).
+    Each chunk = 4096 bytes = 2048 samples at 24 kHz = 85.33ms.
+    The CPU-side AudioOutput.convert() uses audioop.ratecv(width=2) which
+    expects PCM16. Float32 (8192 bytes, 4 bytes/sample) would be misread,
+    causing 2× speed distortion: the "Na--mas--te" production failure.
 """
 
 from __future__ import annotations
@@ -18,7 +25,7 @@ import time
 import httpx
 import pytest
 
-_CHUNK_BYTES = 8192   # 2048 float32 samples = 85.33ms at 24 kHz
+_CHUNK_BYTES = 4096   # 2048 PCM16LE samples = 85.33ms at 24 kHz (NOT float32 = 8192)
 _SAMPLE_RATE = 24000
 
 
@@ -73,20 +80,30 @@ def test_synthesize_returns_audio_bytes(tts_client: httpx.Client) -> None:
     assert len(data) > 0
 
 
-def test_synthesize_audio_is_float32(tts_client: httpx.Client) -> None:
-    """Each byte of the response should decode as valid float32 LE samples."""
+def test_synthesize_audio_is_pcm16le(tts_client: httpx.Client) -> None:
+    """Response must be PCM16LE (2-byte-aligned), NOT float32 (4-byte-aligned).
+
+    The CPU-side AudioOutput.convert() calls audioop.ratecv(data, width=2, ...)
+    which expects 2 bytes per sample. Float32 (4 bytes/sample) would cause the
+    data to be misread as PCM16 at double speed — the "Na--mas--te" failure mode.
+    """
     with tts_client.stream(
         "POST", "/synthesize", json={"text": "payment", "speaker": "kavya"}
     ) as resp:
         data = b"".join(resp.iter_bytes())
 
-    # Must be 4-byte aligned (float32)
-    assert len(data) % 4 == 0, f"Audio length {len(data)} is not float32-aligned"
+    # Must be 2-byte aligned (PCM16LE)
+    assert len(data) % 2 == 0, f"Audio length {len(data)} is not PCM16LE-aligned (requires 2 bytes)"
+    # Must NOT be indicated as float32 by size (float32 = 8192 per chunk, PCM16 = 4096)
+    assert len(data) % 4096 == 0 or len(data) < 4096, (
+        "Audio size should be a multiple of 4096 bytes (PCM16LE chunks). "
+        f"Got {len(data)} bytes."
+    )
 
-    n_samples = len(data) // 4
-    samples = struct.unpack(f"<{n_samples}f", data)
-    # All samples should be finite floats
-    assert all(-10.0 <= s <= 10.0 for s in samples), "Audio contains out-of-range samples"
+    n_samples = len(data) // 2
+    samples = struct.unpack(f"<{n_samples}h", data)
+    # All samples should be in int16 range
+    assert all(-32768 <= s <= 32767 for s in samples), "Audio contains out-of-range PCM16 samples"
 
 
 def test_synthesize_chunk_size(tts_client: httpx.Client) -> None:

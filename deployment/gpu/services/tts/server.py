@@ -107,6 +107,14 @@ _SLIDING_WINDOW_TOKENS = 21  # 3 super-frames: decode 3, keep middle frame (inde
 # middle frame — no CNN boundary artifacts — while first audio arrives 7 tokens (214ms) sooner.
 _SAMPLES_PER_FRAME = 2048  # 1 super-frame at 24 kHz: hop_length(512) x coarse_stride(4) = 2048 samples = 85.33ms
 
+# Output format: PCM16LE (signed 16-bit little-endian, 2 bytes/sample).
+# CRITICAL: The TTS server MUST output PCM16LE, not float32.
+# The CPU-side AudioOutput.convert() uses audioop.ratecv(pcm, width=2, ...) which
+# expects PCM16 (2 bytes/sample). Float32 (4 bytes/sample) would be misread as
+# PCM16, causing 2× speed distortion and complete audio corruption — the root
+# cause of the "Na--mas--te" broken-word failure observed in production.
+_CHUNK_BYTES_PCM16 = _SAMPLES_PER_FRAME * 2  # 4096 bytes per chunk (2048 × int16)
+
 _SNAC_MIN_TOKEN = _AUDIO_CODE_BASE_OFFSET
 _SNAC_MAX_TOKEN = _AUDIO_CODE_BASE_OFFSET + _TOKENS_PER_FRAME * _SNAC_CODEBOOK_SIZE - 1
 
@@ -195,6 +203,9 @@ async def readiness() -> JSONResponse:
             "status": "ready",
             "model": "mock" if _mock_mode else "maya-research/Veena",
             "sample_rate": _sample_rate,
+            "encoding": "pcm16le",
+            "chunk_bytes": _CHUNK_BYTES_PCM16,
+            "chunk_duration_ms": round(_SAMPLES_PER_FRAME / _sample_rate * 1000, 2),
             "streaming": True,
             "mock": _mock_mode,
             "vram_target_mb": 0 if _mock_mode else 7808,
@@ -300,11 +311,16 @@ async def synthesize(request: SynthesizeRequest) -> StreamingResponse:
 
 
 def _mock_synthesis_sync(text: str) -> Iterator[bytes]:
-    """Yield one 85ms PCM silence chunk per ~6 characters of text (simulates TTS speed)."""
+    """Yield one 85ms PCM16LE silence chunk per ~6 characters of text.
+
+    Output format: PCM16LE at 24 kHz, 2048 samples × 2 bytes = 4096 bytes per chunk.
+    Each chunk represents 85.33ms of audio at real-time generation speed.
+    Zeros are valid PCM16LE silence (int16 value 0 = no signal).
+    """
     import time as _time
 
     n_chunks = max(1, len(text) // 6)
-    silence_chunk = bytes(8192)  # 2048 float32 samples = 85.33ms at 24 kHz, all zeros
+    silence_chunk = bytes(_CHUNK_BYTES_PCM16)  # 4096 bytes = 2048 int16 samples = 85.33ms silence
     _time.sleep(0.15)  # Simulate 150ms TTFA
     for _ in range(n_chunks):
         yield silence_chunk
@@ -400,7 +416,13 @@ def _snac_decode_window(window: list[int], voice_config: VoiceConfigRequest) -> 
     if abs(voice_config.energy_scale - 1.0) > 0.01:
         waveform = waveform * voice_config.energy_scale
 
-    return cast(bytes, waveform.cpu().float().numpy().tobytes())
+    # Convert float32 waveform to PCM16LE (signed 16-bit little-endian).
+    # Clamp to [-1.0, 1.0] first to prevent int16 overflow on hot transients.
+    # The CPU-side AudioOutput.convert() expects PCM16 (audioop.ratecv width=2).
+    # Returning float32 here was the root cause of "Na--mas--te" audio corruption.
+    waveform_np = waveform.cpu().float().clamp(-1.0, 1.0).numpy()
+    pcm16 = (waveform_np * 32767).astype("int16")
+    return cast(bytes, pcm16.tobytes())
 
 
 # ---------------------------------------------------------------------------
