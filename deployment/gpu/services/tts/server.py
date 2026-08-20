@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Veena TTS Inference Server — Sprint-029 GPU Runtime Redesign (local-first).
 
-Streams 85.33ms PCM audio chunks via FastAPI StreamingResponse using a
+Streams 85.33ms PCM16LE audio chunks via FastAPI StreamingResponse using a
 sliding-window SNAC decode as tokens are generated. Reduces TTFA from
 8,730ms (batch HF inference) to ~100-300ms on L4.
 
@@ -9,13 +9,18 @@ Architecture: V1 Ch15-17 (TTS); ADR-001 (vLLM streaming → HF streaming fix).
 VRAM: ~7,808 MB (Veena 3B BF16) + ~10 MB (SNAC codec) — unchanged from batch server.
 Model: maya-research/Veena — 3B params, BF16, SNAC 24 kHz — retained as production model.
 
+Output format: PCM16LE (signed 16-bit little-endian, 2 bytes/sample, 24 kHz).
+  Each chunk = 2048 samples × 2 bytes = 4096 bytes = 85.33ms.
+  The CPU-side AudioOutput.convert() expects PCM16 (audioop.ratecv width=2).
+  Float32 output was the root cause of the "Na--mas--te" production failure.
+
 Streaming design (ADR-001, refs: maya1 vllm_streaming_inference.py, Orpheus-TTS decoder.py):
   1. _SNACTokenStreamer: custom BaseStreamer that delivers raw integer token IDs from
      model.generate() without text decoding — avoids string-to-int parsing.
   2. Generation thread: model.generate() runs in a background thread with the streamer,
      so the main event loop is never blocked.
-  3. Sliding-window SNAC decode: every 7 new SNAC tokens (after min 28 accumulated),
-     decode the last 28 tokens (4 super-frames → 8192 samples) and yield the
+  3. Sliding-window SNAC decode: every 7 new SNAC tokens (after min 21 accumulated),
+     decode the last 21 tokens (3 super-frames → 6144 samples) and yield the
      middle frame only (samples [2048:4096] = 85.33ms), discarding outer frames
      that would have CNN boundary artifacts.
   4. StreamingResponse: FastAPI yields each 85.33ms chunk to the HTTP client as it
@@ -24,7 +29,7 @@ Streaming design (ADR-001, refs: maya1 vllm_streaming_inference.py, Orpheus-TTS 
 Endpoints:
     GET  /health/live   — liveness probe
     GET  /health/ready  — readiness probe (200 only after model loaded)
-    POST /synthesize    — stream PCM chunks (float32 LE, 24 kHz mono)
+    POST /synthesize    — stream PCM16LE chunks (24 kHz mono, 4096 bytes each)
 """
 
 from __future__ import annotations
@@ -220,11 +225,11 @@ async def readiness() -> JSONResponse:
 
 @app.post("/synthesize")
 async def synthesize(request: SynthesizeRequest) -> StreamingResponse:
-    """Stream 24 kHz PCM audio chunks for the given text.
+    """Stream 24 kHz PCM16LE audio chunks for the given text.
 
     Returns:
-        StreamingResponse of float32 LE PCM bytes (24 kHz mono).
-        Each chunk is 85.33ms (2048 samples x 4 bytes = 8192 bytes per chunk).
+        StreamingResponse of PCM16LE bytes (24 kHz mono).
+        Each chunk is 85.33ms (2048 samples × 2 bytes = 4096 bytes per chunk).
         Transfer-Encoding: chunked — client receives audio before synthesis completes.
     """
     if not _model_ready:
@@ -366,7 +371,7 @@ class _SNACTokenStreamer:
 
 
 def _snac_decode_window(window: list[int], voice_config: VoiceConfigRequest) -> bytes | None:
-    """Decode a 21-token sliding window; return middle super-frame as float32 bytes.
+    """Decode a 21-token sliding window; return middle super-frame as PCM16LE bytes.
 
     Args:
         window: List of 21 pre-decoded codebook values (position-indexed, 0..4095).
@@ -374,7 +379,7 @@ def _snac_decode_window(window: list[int], voice_config: VoiceConfigRequest) -> 
         voice_config: Prosody config (energy_scale applied per chunk).
 
     Returns:
-        8192 bytes (2048 float32 samples = 85.33ms) or None if window too short.
+        4096 bytes (2048 int16 samples = 85.33ms PCM16LE) or None if window too short.
 
     Design: decode 3 super-frames (21 tokens → 6144 samples), extract only the
     middle frame (samples [2048:4096]), discarding outer frames which have
@@ -439,10 +444,10 @@ def _stream_synthesis_sync(
 
     Runs model.generate() in a background thread with _SNACTokenStreamer.
     The main thread consumes token IDs from the streamer's queue and decodes
-    sliding windows of 28 tokens every 7 new tokens, yielding 85.33ms chunks.
+    sliding windows of 21 tokens every 7 new tokens, yielding 85.33ms chunks.
 
     Yields:
-        bytes: Float32 LE PCM (8192 bytes = 2048 samples = 85.33ms at 24 kHz).
+        bytes: PCM16LE (4096 bytes = 2048 int16 samples = 85.33ms at 24 kHz).
                First chunk arrives after 21 SNAC tokens are generated (~640ms on L4).
     """
     # ── Build the Veena prompt ────────────────────────────────────────────────
@@ -517,7 +522,7 @@ def _stream_synthesis_sync(
     # ── Inter-clause silence ─────────────────────────────────────────────────
     if voice_config.pause_ms_after_clause > 0:
         silence_samples = int(voice_config.pause_ms_after_clause * _sample_rate / 1000)
-        yield bytes(silence_samples * 4)  # float32 LE silence (4 bytes/sample)
+        yield bytes(silence_samples * 2)  # PCM16LE silence (2 bytes/sample, int16 zero = silence)
 
 
 # ---------------------------------------------------------------------------

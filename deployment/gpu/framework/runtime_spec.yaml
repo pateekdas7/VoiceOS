@@ -211,11 +211,11 @@ services:
       metrics: "/metrics"
       inference: "/synthesize"
     audio_format:
-      encoding: "float32_le"
+      encoding: "pcm16le"           # Sprint-29 Phase-2: was float32_le (caused "Na--mas--te" bug)
       sample_rate: 24000
       channels: 1
       chunk_samples: 2048           # 85.33ms per chunk
-      chunk_bytes: 8192             # 2048 * 4 bytes
+      chunk_bytes: 4096             # 2048 * 2 bytes (int16, NOT float32 which was 8192)
     latency_targets:
       first_audio_p95_ms: 750       # ADR-004
     measured_ttfa_ms: 300           # Clause-level streaming, 21-token window (3 super-frames)

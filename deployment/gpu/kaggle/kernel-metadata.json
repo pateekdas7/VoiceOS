@@ -1,0 +1,14 @@
+{
+  "id": "devishreedas/voiceos-sprint29-validation",
+  "title": "VoiceOS Sprint-29 GPU Validation",
+  "code_file": "voiceos_gpu_validation.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": true,
+  "dataset_sources": [],
+  "competition_sources": [],
+  "kernel_sources": []
+}
