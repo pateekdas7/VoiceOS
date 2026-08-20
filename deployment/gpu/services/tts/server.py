@@ -569,22 +569,8 @@ def _load_model(model_path: str, snac_path: str, device: str = "cuda", mock: boo
     _model.eval()
 
     logger.info("Loading SNAC 24 kHz codec from %s ...", snac_path)
-    # from_pretrained passes config.json keys directly to SNAC.__init__, but
-    # snac_24khz config has 'sampling_rate' and 'attn_window_size' which are
-    # metadata/v1.0 fields not present in snac==0.1.0's __init__. Load manually.
-    from huggingface_hub import hf_hub_download
-    import json as _json
-    _snac_cfg_path = hf_hub_download(repo_id=snac_path, filename="config.json")
-    _snac_wts_path = hf_hub_download(repo_id=snac_path, filename="pytorch_model.bin")
-    with open(_snac_cfg_path) as _f:
-        _snac_cfg = _json.load(_f)
-    _snac_cfg.pop("sampling_rate", None)
-    _snac_cfg.pop("attn_window_size", None)
-    _snac_model = SNAC(**_snac_cfg)
-    _snac_state = torch.load(_snac_wts_path, map_location="cpu", weights_only=True)
-    _snac_model.load_state_dict(_snac_state)
+    _snac_model = SNAC.from_pretrained(snac_path).to(device)
     _snac_model.eval()
-    _snac_model = _snac_model.to(device)
 
     # Warm-up: runs one short synthesis to trigger CUDA/CPU kernel JIT compilation.
     # Without this, the first real request pays a ~900ms one-time JIT penalty.
