@@ -607,12 +607,27 @@ def _load_model(model_path: str, snac_path: str, device: str = "cuda", mock: boo
         return self.decoder(z_q)                       # [1, 1, T_audio]
 
     _snac_model.decode = _types.MethodType(_snac_decode_compat, _snac_model)
+
+    # Kaggle/Colab T4: libnvrtc-builtins is missing, so torch.jit.script fused kernels
+    # fail at runtime with "nvrtc: error: failed to open libnvrtc-builtins.so".
+    # snake() in snac.layers is @torch.jit.script; Snake1d.forward looks it up by name
+    # in snac.layers.__dict__ at call time, so replacing it here redirects all calls
+    # to a plain Python function that uses standard (unfused) CUDA ops.
+    import snac.layers as _snac_layers
+    def _snake_plain(x, alpha):
+        shape = x.shape
+        x = x.reshape(shape[0], shape[1], -1)
+        x = x + (alpha + 1e-9).reciprocal() * torch.sin(alpha * x).pow(2)
+        x = x.reshape(shape)
+        return x
+    _snac_layers.snake = _snake_plain
+
     logger.info("SNAC loaded OK — encoder %d blocks, decoder %d layers",
                 len(list(_snac_model.encoder.block.children())),
                 len(list(_snac_model.decoder.model.children())))
 
-    # Warm-up: runs one short synthesis to trigger CUDA/CPU kernel JIT compilation.
-    # Without this, the first real request pays a ~900ms one-time JIT penalty.
+    # Warm-up: runs one short synthesis to trigger CUDA kernel compilation.
+    # Without this, the first real request pays a one-time JIT penalty.
     logger.info("Running warm-up synthesis...")
     t_warmup = time.monotonic()
     _warmup_req = VoiceConfigRequest()
