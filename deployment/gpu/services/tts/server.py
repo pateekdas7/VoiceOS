@@ -569,10 +569,11 @@ def _load_model(model_path: str, snac_path: str, device: str = "cuda", mock: boo
     _model.eval()
 
     logger.info("Loading SNAC 24 kHz codec from %s ...", snac_path)
-    # snac_24khz weights were trained WITHOUT attention blocks, but snac==1.0.0
-    # from pip ignores attn_window_size=None and always inserts LocalMHA layers.
-    # Surgical fix: build the model normally, then strip any LocalMHA layers from
-    # encoder.block and decoder.model before loading state dict.
+    # snac==1.0.0 (PyPI) always inserts LocalMHA via layers.py default
+    # attn_window_size=32, regardless of the config.json value.
+    # snac_24khz weights were trained WITHOUT attention; strip LocalMHA after build.
+    # snac==1.0.0 also removed SNAC.decode(codes); patch it back as an instance method.
+    import types as _types
     from huggingface_hub import hf_hub_download
     import json as _json
     _snac_cfg_path = hf_hub_download(repo_id=snac_path, filename="config.json")
@@ -581,23 +582,34 @@ def _load_model(model_path: str, snac_path: str, device: str = "cuda", mock: boo
         _snac_cfg = _json.load(_f)
     _snac_model = SNAC(**_snac_cfg)
 
-    # Remove any LocalMHA layers snac==1.0.0 inserted (checkpoint has none)
-    def _strip_attention(sequential):
-        kept = [m for m in sequential.children() if type(m).__name__ != "LocalMHA"]
-        return torch.nn.Sequential(*kept)
-
-    _snac_model.encoder.block = _strip_attention(_snac_model.encoder.block)
-    _snac_model.decoder.model = _strip_attention(_snac_model.decoder.model)
-    logger.info(
-        "SNAC encoder blocks after strip: %d, decoder layers: %d",
-        len(list(_snac_model.encoder.block.children())),
-        len(list(_snac_model.decoder.model.children())),
-    )
+    # Strip LocalMHA layers — checkpoint has none; layers.py inserts them anyway
+    def _strip_attn(seq):
+        return torch.nn.Sequential(*[m for m in seq.children() if type(m).__name__ != "LocalMHA"])
+    _snac_model.encoder.block = _strip_attn(_snac_model.encoder.block)
+    _snac_model.decoder.model = _strip_attn(_snac_model.decoder.model)
 
     _snac_state = torch.load(_snac_wts_path, map_location="cpu", weights_only=False)
     _snac_model.load_state_dict(_snac_state)
     _snac_model.eval()
     _snac_model = _snac_model.to(device)
+
+    # Patch decode(codes) back onto the instance — snac==1.0.0 removed it.
+    # codes: list of [1, T_i] long tensors, one per codebook (vq_strides order).
+    # Reconstructs latent z by embedding each codebook, projecting, upsampling, summing.
+    def _snac_decode_compat(self, codes):
+        z_q = 0
+        for quantizer, code in zip(self.quantizer.quantizers, codes):
+            z_q_i = quantizer.decode_code(code)       # [1, codebook_dim, T_i]
+            z_q_i = quantizer.out_proj(z_q_i)         # [1, latent_dim, T_i]
+            if quantizer.stride > 1:
+                z_q_i = z_q_i.repeat_interleave(quantizer.stride, dim=-1)
+            z_q = z_q + z_q_i
+        return self.decoder(z_q)                       # [1, 1, T_audio]
+
+    _snac_model.decode = _types.MethodType(_snac_decode_compat, _snac_model)
+    logger.info("SNAC loaded OK — encoder %d blocks, decoder %d layers",
+                len(list(_snac_model.encoder.block.children())),
+                len(list(_snac_model.decoder.model.children())))
 
     # Warm-up: runs one short synthesis to trigger CUDA/CPU kernel JIT compilation.
     # Without this, the first real request pays a ~900ms one-time JIT penalty.
