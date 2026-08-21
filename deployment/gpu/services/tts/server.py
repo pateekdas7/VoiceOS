@@ -235,7 +235,8 @@ async def synthesize(request: SynthesizeRequest) -> StreamingResponse:
     if not _model_ready:
         raise HTTPException(status_code=503, detail="Model not ready")
 
-    if request.speaker not in _ALLOWED_SPEAKERS:
+    speaker = request.speaker.lower()
+    if speaker not in _ALLOWED_SPEAKERS:
         raise HTTPException(
             status_code=422,
             detail=f"Unknown speaker '{request.speaker}'. Allowed: {sorted(_ALLOWED_SPEAKERS)}",
@@ -253,14 +254,14 @@ async def synthesize(request: SynthesizeRequest) -> StreamingResponse:
         )
 
     t_start = time.monotonic()
-    logger.info("Stream start: %d chars | speaker=%s", len(text), request.speaker)
+    logger.info("Stream start: %d chars | speaker=%s", len(text), speaker)
 
     async def _audio_gen() -> AsyncIterator[bytes]:
         loop = asyncio.get_running_loop()
         sync_gen = (
             _mock_synthesis_sync(text)
             if _mock_mode
-            else _stream_synthesis_sync(text, request.speaker, request.voice_config)
+            else _stream_synthesis_sync(text, speaker, request.voice_config)
         )
 
         # Sentinel pattern: catch StopIteration in the thread (not in the coroutine)
