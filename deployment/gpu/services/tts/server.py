@@ -569,16 +569,31 @@ def _load_model(model_path: str, snac_path: str, device: str = "cuda", mock: boo
     _model.eval()
 
     logger.info("Loading SNAC 24 kHz codec from %s ...", snac_path)
-    # HF Hub config.json has attn_window_size updated to non-null, but the
-    # snac_24khz weights were trained without attention. Force None to match.
+    # snac_24khz weights were trained WITHOUT attention blocks, but snac==1.0.0
+    # from pip ignores attn_window_size=None and always inserts LocalMHA layers.
+    # Surgical fix: build the model normally, then strip any LocalMHA layers from
+    # encoder.block and decoder.model before loading state dict.
     from huggingface_hub import hf_hub_download
     import json as _json
     _snac_cfg_path = hf_hub_download(repo_id=snac_path, filename="config.json")
     _snac_wts_path = hf_hub_download(repo_id=snac_path, filename="pytorch_model.bin")
     with open(_snac_cfg_path) as _f:
         _snac_cfg = _json.load(_f)
-    _snac_cfg["attn_window_size"] = None
     _snac_model = SNAC(**_snac_cfg)
+
+    # Remove any LocalMHA layers snac==1.0.0 inserted (checkpoint has none)
+    def _strip_attention(sequential):
+        kept = [m for m in sequential.children() if type(m).__name__ != "LocalMHA"]
+        return torch.nn.Sequential(*kept)
+
+    _snac_model.encoder.block = _strip_attention(_snac_model.encoder.block)
+    _snac_model.decoder.model = _strip_attention(_snac_model.decoder.model)
+    logger.info(
+        "SNAC encoder blocks after strip: %d, decoder layers: %d",
+        len(list(_snac_model.encoder.block.children())),
+        len(list(_snac_model.decoder.model.children())),
+    )
+
     _snac_state = torch.load(_snac_wts_path, map_location="cpu", weights_only=False)
     _snac_model.load_state_dict(_snac_state)
     _snac_model.eval()
