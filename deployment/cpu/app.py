@@ -253,13 +253,28 @@ def build_ai_governance_service(policy_engine_service: object) -> object:
 # ---------------------------------------------------------------------------
 
 
+def _gpu_service_url(env_var: str, default_port: int) -> str:
+    """Resolve a GPU service base URL.
+
+    Phase-5 integration: Kaggle notebooks have no public IP, so GPU services
+    are exposed via Cloudflare Quick Tunnels. LLM_BASE_URL / STT_BASE_URL /
+    TTS_BASE_URL let each adapter point at its own tunnel URL rather than
+    deriving all three from a single GPU_NODE_HOST:port. Falls back to
+    http://{GPU_NODE_HOST}:{default_port} when not set (direct-IP deployments).
+    """
+    override = _env(env_var)
+    if override:
+        return override.rstrip("/")
+    gpu_host = _env("GPU_NODE_HOST", required=True)
+    return f"http://{gpu_host}:{default_port}"
+
+
 def build_llm_service(gpu_scheduler: object) -> object:
     from src.services.llm_runtime.adapters.vllm_adapter import vLLMAdapter
     from src.services.llm_runtime.prompt_contract import PromptContract
     from src.services.llm_runtime.service import LLMService, LLMServiceConfig
 
-    gpu_host = _env("GPU_NODE_HOST", required=True)
-    base_url = f"http://{gpu_host}:8000"
+    base_url = _gpu_service_url("LLM_BASE_URL", 8000)
     adapter = vLLMAdapter(gpu_scheduler=gpu_scheduler, prompt_contract=PromptContract(), base_url=base_url)
     return LLMService.create(adapter=adapter, config=LLMServiceConfig(base_url=base_url))
 
@@ -268,8 +283,7 @@ def build_tts_service(gpu_scheduler: object) -> object:
     from src.services.tts.adapters.veena_adapter import VeenaAdapter
     from src.services.tts.service import TTSService, TTSServiceConfig
 
-    gpu_host = _env("GPU_NODE_HOST", required=True)
-    base_url = f"http://{gpu_host}:8200"
+    base_url = _gpu_service_url("TTS_BASE_URL", 8200)
     adapter = VeenaAdapter(gpu_scheduler=gpu_scheduler, base_url=base_url)
     return TTSService.create(adapter=adapter, config=TTSServiceConfig(base_url=base_url))
 
@@ -433,8 +447,8 @@ def build_stt_service(gpu_scheduler: object) -> object:
     from src.services.stt.adapters.whisper_http_adapter import WhisperHTTPAdapter
     from src.services.stt.service import STTService, STTServiceConfig
 
-    gpu_host = _env("GPU_NODE_HOST", required=True)
-    adapter = WhisperHTTPAdapter(gpu_scheduler=gpu_scheduler, base_url=f"http://{gpu_host}:8100")
+    base_url = _gpu_service_url("STT_BASE_URL", 8100)
+    adapter = WhisperHTTPAdapter(gpu_scheduler=gpu_scheduler, base_url=base_url)
     return STTService.create(adapter=adapter, config=STTServiceConfig(default_language=_env("STT_LANGUAGE", "hi")))
 
 
