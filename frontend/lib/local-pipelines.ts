@@ -1,10 +1,7 @@
-// Client-side-only Pipeline store (localStorage), until Pipeline exists as a
-// real backend entity (ADR-005 §4.3/§14 -- explicitly its own dedicated
-// future sprint, not built here per the user's own instruction: "no need to
-// connect the pipeline backend, I will tell you further"). Same function
-// shape a real API client would have (list/create/get, all campaign-scoped)
-// so swapping this out for real fetch() calls later needs no UI rework --
-// every call site already awaits these as if they were async.
+// Pipeline API client — backed by real BFF endpoints (ADR-005 §14).
+// Previously backed by localStorage during the sprint where backend wasn't
+// ready ("no need to connect the pipeline backend, I will tell you further").
+// That sprint is complete: pipelines now live in Postgres.
 
 export type LocalPipelineStatus = "DRAFT" | "ACTIVE" | "PAUSED" | "ARCHIVED";
 
@@ -14,45 +11,63 @@ export type LocalPipeline = {
   name: string;
   status: LocalPipelineStatus;
   created_at: string;
+  updated_at?: string;
+  created_by?: string;
 };
 
-const STORAGE_KEY = "voiceos.pipelines.v1";
-
-function readAll(): LocalPipeline[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as LocalPipeline[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeAll(pipelines: LocalPipeline[]): void {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(pipelines));
-}
+const BFF = process.env.NEXT_PUBLIC_BFF_URL ?? "/bff";
 
 export async function listPipelines(campaignId: string): Promise<LocalPipeline[]> {
-  return readAll()
-    .filter((p) => p.campaign_id === campaignId)
-    .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+  const res = await fetch(`${BFF}/campaigns/${campaignId}/pipelines`, {
+    credentials: "include",
+  });
+  if (!res.ok) return [];
+  const data: unknown = await res.json();
+  return Array.isArray(data) ? (data as LocalPipeline[]) : [];
 }
 
-export async function getPipeline(campaignId: string, pipelineId: string): Promise<LocalPipeline | null> {
-  return readAll().find((p) => p.campaign_id === campaignId && p.pipeline_id === pipelineId) ?? null;
+export async function getPipeline(
+  campaignId: string,
+  pipelineId: string,
+): Promise<LocalPipeline | null> {
+  const res = await fetch(`${BFF}/campaigns/${campaignId}/pipelines/${pipelineId}`, {
+    credentials: "include",
+  });
+  if (!res.ok) return null;
+  return (await res.json()) as LocalPipeline;
 }
 
-export async function createPipeline(campaignId: string, name: string): Promise<LocalPipeline> {
-  const pipeline: LocalPipeline = {
-    pipeline_id: crypto.randomUUID(),
-    campaign_id: campaignId,
-    name,
-    status: "DRAFT",
-    created_at: new Date().toISOString(),
-  };
-  const all = readAll();
-  all.push(pipeline);
-  writeAll(all);
-  return pipeline;
+export async function createPipeline(
+  campaignId: string,
+  name: string,
+): Promise<LocalPipeline> {
+  const res = await fetch(`${BFF}/campaigns/${campaignId}/pipelines`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: { message?: string } }).error?.message ?? "Failed to create pipeline");
+  }
+  return (await res.json()) as LocalPipeline;
+}
+
+export async function updatePipeline(
+  campaignId: string,
+  pipelineId: string,
+  patch: { name?: string; status?: LocalPipelineStatus },
+): Promise<LocalPipeline> {
+  const res = await fetch(`${BFF}/campaigns/${campaignId}/pipelines/${pipelineId}`, {
+    method: "PATCH",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as { error?: { message?: string } }).error?.message ?? "Failed to update pipeline");
+  }
+  return (await res.json()) as LocalPipeline;
 }

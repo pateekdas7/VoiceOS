@@ -5,10 +5,31 @@ Uses httpx streaming client to receive 85.33ms PCM chunks as they are decoded
 server-side, yielding AudioClause objects as each chunk arrives.
 
 Streaming design (ADR-001):
-  The server returns Transfer-Encoding: chunked with one float32 LE PCM chunk
-  per SNAC super-frame (85.33ms). The adapter reads chunks via httpx aiter_bytes()
-  and yields an AudioClause per chunk. A look-ahead buffer ensures the final chunk
-  in the final clause is marked is_final=True.
+  The server returns Transfer-Encoding: chunked with one PCM16LE chunk per
+  SNAC super-frame (85.33ms). The adapter reads chunks via httpx aiter_bytes()
+  and yields an AudioClause per chunk. A look-ahead buffer ensures the final
+  chunk in the final clause is marked is_final=True.
+
+  Phase E correction: earlier revisions of this docstring described the
+  wire payload as "float32 LE PCM". The rest of the pipeline
+  (``AudioOutput.convert`` uses ``audioop.ratecv(pcm, 2, 1, ...)``, i.e. 2
+  bytes per sample) has always treated it as 16-bit — that is the real
+  wire format. ``StartupBufferGate._DEFAULT_BYTES_PER_SAMPLE`` was
+  corrected from 4 to 2 to match, so buffered-mode duration accounting
+  no longer half-counts the audio.
+
+Barge-in / generation cancellation (Phase E):
+  This adapter has no direct knowledge of the playback generation. The
+  cancellation channel is the pipeline's async iteration: when
+  ``TrueStreamingPipeline`` detects a generation advance or barge-in it
+  breaks out of ``async for audio_clause in clause_stream``. That
+  triggers the ``async for raw_chunk in resp.aiter_bytes()`` generator
+  in ``_stream_clause`` to unwind, which runs the
+  ``finally: await resp.aclose()`` block and closes the underlying HTTP
+  connection. GPU-side generation stops once the socket read side stops
+  draining chunks. In practice this happens within one super-frame
+  (~85 ms) — well inside a human perception window and consistent with
+  "stop producing stale generation audio as soon as practical".
 
 VRAM: Requests 7,974 MB from GPU Scheduler before inference (Veena 3B BF16 + SNAC measured footprint).
 Model: maya-research/Veena (3B params, BF16, SNAC codec, 24 kHz) — production model retained.
@@ -26,7 +47,6 @@ from src.libs.circuit_breaker.breaker import CircuitBreaker
 from src.libs.contracts.streaming import AudioClause, VoiceConfig
 from src.services.gpu_scheduler.admission import AdmissionDecision
 from src.services.gpu_scheduler.scheduler import GPUScheduler
-from src.services.tts.clause_splitter import ClauseSplitter
 
 if TYPE_CHECKING:
     import httpx
@@ -113,45 +133,32 @@ class VeenaAdapter:
             tts_requests_total.labels(status="rejected").inc()
             raise RuntimeError(f"GPU Scheduler rejected VRAM for {self._model_name} ({self._vram_mb} MB)")
 
-        splitter = ClauseSplitter()
         start = time.monotonic()
         first_yielded = False
 
-        # Pipeline: start TTS on clause N while LLM still generates clause N+1.
-        # pending_text holds the most-recently-completed clause waiting for TTS.
-        # We synthesize it only when the next clause arrives (so we know it is
-        # not the final clause) or when the stream ends (so we can mark it final).
-        pending_text: str | None = None
-        clause_idx = 0
-
-        async def _yield_clause(text: str, is_final: bool) -> AsyncIterator[AudioClause]:
-            nonlocal first_yielded, clause_idx
-            async for audio_clause in self._stream_clause(text, voice_config, clause_idx, is_final):
-                if not first_yielded:
-                    tts_first_clause_latency_ms.observe((time.monotonic() - start) * 1000)
-                    first_yielded = True
-                tts_clauses_total.inc()
-                yield audio_clause
-            clause_idx += 1
-
+        # Phase C (Sprint-030): the adapter no longer splits text. Sentence
+        # segmentation is performed by the single authoritative ClauseSplitter
+        # in TrueStreamingPipeline. The adapter concatenates all incoming
+        # text_chunks into one clause and issues one Veena request.
         try:
+            parts: list[str] = []
             async for chunk in text_chunks:
-                for clause_text in splitter.feed(chunk):
-                    if pending_text is not None:
-                        async for ac in _yield_clause(pending_text, is_final=False):
-                            yield ac
-                    pending_text = clause_text
+                if chunk:
+                    parts.append(chunk)
+            clause_text = "".join(parts).strip()
 
-            final_text = splitter.flush()
-            if final_text:
-                if pending_text is not None:
-                    async for ac in _yield_clause(pending_text, is_final=False):
-                        yield ac
-                pending_text = final_text
-
-            if pending_text is not None:
-                async for ac in _yield_clause(pending_text, is_final=True):
-                    yield ac
+            if clause_text:
+                async for audio_clause in self._stream_clause(
+                    clause_text,
+                    voice_config,
+                    clause_idx=0,
+                    is_final_clause=True,
+                ):
+                    if not first_yielded:
+                        tts_first_clause_latency_ms.observe((time.monotonic() - start) * 1000)
+                        first_yielded = True
+                    tts_clauses_total.inc()
+                    yield audio_clause
 
             tts_full_synthesis_latency_ms.observe((time.monotonic() - start) * 1000)
             tts_requests_total.labels(status="success").inc()

@@ -187,7 +187,11 @@ async def test_run_turns_processes_one_turn_and_sends_audio_out() -> None:
     # plain MagicMock(return_value=...) returns it un-awaitable.
     orch._deps.stt_service.transcribe_stream = AsyncMock(return_value=_fake_word_stream())
 
-    clause = AudioClause(audio_data=b"\x00" * 4096, sample_rate=24000, text="hi", clause_index=0, is_final=True)
+    # 1920 B PCM16@24kHz = 960 samples = 40 ms → resample to 8 kHz = 320
+    # samples → 320 μ-law bytes = exactly two 160-byte Twilio frames.
+    # (Any payload that resamples to a non-multiple of 160 μ-law bytes
+    # would emit ⌊n/160⌋ frames plus a carry — see Gate 1 framing fix.)
+    clause = AudioClause(audio_data=b"\x00\x00" * 960, sample_rate=24000, text="hi", clause_index=0, is_final=True)
     orch._deps.conversation_engine.handle_turn = AsyncMock(return_value=[clause])
 
     # Trigger exactly one turn, then stop the loop.
@@ -202,9 +206,11 @@ async def test_run_turns_processes_one_turn_and_sends_audio_out() -> None:
     await _stop_after_one()
 
     orch._deps.conversation_engine.handle_turn.assert_awaited_once()
-    orch._adapter.send_frame.assert_awaited_once()
-    sent_frame: AudioFrame = orch._adapter.send_frame.call_args.args[0]
-    assert sent_frame.config.encoding == Encoding.MULAW
+    assert orch._adapter.send_frame.await_count == 2
+    for call in orch._adapter.send_frame.call_args_list:
+        f: AudioFrame = call.args[0]
+        assert f.config.encoding == Encoding.MULAW
+        assert len(f.pcm_data) == 160, f"non-160-byte μ-law payload emitted: {len(f.pcm_data)}"
 
 
 @pytest.mark.asyncio
@@ -280,7 +286,11 @@ async def test_speak_greeting_synthesizes_and_sends_when_wired() -> None:
     speak_scripted_text must therefore enqueue into self._playback as its
     real TrueStreamingPipeline counterpart does, not just return a list."""
     orch = _make_orchestrator()
-    clause = AudioClause(audio_data=b"\x00\x00" * 160, sample_rate=24000, text="namaste", clause_index=0, is_final=True)
+    # 1920 B PCM16@24kHz = 40 ms → 320 μ-law bytes = exactly two 160-byte
+    # Twilio frames. Anything smaller resamples below 160 μ-law bytes and
+    # (correctly, per the Gate 1 framing fix) emits zero frames — carried
+    # forward instead — which would defeat the purpose of this test.
+    clause = AudioClause(audio_data=b"\x00\x00" * 960, sample_rate=24000, text="namaste", clause_index=0, is_final=True)
     orch._deps.conversation_engine.build_greeting = MagicMock(return_value="Namaste sir, main Kavya bol rahi hoon.")
 
     async def _fake_speak_scripted_text(text: str, playback: object) -> list[AudioClause]:
@@ -293,7 +303,10 @@ async def test_speak_greeting_synthesizes_and_sends_when_wired() -> None:
 
     orch._deps.conversation_engine.speak_scripted_text.assert_awaited_once()
     assert orch._deps.conversation_engine.speak_scripted_text.call_args.args[0] == "Namaste sir, main Kavya bol rahi hoon."
-    orch._adapter.send_frame.assert_awaited_once()
+    assert orch._adapter.send_frame.await_count == 2
+    for call in orch._adapter.send_frame.call_args_list:
+        f: AudioFrame = call.args[0]
+        assert len(f.pcm_data) == 160, f"non-160-byte μ-law payload emitted: {len(f.pcm_data)}"
 
 
 @pytest.mark.asyncio

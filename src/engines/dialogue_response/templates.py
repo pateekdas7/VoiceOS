@@ -7,6 +7,13 @@ here takes an {outstanding} placeholder filled from CustomerContext /
 ResponsePlan.facts at render time (RI-5: facts come from the authoritative
 source, never from a literal in code).
 
+Templates are written at world-class salesman level:
+- Empathy before ask
+- Legitimate consequence framing (CIBIL, daily interest) — no threats
+- Option closing (two dates, not open questions)
+- Small-win laddering (part payment > nothing)
+- Urgency without coercion
+
 Architecture: V2 Ch13 (dialogue state); RI-5 (Law of Authority).
 """
 
@@ -22,8 +29,8 @@ def format_rupees(amount_minor: int) -> str:
 SCRIPT_TEMPLATES: dict[str, str] = {
     # ── Identity gate (turn 1) ────────────────────────────────────────────
     "identity_confirm": (
-        "Perfect sir, आपके account पर {outstanding} outstanding है — "
-        "कब तक clear हो जाएगा?"
+        "Haan sir — account pe {outstanding} outstanding hai, "
+        "CIBIL pe asar pad raha hai — aaj sort kar lete hain, kab tak ho sakta hai?"
     ),
     "identity_reask": (
         "माफ़ कीजिए sir, क्या आप {customer_name} जी बात कर रहे हैं?"
@@ -31,48 +38,74 @@ SCRIPT_TEMPLATES: dict[str, str] = {
     "identity_deny": (
         "माफ़ कीजिए, wrong number लग गया। Thanks।"
     ),
+
     # ── Golden-path buckets (post-identity) ───────────────────────────────
     "ask_who": (
-        "मैं {agent_name} हूँ, {lender_name} से। कब तक payment हो जाएगा sir?"
+        "मैं {agent_name} हूँ, {lender_name} से — "
+        "account matter ke baare mein baat karni thi, 5 min milenge?"
     ),
     "ask_amount": (
-        "आपके account पर {outstanding} outstanding है sir। कब तक clear हो जाएगा?"
+        "Sir, {outstanding} outstanding hai account pe — "
+        "10 ko ya 15 ko, kaunsa better rahega payment ke liye?"
     ),
+
+    # ── Hardship — empathy first, then small-win ask ──────────────────────
     "hardship": (
-        "समझ सकती हूँ sir। छोटा part payment इस week possible है क्या?"
+        "Samajh sakti hoon, bilkul — kuch bhi possible hai is week? "
+        "Even thoda sa bhi chalega."
     ),
+
+    # ── Date confirmation ─────────────────────────────────────────────────
     "gives_date_confirm": (
-        "Note kar liya — {date} तक full payment confirm कर रहे हैं sir?"
+        "Note kar liya — {date} full payment — confirm hai sir?"
     ),
     "gives_date_confirm_relative": (
-        "Note kar liya — {date} full payment confirm कर रहे हैं sir?"
+        "Note kar liya — {date} full payment confirm kar rahe hain?"
     ),
+
+    # ── Amount / plan ─────────────────────────────────────────────────────
     "gives_amount_plan": (
-        "{amount} monthly पर plan bana dete hain — kitne mahine mein clear कर सकते हैं?"
+        "{amount} monthly — pehli installment 5 ko ya 10 ko?"
     ),
     "plan_computed": (
-        "{amount} monthly पर लगभग {months} महीने में full clear हो जाएगा। ठीक है sir?"
+        "Theek hai — {amount} monthly pe lagbhag {months} mahine mein full clear. "
+        "Pehli installment kab karein?"
     ),
     "plan_lumpsum_full": (
-        "Ok, एक बार में {amount} pay कर देंगे तो account clear हो जाएगा।"
+        "Ek baar mein {amount} — account full clear ho jaayega. Confirm karein?"
     ),
     "plan_lumpsum_partial": (
-        "Ok, {amount} pay कर देंगे तो {remaining} बाकी रहेगा — बाकी कब तक?"
+        "{amount} aaj, {remaining} baad mein — baaki kab tak ho jaayega?"
     ),
+
+    # ── Stalling / next-month objection ───────────────────────────────────
+    "stall_next_month": (
+        "Bilkul — lekin CIBIL pe mark aa raha hai, "
+        "ek date note kar lein toh file peace mein rahegi — 5 ko ya 10 ko?"
+    ),
+
+    # ── CIBIL urgency (for repeat stalling) ───────────────────────────────
+    "cibil_urgency": (
+        "Har din interest add ho raha hai sir — "
+        "aaj confirm ho jaaye toh aage nahi badhega."
+    ),
+
     # ── Anchor for anything unmatched ─────────────────────────────────────
     "anchor": (
-        "Sir, आपके account पर {outstanding} outstanding है — "
-        "कब तक payment कर सकते हैं?"
+        "Sir, {outstanding} outstanding hai account pe — "
+        "10 ko ya 15 ko, kaunsa better rahega?"
     ),
+
     # ── Close scripts ─────────────────────────────────────────────────────
     "close_soft": (
-        "Theek hai sir, आपका commitment note कर लिया। Thanks, बात हुई।"
+        "Perfect sir — commitment note kar liya. "
+        "Our side se koi call nahi aayegi. Thanks, baat hui."
     ),
     "close_farewell": (
-        "Theek hai sir, thanks। बात हुई।"
+        "Theek hai sir, hum baad mein baat karte hain. Thanks!"
     ),
     "close_callback": (
-        "Theek hai sir, team से check करा के callback कर देती हूँ।"
+        "Theek hai sir, team se check kara ke callback kar deti hoon."
     ),
 }
 """Every state has a canonical response that fires without an LLM call."""

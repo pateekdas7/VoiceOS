@@ -269,13 +269,44 @@ def _gpu_service_url(env_var: str, default_port: int) -> str:
     return f"http://{gpu_host}:{default_port}"
 
 
+_CIRCUIT_BREAKER_REGISTRY: object = None
+
+
+def build_circuit_breaker_registry() -> object:
+    """Process-wide ``CircuitBreakerRegistry`` for the three GPU-node adapters.
+
+    V3 Ch14 §14.2 mandates one breaker per external dependency and one
+    ``on_state_change`` sink; both are satisfied here by wiring
+    ``record_circuit_breaker_state`` so every trip/close updates the
+    ``voiceos_circuit_breaker_state`` gauge without adapter-side plumbing.
+    Cached because ``build_conversation_engine`` (llm/tts) and
+    ``build_shared_call_dependencies`` (stt) each build a service tree; both
+    must share breakers so the "5 failures in 30s" window sees every call.
+    """
+    global _CIRCUIT_BREAKER_REGISTRY
+    if _CIRCUIT_BREAKER_REGISTRY is None:
+        from src.libs.circuit_breaker.breaker import CircuitBreakerRegistry
+        from src.libs.observability.metrics import record_circuit_breaker_state
+
+        _CIRCUIT_BREAKER_REGISTRY = CircuitBreakerRegistry(
+            on_state_change=record_circuit_breaker_state,
+        )
+    return _CIRCUIT_BREAKER_REGISTRY
+
+
 def build_llm_service(gpu_scheduler: object) -> object:
     from src.services.llm_runtime.adapters.vllm_adapter import vLLMAdapter
     from src.services.llm_runtime.prompt_contract import PromptContract
     from src.services.llm_runtime.service import LLMService, LLMServiceConfig
 
     base_url = _gpu_service_url("LLM_BASE_URL", 8000)
-    adapter = vLLMAdapter(gpu_scheduler=gpu_scheduler, prompt_contract=PromptContract(), base_url=base_url)
+    breaker = build_circuit_breaker_registry().get_or_create("llm")  # type: ignore[attr-defined]
+    adapter = vLLMAdapter(
+        gpu_scheduler=gpu_scheduler,
+        prompt_contract=PromptContract(),
+        base_url=base_url,
+        breaker=breaker,
+    )
     return LLMService.create(adapter=adapter, config=LLMServiceConfig(base_url=base_url))
 
 
@@ -284,7 +315,8 @@ def build_tts_service(gpu_scheduler: object) -> object:
     from src.services.tts.service import TTSService, TTSServiceConfig
 
     base_url = _gpu_service_url("TTS_BASE_URL", 8200)
-    adapter = VeenaAdapter(gpu_scheduler=gpu_scheduler, base_url=base_url)
+    breaker = build_circuit_breaker_registry().get_or_create("tts")  # type: ignore[attr-defined]
+    adapter = VeenaAdapter(gpu_scheduler=gpu_scheduler, base_url=base_url, breaker=breaker)
     return TTSService.create(adapter=adapter, config=TTSServiceConfig(base_url=base_url))
 
 
@@ -448,7 +480,8 @@ def build_stt_service(gpu_scheduler: object) -> object:
     from src.services.stt.service import STTService, STTServiceConfig
 
     base_url = _gpu_service_url("STT_BASE_URL", 8100)
-    adapter = WhisperHTTPAdapter(gpu_scheduler=gpu_scheduler, base_url=base_url)
+    breaker = build_circuit_breaker_registry().get_or_create("stt")  # type: ignore[attr-defined]
+    adapter = WhisperHTTPAdapter(gpu_scheduler=gpu_scheduler, base_url=base_url, breaker=breaker)
     return STTService.create(adapter=adapter, config=STTServiceConfig(default_language=_env("STT_LANGUAGE", "hi")))
 
 
@@ -501,6 +534,58 @@ def build_shared_call_dependencies() -> object:
         public_ws_base_url=_env("PUBLIC_WS_BASE_URL", ""),
         recording_dir=_env("CALL_RECORDING_DIR", ""),
         greeting_timeout_s=float(_env("GREETING_TIMEOUT_S", "60.0")),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Dialer system
+# ---------------------------------------------------------------------------
+
+
+def build_dialer_services(conn: object, raw_redis: object) -> object:
+    """Construct DialerSessionManager with all dependencies.
+
+    Env vars consumed:
+        TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN  — existing Twilio credentials
+        TWILIO_CALLER_ID                        — E.164 number to call from
+        TWIML_APP_URL                           — TwiML instruction URL
+        DIALER_STATUS_CALLBACK_URL              — Twilio posts call events here
+        DIALER_MAX_CONCURRENT                   — parallel in-flight calls (default 1)
+    """
+    from src.libs.repositories.campaign_lead import CampaignLeadRepository
+    from src.services.dialer.engine import DialerEngine
+    from src.services.dialer.outbound_call import TwilioOutboundCallService
+    from src.services.dialer.queue import DialerQueue
+    from src.services.dialer.session import DialerSessionManager
+
+    twilio_caller_id = _env("TWILIO_CALLER_ID", required=True)
+    twiml_app_url = _env("TWIML_APP_URL", required=True)
+    status_callback_url = _env("DIALER_STATUS_CALLBACK_URL", required=True)
+    max_concurrent = int(_env("DIALER_MAX_CONCURRENT", "1"))
+
+    lead_repo = CampaignLeadRepository(conn)
+    dialer_queue = DialerQueue(raw_redis)
+
+    def _make_engine() -> DialerEngine:
+        twilio = TwilioOutboundCallService(
+            account_sid=_env("TWILIO_ACCOUNT_SID", required=True),
+            auth_token=_env("TWILIO_AUTH_TOKEN", required=True),
+            caller_id=twilio_caller_id,
+            twiml_app_url=twiml_app_url,
+            status_callback_url=status_callback_url,
+        )
+        return DialerEngine(
+            twilio=twilio,
+            dialer_queue=dialer_queue,
+            lead_repo=lead_repo,
+            redis=raw_redis,
+            max_concurrent=max_concurrent,
+        )
+
+    return DialerSessionManager(
+        engine_factory=_make_engine,
+        dialer_queue=dialer_queue,
+        lead_repo=lead_repo,
     )
 
 

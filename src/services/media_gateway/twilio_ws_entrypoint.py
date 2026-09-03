@@ -51,7 +51,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from starlette.applications import Starlette
-from starlette.routing import WebSocketRoute
+from starlette.routing import Route, WebSocketRoute
+from starlette.responses import Response
+from starlette.requests import Request as _StarReq
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from src.libs.contracts.audio import AudioConfig, AudioFrame, Encoding, SampleRate
@@ -137,6 +139,18 @@ class SharedCallDependencies:
     reconstructing the URL from what the ASGI server itself observed — for
     tests and any deployment that terminates TLS with correct proxy-header
     forwarding configured elsewhere instead."""
+    consent_gate: Any = None
+    """Optional :class:`CustomerConsentPort` consulted immediately before the
+    WebSocket is accepted and the greeting starts. Defense-in-depth against
+    a consent revocation that landed *after* the scheduler cleared the call
+    but *before* it actually connected — and the only consent check on the
+    call path for inbound calls, which never went through the scheduler at
+    all. ``None`` (default) uses a :class:`NullCustomerConsent` never-blocks
+    stub so dev/test paths don't need a Postgres-backed adapter wired up.
+    A revoked lookup here closes the WebSocket with 4003 before the customer
+    ever hears audio, emits an ``consent_revoked`` audit event via the
+    logger, and increments ``CALLS_BLOCKED_CONSENT_REVOKED``."""
+
     recording_dir: str = ""
     """When non-empty, every call gets a CallRecorder writing its transcript
     (JSONL of timestamped STT/dialogue/TTS/barge-in events) and raw
@@ -236,6 +250,12 @@ class CallOrchestrator:
         self._out_seq = 0
         self._closing = False
         self._dialogue_manager: DialogueManager | None = None
+        # Stream-aware μ-law framing carry: any <160-byte tail left over
+        # after emitting complete 160-byte Twilio frames from a clause is
+        # kept here and prefixed onto the next clause's μ-law bytes, so
+        # every frame Twilio ever sees is exactly 160 bytes (20 ms @ 8 kHz
+        # μ-law). Cleared on barge-in / generation advance / WS disconnect.
+        self._send_ulaw_carry: bytes = b""
 
     @classmethod
     async def create(
@@ -344,6 +364,11 @@ class CallOrchestrator:
                 self._recorder.event("barge_in", turn_index=self._turn_index, call_time_ms=self._call_time_ms())
             await self._playback.flush()
             self._playback.clear_barge_in()
+            # Drop any μ-law tail carried forward from the pre-barge-in
+            # generation so the next turn's first frame is aligned to a
+            # clean 160-byte boundary rather than being prefixed by stale
+            # audio the caller has already been interrupted over.
+            self._send_ulaw_carry = b""
             self._session.on_barge_in()
             self._session.on_barge_in_end()
 
@@ -461,20 +486,106 @@ class CallOrchestrator:
             self._vad.set_playback_active(False)
 
     async def _send_clause(self, clause: Any) -> None:
-        """Convert one AudioClause to a mu-law Twilio frame and send it.
+        """Convert one AudioClause to μ-law and send as 20 ms Twilio frames.
+
+        Twilio Media Streams expects a steady stream of ~20 ms (160-byte μ-law
+        @ 8 kHz) frames per WebSocket message. Sending a whole clause (often
+        hundreds of ms) as one oversized frame caused audible stutter and,
+        for long clauses, exceeded Twilio's per-message payload limit — the
+        callee heard "na-ma---ste s-ir" (syllables torn apart) rather than
+        smooth speech. Splitting into 160-byte chunks feeds Twilio's carrier
+        at its native cadence.
 
         Does NOT touch the PlaybackScheduler queue -- callers own that,
         because the two callers differ: _send_clauses() receives clauses
         directly from ConversationEngine's return value and drains one
         queue entry per clause afterward, while _speak_greeting() takes its
         clauses *out* of the queue itself as they stream in.
+
+        Phase E — the last-mile generation check. Snapshot the clause's
+        stamped generation once; between every 20 ms Twilio frame compare
+        it against the scheduler's live generation. As soon as the
+        scheduler has advanced (barge-in fired between frames), stop
+        sending immediately — no further stale audio reaches Twilio for
+        this clause. This is the terminal fail-closed boundary before
+        the carrier: even if the scheduler and gate both let a stale
+        clause slip through (which they shouldn't), this per-frame check
+        still catches the mid-clause barge-in that flushed after we
+        already popped the clause.
         """
+        # Phase E — drop the whole clause immediately if it is already
+        # stale by the time we reach here (defensive; the scheduler's
+        # enqueue would already have dropped it).
+        clause_generation = getattr(clause, "generation", 0)
+        if clause_generation != self._playback.generation:
+            logger.warning(
+                "twilio_ws: dropping stale clause idx=%d "
+                "(clause_gen=%d, playback_gen=%d) — never sent to Twilio",
+                getattr(clause, "clause_index", -1),
+                clause_generation,
+                self._playback.generation,
+            )
+            return
         if self._recorder is not None:
             self._recorder.add_outbound_audio(clause.audio_data, clause.sample_rate)
+        import time as _t, logging as _lg
+        _t0 = _t.monotonic()
+        _last_end = getattr(self, "_pace_last_clause_end", None)
+        _gap_ms = int((_t0 - _last_end) * 1000) if _last_end else 0
         pcm_ulaw = self._audio_output.convert(clause, fmt="ulaw")
-        self._out_seq += 1
-        out_frame = _clause_to_mulaw_frame(pcm_ulaw, seq=self._out_seq, rtp_ts=self._out_seq * 160)
-        await self._adapter.send_frame(out_frame)
+        # 20 ms of 8 kHz μ-law = 160 bytes per Twilio outbound frame.
+        # Stream-aware framing: prepend any <160-byte tail left over from
+        # the previous clause so every emitted payload is exactly 160
+        # bytes. Anything under 160 bytes at the end of THIS clause is
+        # held in self._send_ulaw_carry for the next clause. Twilio
+        # silently drops non-160-byte μ-law@8kHz frames, so per-clause
+        # chunking (the previous behaviour) leaked one malformed frame
+        # per clause whenever len(pcm_ulaw) % 160 != 0.
+        chunk_size = 160
+        buf = self._send_ulaw_carry + pcm_ulaw
+        n_full = len(buf) // chunk_size
+        n_frames = 0
+        aborted_mid_clause = False
+        for i in range(n_full):
+            # Phase E — between every frame verify the clause is still
+            # current. Once the generation has advanced, every remaining
+            # frame in this clause belongs to a discarded turn and must
+            # not reach Twilio. The carry from the pre-barge-in generation
+            # is dropped too (it belongs to audio the caller has already
+            # been interrupted over).
+            if self._playback.generation != clause_generation:
+                aborted_mid_clause = True
+                self._send_ulaw_carry = b""
+                logger.info(
+                    "twilio_ws: mid-clause barge-in — sent %d of %d frames "
+                    "for clause idx=%d, generation advanced %d→%d",
+                    n_frames,
+                    n_full,
+                    getattr(clause, "clause_index", -1),
+                    clause_generation,
+                    self._playback.generation,
+                )
+                break
+            chunk = buf[i * chunk_size : (i + 1) * chunk_size]
+            self._out_seq += 1
+            out_frame = _clause_to_mulaw_frame(chunk, seq=self._out_seq, rtp_ts=self._out_seq * 160)
+            await self._adapter.send_frame(out_frame)
+            n_frames += 1
+        else:
+            # Clean loop exit (no barge-in): stash the <160-byte remainder
+            # for the next clause. On the last clause of a call, the
+            # remainder is dropped by the run() finally-block; it
+            # represents <20 ms of audio (0..7.96 ms typical) which is
+            # imperceptible relative to Twilio's own 20 ms cadence.
+            self._send_ulaw_carry = buf[n_full * chunk_size :]
+        _wall = int((_t.monotonic() - _t0) * 1000)
+        _audio_ms = n_frames * 20
+        _rtf = (_wall / _audio_ms) if _audio_ms else 0.0
+        self._pace_last_clause_end = _t.monotonic()
+        _lg.getLogger("voiceos.twilio_ws").info(
+            "PACE_DIAG clause frames=%d audio_ms=%d wall_ms=%d rtf=%.2f gap_since_last_ms=%d aborted=%d",
+            n_frames, _audio_ms, _wall, _rtf, _gap_ms, int(aborted_mid_clause),
+        )
 
     # ------------------------------------------------------------------
     # Task C — outbound pump: adapter's queued Twilio JSON -> real WebSocket
@@ -490,6 +601,10 @@ class CallOrchestrator:
             msg = self._adapter.drain_outbound()
             if msg is not None:
                 await websocket.send_text(msg.decode())
+                self._outbound_frame_count = getattr(self, "_outbound_frame_count", 0) + 1
+                if self._outbound_frame_count in (1, 10, 50, 200, 1000):
+                    import logging as _lg
+                    _lg.getLogger("voiceos.twilio_ws").info("CALL_DIAG: outbound_frame_count=%d bytes_sample=%d", self._outbound_frame_count, len(msg))
             else:
                 await asyncio.sleep(0.01)
         # Drain any remaining queued messages before the connection closes.
@@ -524,22 +639,64 @@ class CallOrchestrator:
         # already enqueues each clause into self._playback as it produces it,
         # so draining that queue concurrently gets first audio out in
         # roughly first-clause latency instead of full-utterance latency.
-        import asyncio
+        import asyncio, time as _time
 
+        self._pace_greeting_start = _time.monotonic()
+        self._pace_greeting_first_frame_at = None
+        # Phase E — the greeting also has a scope generation. If a barge-in
+        # fires during greeting we must both stop sending AND cancel the
+        # synthesis task so it doesn't keep producing (now-stale) clauses
+        # that the scheduler would reject anyway but that would waste GPU
+        # cycles.
+        greeting_generation = self._playback.generation
         synth_task = asyncio.create_task(
             self._deps.conversation_engine.speak_scripted_text(greeting, self._playback)
         )
         self._vad.set_playback_active(True, playback_seq=self._turn_index)
         try:
             while not synth_task.done() or self._playback.depth > 0:
+                # Phase E — observe barge-in / generation advance and
+                # cancel the greeting synthesis immediately. Without
+                # this, synth_task could produce dozens more stale
+                # clauses before the async cascade unwinds.
+                if self._playback.generation != greeting_generation:
+                    if not synth_task.done():
+                        logger.info(
+                            "twilio_ws: greeting barge-in — cancelling "
+                            "synth_task (gen advanced %d→%d)",
+                            greeting_generation, self._playback.generation,
+                        )
+                        synth_task.cancel()
+                    break
                 clause = self._playback.dequeue_nowait()
                 if clause is None:
                     await asyncio.sleep(0.005)
                     continue
+                if getattr(self, "_pace_greeting_first_frame_at", None) is None:
+                    self._pace_greeting_first_frame_at = _time.monotonic()
+                    import logging as _lg2
+                    _lg2.getLogger("voiceos.twilio_ws").info(
+                        "PACE_DIAG greeting_ttfa_ms=%d",
+                        int((self._pace_greeting_first_frame_at - self._pace_greeting_start) * 1000),
+                    )
                 await self._send_clause(clause)
         finally:
             self._vad.set_playback_active(False)
-        await synth_task  # surface any synthesis exception
+            import logging as _lg3
+            _wall = int((_time.monotonic() - self._pace_greeting_start) * 1000)
+            _lg3.getLogger("voiceos.twilio_ws").info(
+                "PACE_DIAG greeting_done wall_ms=%d ttfa_ms=%d out_seq=%d",
+                _wall,
+                int((self._pace_greeting_first_frame_at - self._pace_greeting_start) * 1000) if getattr(self, "_pace_greeting_first_frame_at", None) else -1,
+                self._out_seq,
+            )
+        # Phase E — if we cancelled synth_task, awaiting it will re-raise
+        # CancelledError; swallow that specifically (the cancel was
+        # intentional, not a failure).
+        try:
+            await synth_task  # surface any synthesis exception
+        except asyncio.CancelledError:
+            pass
 
     async def run(self, websocket: WebSocket) -> None:
         import asyncio
@@ -549,10 +706,20 @@ class CallOrchestrator:
             if self._recorder is not None:
                 self._recorder.event("call_start", tenant_id=self._tenant_id)
 
-            if self._deps.speak_greeting:
+            tasks = [
+                asyncio.create_task(self._pump_inbound()),
+                asyncio.create_task(self._run_turns()),
+                asyncio.create_task(self._pump_outbound(websocket)),
+            ]
+
+            async def _speak_greeting_task() -> None:
+                from src.services.media_gateway.metrics import GREETING_OUTCOMES
+
                 try:
                     await asyncio.wait_for(self._speak_greeting(), timeout=self._deps.greeting_timeout_s)
+                    GREETING_OUTCOMES.labels(outcome="ok").inc()
                 except TimeoutError:
+                    GREETING_OUTCOMES.labels(outcome="timeout").inc()
                     logger.error(
                         "Call %s: greeting timed out after %.1fs (GPU TTS unreachable/slow?) — "
                         "proceeding to turn processing without it",
@@ -565,15 +732,13 @@ class CallOrchestrator:
                             call_time_ms=self._call_time_ms(),
                         )
                 except Exception:
+                    GREETING_OUTCOMES.labels(outcome="error").inc()
                     logger.exception("Call %s: greeting failed — proceeding to turn processing without it", self._call_id)
                     if self._recorder is not None:
                         self._recorder.event("greeting_error", call_time_ms=self._call_time_ms())
 
-            tasks = [
-                asyncio.create_task(self._pump_inbound()),
-                asyncio.create_task(self._run_turns()),
-                asyncio.create_task(self._pump_outbound(websocket)),
-            ]
+            if self._deps.speak_greeting:
+                tasks.append(asyncio.create_task(_speak_greeting_task()))
             done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
             for task in done:
                 exc = task.exception()
@@ -581,6 +746,12 @@ class CallOrchestrator:
                     raise exc
         finally:
             self._closing = True
+            # Drop any μ-law tail carried between clauses so it does not
+            # linger on the (dying) instance. Under Twilio's stream
+            # contract a sub-160-byte tail cannot be emitted as a valid
+            # frame — dropping is the correct terminal behaviour and
+            # represents <20 ms of trailing audio.
+            self._send_ulaw_carry = b""
             for task in tasks:
                 if not task.done():
                     task.cancel()
@@ -680,6 +851,38 @@ def create_twilio_media_stream_app(deps: SharedCallDependencies) -> Starlette:
         # context is None) — previously always the case, since nothing
         # here ever called start_call() at all before this fix.
         customer_id = start_msg.get("start", {}).get("customParameters", {}).get("customer_id", "")
+
+        # Consent-revocation defense-in-depth (V4 Ch2 — RBI FPC / DPDP).
+        # Runs *before* start_call() and CallOrchestrator.create() so a
+        # revoked customer never triggers CRM lookups, session allocation,
+        # or a single frame of Kavya audio. Skipped when customer_id is
+        # empty (the scheduler path already enforces DND per (tenant,
+        # customer); this gate only kicks in when we know who we're
+        # talking to). Any exception here is swallowed with a log rather
+        # than fail-closed because a broken consent adapter must not take
+        # every call down — the phone-scoped DND at dial time and the
+        # scheduler's DNDStatusPort both remain in force.
+        consent_gate = deps.consent_gate
+        if consent_gate is None:
+            from src.services.media_gateway.consent_gate import NullCustomerConsent
+            consent_gate = NullCustomerConsent()
+        if customer_id:
+            try:
+                if consent_gate.is_revoked(deps.tenant_id, customer_id):
+                    logger.warning(
+                        "consent_revoked call_id=%s tenant=%s customer=%s — closing call before greeting",
+                        call_id, deps.tenant_id, customer_id,
+                    )
+                    from src.services.media_gateway.metrics import record_call_blocked_consent_revoked
+                    record_call_blocked_consent_revoked(deps.tenant_id)
+                    await websocket.close(code=4003)
+                    return
+            except Exception:
+                logger.exception(
+                    "consent_gate lookup failed for tenant=%s customer=%s — proceeding (fail-open, phone-DND and schedule-DND remain in force)",
+                    deps.tenant_id, customer_id,
+                )
+
         context = None
         if customer_id:
             try:
@@ -701,6 +904,13 @@ def create_twilio_media_stream_app(deps: SharedCallDependencies) -> Starlette:
             return
 
         orchestrator.feed_message(start_msg)  # feed the already-consumed 'start' message
+        # CALL_DIAG fix: populate stream_sid synchronously so outbound greeting
+        # frames (enqueued before _pump_inbound processes the queued start msg)
+        # carry the correct streamSid — Twilio silently drops frames with empty
+        # streamSid, causing 30s of dead-air greeting → 1006 disconnect.
+        _sid = start_msg.get('start', {}).get('streamSid', '')
+        if _sid:
+            orchestrator._adapter._stream_sid = _sid
 
         async def _forward_inbound() -> None:
             try:
@@ -724,4 +934,58 @@ def create_twilio_media_stream_app(deps: SharedCallDependencies) -> Starlette:
                 forward_task.cancel()
             await asyncio.gather(forward_task, return_exceptions=True)
 
-    return Starlette(routes=[WebSocketRoute("/twilio/media-stream", endpoint=_endpoint)])
+    def _twiml_voice(request):
+        host = request.headers.get("host") or request.url.hostname
+        wss = f"wss://{host}/twilio/media-stream"
+        xml = (
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+            "<Response><Connect><Stream url=\"" + wss + "\"/></Connect></Response>"
+        )
+        return Response(xml, media_type="application/xml")
+
+    async def _voice(request):
+        return _twiml_voice(request)
+
+    async def _health(request):
+        return Response("ok", media_type="text/plain")
+
+    # V3 Ch12 §12.6/§12.9 — /health/live is a process-alive check with no
+    # dependency I/O; /health/ready adds every GPU adapter (STT/LLM/TTS) so
+    # k8s/systemd/LB stops routing calls when the GPU node is unreachable.
+    # The naive /health above is preserved for backward compatibility with
+    # existing Twilio configurations and older monitors.
+    import os as _os
+    from starlette.responses import JSONResponse as _JSONResponse
+
+    from src.libs.health.probe import LivenessProbe, ReadinessProbe
+    from src.libs.health.protocol import HealthStatus
+    from src.services.media_gateway.health_checks import build_gpu_health_checks
+
+    _liveness = LivenessProbe()
+    _gpu_host = _os.environ.get("GPU_HOST", "")
+    _readiness = ReadinessProbe(
+        _liveness,
+        dependencies=build_gpu_health_checks(_gpu_host) if _gpu_host else (),
+    )
+
+    async def _health_live(_request):
+        status = await _liveness.check()
+        return _JSONResponse(
+            {"status": status.value},
+            status_code=200 if status == HealthStatus.HEALTHY else 503,
+        )
+
+    async def _health_ready(_request):
+        status = await _readiness.check()
+        return _JSONResponse(
+            {"status": status.value},
+            status_code=200 if status == HealthStatus.HEALTHY else 503,
+        )
+
+    return Starlette(routes=[
+        WebSocketRoute("/twilio/media-stream", endpoint=_endpoint),
+        Route("/voice", endpoint=_voice, methods=["POST","GET"]),
+        Route("/health", endpoint=_health, methods=["GET"]),
+        Route("/health/live", endpoint=_health_live, methods=["GET"]),
+        Route("/health/ready", endpoint=_health_ready, methods=["GET"]),
+    ])

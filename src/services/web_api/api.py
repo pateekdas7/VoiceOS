@@ -26,10 +26,13 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import secrets
 import uuid
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Protocol
+
+_log = logging.getLogger("voiceos.web_api")
 
 from monitoring.gpu_fleet.fleet_health import GPUFleetHealthMonitor
 from starlette.applications import Starlette
@@ -196,6 +199,12 @@ def create_web_api(
     crm_service: CustomerService | None = None,
     collections_workflow: EscalationWorkflow | None = None,
     campaign_audience_repository: CampaignAudienceRepository | None = None,
+    pipeline_service: Any = None,
+    lead_intake_service: Any = None,
+    lead_repository: Any = None,
+    lead_import_repository: Any = None,
+    dialer_session_manager: Any = None,
+    twilio_auth_token: str | None = None,
     billing_service: BillingService | None = None,
     feature_flag_service: FeatureFlagService | None = None,
     compliance_monitoring: ComplianceMonitoring | None = None,
@@ -338,6 +347,12 @@ def create_web_api(
 
     if campaign_service is not None and campaign_audience_repository is not None and crm_service is not None:
         routes.extend(_build_leads_routes(campaign_service, campaign_audience_repository, crm_service))
+
+    if pipeline_service is not None and lead_intake_service is not None and lead_repository is not None and lead_import_repository is not None:
+        routes.extend(_build_pipeline_lead_routes(pipeline_service, lead_intake_service, lead_repository, lead_import_repository))
+
+    if dialer_session_manager is not None:
+        routes.extend(_build_dialer_routes(dialer_session_manager, twilio_auth_token))
 
     if billing_service is not None:
         routes.extend(_build_billing_routes(billing_service))
@@ -1387,14 +1402,11 @@ def _build_leads_routes(
     campaign_audience_repository: CampaignAudienceRepository,
     crm_service: CustomerService,
 ) -> list[Route]:
-    """Client -> Leads (ADR-005 Sec 6.4) -- a campaign's materialized audience cohort.
+    """Client -> Audience-cohort Leads (ADR-005 Sec 6.4) -- CampaignAudienceMember view.
 
-    ADR-005 frames "Leads" as CampaignAudienceMember + Customer, not a
-    dedicated Lead entity -- there is no separate lead model to invent.
-    Each member is joined against CustomerService.get() for display name/
-    contact; for very large cohorts this is N+1 (no bulk-fetch-by-ids
-    method exists on CustomerService today) -- acceptable for the cohort
-    sizes this environment can produce, flagged rather than silently eaten.
+    Retained for backward compatibility with the audience-cohort view (leads
+    built from AudienceSelector SQL criteria). The CSV-upload / pipeline lead
+    flow is handled by _build_pipeline_lead_routes below.
     """
 
     async def list_leads(request: Request) -> JSONResponse:
@@ -1432,6 +1444,303 @@ def _build_leads_routes(
         return JSONResponse(leads)
 
     return [Route("/leads", list_leads, methods=["GET"])]
+
+
+def _build_pipeline_lead_routes(
+    pipeline_service: Any,
+    lead_intake_service: Any,
+    lead_repository: Any,
+    import_repository: Any,
+) -> list[Route]:
+    """Client -> Pipelines + CSV-imported Leads (ADR-005 §14, Lead Distribution Engine).
+
+    Route map:
+      POST   /campaigns/{campaign_id}/pipelines            create pipeline
+      GET    /campaigns/{campaign_id}/pipelines            list pipelines
+      GET    /campaigns/{campaign_id}/pipelines/{id}       get pipeline
+      PATCH  /campaigns/{campaign_id}/pipelines/{id}       rename / change status
+      GET    /campaigns/{campaign_id}/leads                list leads (filters)
+      GET    /campaigns/{campaign_id}/leads/stats          aggregate stats
+      GET    /campaigns/{campaign_id}/leads/imports        import history
+      POST   /campaigns/{campaign_id}/leads/upload         bulk import
+      POST   /campaigns/{campaign_id}/leads/suggest-mapping  column hint
+      GET    /pipelines/{pipeline_id}/leads                leads in one pipeline
+      GET    /pipelines/{pipeline_id}/leads/stats          pipeline lead stats
+    """
+    from src.libs.contracts.primitives import PipelineId
+    from src.services.campaign_management.lead_intake import suggest_column_mapping
+    from src.services.campaign_management.pipeline_service import (
+        InvalidPipelineTransitionError,
+        PipelineNotFoundError,
+    )
+
+    # ── Guards ─────────────────────────────────────────────────────────────
+
+    async def _guard_read(request: Request) -> Any:
+        try:
+            return require_tenant_permission(request, PERM_READ_ALL)
+        except SessionRequiredError:
+            return _error(401, "UNAUTHENTICATED", "sign in required")
+        except ForbiddenError as exc:
+            return _error(403, "FORBIDDEN", str(exc))
+
+    async def _guard_write(request: Request) -> Any:
+        try:
+            return require_tenant_permission(request, PERM_WRITE_CAMPAIGNS)
+        except SessionRequiredError:
+            return _error(401, "UNAUTHENTICATED", "sign in required")
+        except ForbiddenError as exc:
+            return _error(403, "FORBIDDEN", str(exc))
+
+    def _pipeline_to_dict(p: Any) -> dict[str, Any]:
+        return {
+            "pipeline_id": p.pipeline_id,
+            "campaign_id": p.campaign_id,
+            "name": p.name,
+            "status": p.status,
+            "created_at": p.created_at.isoformat(),
+            "updated_at": p.updated_at.isoformat(),
+            "created_by": p.created_by,
+        }
+
+    def _lead_to_dict(lead: Any) -> dict[str, Any]:
+        return {
+            "lead_id": lead.lead_id,
+            "campaign_id": lead.campaign_id,
+            "pipeline_id": lead.pipeline_id,
+            "import_id": lead.import_id,
+            "phone": lead.phone,
+            "name": lead.name,
+            "email": lead.email,
+            "language": lead.language,
+            "score": lead.score,
+            "status": lead.status,
+            "queue_status": lead.queue_status,
+            "is_duplicate": lead.is_duplicate,
+            "is_blacklisted": lead.is_blacklisted,
+            "rejection_reason": lead.rejection_reason,
+            "metadata": lead.metadata,
+            "created_at": lead.created_at.isoformat(),
+        }
+
+    # ── Pipeline handlers ───────────────────────────────────────────────────
+
+    async def create_pipeline(request: Request) -> JSONResponse:
+        guard = await _guard_write(request)
+        if isinstance(guard, JSONResponse):
+            return guard
+        try:
+            body: dict[str, Any] = await request.json()
+        except json.JSONDecodeError:
+            return _error(400, "MALFORMED_PAYLOAD", "request body is not valid JSON")
+        name = (body.get("name") or "").strip()
+        if not name:
+            return _error(422, "VALIDATION_ERROR", "missing required field: name")
+        campaign_id = CampaignId(request.path_params["campaign_id"])
+        pipeline = pipeline_service.create(
+            TenantId(guard.tenant_id), campaign_id, name, created_by=guard.subject
+        )
+        return JSONResponse(_pipeline_to_dict(pipeline), status_code=201)
+
+    async def list_pipelines(request: Request) -> JSONResponse:
+        guard = await _guard_read(request)
+        if isinstance(guard, JSONResponse):
+            return guard
+        campaign_id = CampaignId(request.path_params["campaign_id"])
+        pipelines = pipeline_service.list_for_campaign(TenantId(guard.tenant_id), campaign_id)
+        return JSONResponse([_pipeline_to_dict(p) for p in pipelines])
+
+    async def get_pipeline(request: Request) -> JSONResponse:
+        guard = await _guard_read(request)
+        if isinstance(guard, JSONResponse):
+            return guard
+        pipeline_id = PipelineId(request.path_params["pipeline_id"])
+        pipeline = pipeline_service.get(TenantId(guard.tenant_id), pipeline_id)
+        if pipeline is None:
+            return _error(404, "NOT_FOUND", "pipeline not found")
+        return JSONResponse(_pipeline_to_dict(pipeline))
+
+    async def update_pipeline(request: Request) -> JSONResponse:
+        guard = await _guard_write(request)
+        if isinstance(guard, JSONResponse):
+            return guard
+        try:
+            body: dict[str, Any] = await request.json()
+        except json.JSONDecodeError:
+            return _error(400, "MALFORMED_PAYLOAD", "request body is not valid JSON")
+        tenant_id = TenantId(guard.tenant_id)
+        pipeline_id = PipelineId(request.path_params["pipeline_id"])
+        try:
+            if "name" in body:
+                pipeline_service.rename(tenant_id, pipeline_id, body["name"])
+            if "status" in body:
+                status = body["status"]
+                if status == "ACTIVE":
+                    pipeline_service.activate(tenant_id, pipeline_id, guard.subject)
+                elif status == "PAUSED":
+                    pipeline_service.pause(tenant_id, pipeline_id, guard.subject)
+                elif status == "ARCHIVED":
+                    pipeline_service.archive(tenant_id, pipeline_id, guard.subject)
+                else:
+                    return _error(422, "VALIDATION_ERROR", f"unknown status: {status}")
+        except PipelineNotFoundError:
+            return _error(404, "NOT_FOUND", "pipeline not found")
+        except InvalidPipelineTransitionError as exc:
+            return _error(409, "INVALID_TRANSITION", str(exc))
+        pipeline = pipeline_service.get(tenant_id, pipeline_id)
+        return JSONResponse(_pipeline_to_dict(pipeline))
+
+    # ── Lead handlers ───────────────────────────────────────────────────────
+
+    async def list_campaign_leads(request: Request) -> JSONResponse:
+        guard = await _guard_read(request)
+        if isinstance(guard, JSONResponse):
+            return guard
+        tenant_id = TenantId(guard.tenant_id)
+        campaign_id = CampaignId(request.path_params["campaign_id"])
+        status_filter = request.query_params.get("status") or None
+        pipeline_filter = request.query_params.get("pipeline_id") or None
+        search = request.query_params.get("search") or None
+        leads = lead_repository.find_by_campaign(
+            tenant_id, campaign_id,
+            status=status_filter,
+            pipeline_id=pipeline_filter,
+            search=search,
+        )
+        return JSONResponse([_lead_to_dict(l) for l in leads])
+
+    async def campaign_lead_stats(request: Request) -> JSONResponse:
+        guard = await _guard_read(request)
+        if isinstance(guard, JSONResponse):
+            return guard
+        tenant_id = TenantId(guard.tenant_id)
+        campaign_id = CampaignId(request.path_params["campaign_id"])
+        stats = lead_repository.stats_for_campaign(tenant_id, campaign_id)
+        return JSONResponse(stats)
+
+    async def list_imports(request: Request) -> JSONResponse:
+        guard = await _guard_read(request)
+        if isinstance(guard, JSONResponse):
+            return guard
+        tenant_id = TenantId(guard.tenant_id)
+        campaign_id = CampaignId(request.path_params["campaign_id"])
+        imports = import_repository.find_by_campaign(tenant_id, campaign_id)
+        return JSONResponse([
+            {
+                "import_id": imp.import_id,
+                "filename": imp.filename,
+                "status": imp.status,
+                "total_rows": imp.total_rows,
+                "valid_rows": imp.valid_rows,
+                "invalid_rows": imp.invalid_rows,
+                "duplicate_rows": imp.duplicate_rows,
+                "created_at": imp.created_at.isoformat(),
+                "completed_at": imp.completed_at.isoformat() if imp.completed_at else None,
+            }
+            for imp in imports
+        ])
+
+    async def upload_leads(request: Request) -> JSONResponse:
+        guard = await _guard_write(request)
+        if isinstance(guard, JSONResponse):
+            return guard
+        try:
+            body: dict[str, Any] = await request.json()
+        except json.JSONDecodeError:
+            return _error(400, "MALFORMED_PAYLOAD", "request body is not valid JSON")
+
+        rows = body.get("rows")
+        if not isinstance(rows, list):
+            return _error(422, "VALIDATION_ERROR", "missing required field: rows (must be a list)")
+        if not rows:
+            return _error(422, "VALIDATION_ERROR", "rows is empty; upload at least one lead")
+        if len(rows) > 10_000:
+            return _error(422, "VALIDATION_ERROR", "maximum 10,000 rows per upload")
+        for i, row in enumerate(rows):
+            if not isinstance(row, dict):
+                return _error(422, "VALIDATION_ERROR", f"rows[{i}] must be an object, got {type(row).__name__}")
+
+        filename = body.get("filename") or "upload.csv"
+        column_mapping = body.get("column_mapping") or {}
+        if not isinstance(column_mapping, dict):
+            return _error(422, "VALIDATION_ERROR", "column_mapping must be an object of {csv_column: standard_field}")
+        if "phone" not in column_mapping.values():
+            return _error(
+                422, "VALIDATION_ERROR",
+                "column_mapping must map at least one CSV column to 'phone' (required for outbound dialing)",
+            )
+        raw_pipeline_ids: list[str] = body.get("pipeline_ids") or []
+        pipeline_ids = [PipelineId(pid) for pid in raw_pipeline_ids if pid]
+
+        tenant_id = TenantId(guard.tenant_id)
+        campaign_id = CampaignId(request.path_params["campaign_id"])
+
+        result = lead_intake_service.ingest(
+            tenant_id,
+            campaign_id,
+            filename,
+            rows,
+            column_mapping,
+            pipeline_ids,
+            uploaded_by=guard.subject,
+        )
+        return JSONResponse(
+            {
+                "import_id": result.import_id,
+                "total": result.total,
+                "valid": result.valid,
+                "invalid": result.invalid,
+                "duplicates": result.duplicates,
+            },
+            status_code=201,
+        )
+
+    async def suggest_mapping(request: Request) -> JSONResponse:
+        guard = await _guard_read(request)
+        if isinstance(guard, JSONResponse):
+            return guard
+        try:
+            body: dict[str, Any] = await request.json()
+        except json.JSONDecodeError:
+            return _error(400, "MALFORMED_PAYLOAD", "request body is not valid JSON")
+        columns: list[str] = body.get("columns") or []
+        mapping = suggest_column_mapping(columns)
+        return JSONResponse({"suggested_mapping": mapping})
+
+    # ── Pipeline-scoped lead handlers ───────────────────────────────────────
+
+    async def list_pipeline_leads(request: Request) -> JSONResponse:
+        guard = await _guard_read(request)
+        if isinstance(guard, JSONResponse):
+            return guard
+        tenant_id = TenantId(guard.tenant_id)
+        pipeline_id = PipelineId(request.path_params["pipeline_id"])
+        search = request.query_params.get("search") or None
+        leads = lead_repository.find_by_pipeline(tenant_id, pipeline_id, search=search)
+        return JSONResponse([_lead_to_dict(l) for l in leads])
+
+    async def pipeline_lead_stats(request: Request) -> JSONResponse:
+        guard = await _guard_read(request)
+        if isinstance(guard, JSONResponse):
+            return guard
+        tenant_id = TenantId(guard.tenant_id)
+        pipeline_id = PipelineId(request.path_params["pipeline_id"])
+        stats = lead_repository.stats_for_pipeline(tenant_id, pipeline_id)
+        return JSONResponse(stats)
+
+    return [
+        Route("/campaigns/{campaign_id}/pipelines", create_pipeline, methods=["POST"]),
+        Route("/campaigns/{campaign_id}/pipelines", list_pipelines, methods=["GET"]),
+        Route("/campaigns/{campaign_id}/pipelines/{pipeline_id}", get_pipeline, methods=["GET"]),
+        Route("/campaigns/{campaign_id}/pipelines/{pipeline_id}", update_pipeline, methods=["PATCH"]),
+        Route("/campaigns/{campaign_id}/leads", list_campaign_leads, methods=["GET"]),
+        Route("/campaigns/{campaign_id}/leads/stats", campaign_lead_stats, methods=["GET"]),
+        Route("/campaigns/{campaign_id}/leads/imports", list_imports, methods=["GET"]),
+        Route("/campaigns/{campaign_id}/leads/upload", upload_leads, methods=["POST"]),
+        Route("/campaigns/{campaign_id}/leads/suggest-mapping", suggest_mapping, methods=["POST"]),
+        Route("/pipelines/{pipeline_id}/leads", list_pipeline_leads, methods=["GET"]),
+        Route("/pipelines/{pipeline_id}/leads/stats", pipeline_lead_stats, methods=["GET"]),
+    ]
 
 
 def _build_reports_routes(reporting_service: ReportingService) -> list[Route]:
@@ -2050,6 +2359,155 @@ def _build_startup_handlers(
         handlers.append(_start_daily_aggregation)
 
     return handlers
+
+
+# ---------------------------------------------------------------------------
+# Dialer control routes
+# ---------------------------------------------------------------------------
+
+
+def _build_dialer_routes(
+    dialer_session_manager: Any,
+    twilio_auth_token: str | None = None,
+) -> list[Route]:
+    """Routes for starting/stopping/querying the outbound dialer and Twilio callbacks.
+
+    POST /campaigns/{campaign_id}/dialer/start  — start a dial session
+    POST /campaigns/{campaign_id}/dialer/stop   — stop a running session
+    GET  /campaigns/{campaign_id}/dialer/status — session status
+    POST /dialer/twilio/status                  — Twilio status callback (validated
+                                                  by X-Twilio-Signature when
+                                                  twilio_auth_token is configured)
+
+    When ``twilio_auth_token`` is None the signature check is skipped and a
+    startup warning is logged — this mode exists only for local development.
+    Production deployments MUST configure the token so spoofed callbacks are
+    rejected with 403.
+    """
+    if twilio_auth_token is None:
+        _log.warning(
+            "dialer status-callback signature validation DISABLED "
+            "(twilio_auth_token not configured) — do not use in production."
+        )
+
+    async def dialer_start(request: Request) -> JSONResponse:
+        guard = _require_tenant(request, PERM_WRITE_CAMPAIGNS)
+        if isinstance(guard, JSONResponse):
+            return guard
+        campaign_id = request.path_params["campaign_id"]
+        body: dict = {}
+        try:
+            body = await request.json()
+        except Exception:
+            pass
+
+        from src.libs.contracts.primitives import CampaignId, TenantId
+        info = await dialer_session_manager.start(
+            guard.tenant_id,
+            campaign_id,
+            daily_start_hour=int(body.get("daily_start_hour", 9)),
+            daily_end_hour=int(body.get("daily_end_hour", 18)),
+            timezone_name=body.get("timezone_name", "Asia/Kolkata"),
+        )
+        return JSONResponse(
+            {"status": info.status, "campaign_id": info.campaign_id,
+             "started_at": info.started_at.isoformat()},
+            status_code=200,
+        )
+
+    async def dialer_stop(request: Request) -> JSONResponse:
+        guard = _require_tenant(request, PERM_WRITE_CAMPAIGNS)
+        if isinstance(guard, JSONResponse):
+            return guard
+        campaign_id = request.path_params["campaign_id"]
+        await dialer_session_manager.stop(campaign_id)
+        return JSONResponse({"status": "stopping", "campaign_id": campaign_id})
+
+    async def dialer_status(request: Request) -> JSONResponse:
+        guard = _require_tenant(request, PERM_READ_ALL)
+        if isinstance(guard, JSONResponse):
+            return guard
+        campaign_id = request.path_params["campaign_id"]
+        info = dialer_session_manager.status(campaign_id)
+        if info is None:
+            return JSONResponse({"status": "idle", "campaign_id": campaign_id})
+        return JSONResponse(
+            {"status": info.status, "campaign_id": info.campaign_id,
+             "started_at": info.started_at.isoformat()}
+        )
+
+    async def twilio_status_callback(request: Request) -> JSONResponse:
+        """Twilio POSTs call-status events here.
+
+        Auth: X-Twilio-Signature (HMAC-SHA1 of URL + sorted form params using
+        the account auth token). When ``twilio_auth_token`` is configured on
+        the app, unsigned or invalid requests are rejected with 403 — this is
+        the only defense against spoofed call completions corrupting lead
+        state (audit BLOCKER #4).
+        """
+        try:
+            form = await request.form()
+        except Exception:
+            return JSONResponse({"error": "bad_request"}, status_code=400)
+
+        # Signature validation (skipped only when token not configured — dev)
+        if twilio_auth_token is not None:
+            from src.services.dialer.twilio_signature import validate_signature
+
+            # Reconstruct the exact URL Twilio signed against. If the app is
+            # behind a proxy/tunnel, X-Forwarded-* headers reflect the public
+            # URL; fall back to request.url otherwise. Configured public URL
+            # (DIALER_STATUS_CALLBACK_URL) takes precedence when available on
+            # app.state to survive any header rewriting.
+            configured_url = getattr(request.app.state, "dialer_status_callback_url", None)
+            signed_url = configured_url or str(request.url)
+            signature = request.headers.get("X-Twilio-Signature", "")
+            form_params = {k: v for k, v in form.multi_items() if isinstance(v, str)}
+            if not validate_signature(twilio_auth_token, signed_url, form_params, signature):
+                _log.warning(
+                    "twilio_status rejected: invalid signature (url=%s remote=%s)",
+                    signed_url, request.client.host if request.client else "?",
+                )
+                return JSONResponse({"error": "invalid_signature"}, status_code=403)
+
+        call_sid = form.get("CallSid", "")
+        call_status = form.get("CallStatus", "")
+        amd_status = form.get("AnsweredBy", "")
+
+        # Retrieve tenant/campaign/lead context stored at call-placement time
+        raw = request.app.state.dialer_redis.get(f"dialer:sid:{call_sid}") if hasattr(request.app.state, "dialer_redis") else None
+        if raw:
+            tenant_id, campaign_id, lead_id = (raw.decode() if isinstance(raw, bytes) else raw).split("|", 2)
+        else:
+            # Context passed directly via StatusCallbackParameter
+            params = dict(request.query_params)
+            tenant_id = form.get("tenant_id") or params.get("tenant_id", "")
+            campaign_id = form.get("campaign_id") or params.get("campaign_id", "")
+            lead_id = form.get("lead_id") or params.get("lead_id", "")
+
+        _log.info(
+            "twilio_status call_sid=%s status=%s amd=%s lead_id=%s",
+            call_sid, call_status, amd_status, lead_id,
+        )
+
+        from src.services.dialer import metrics as _dm
+        terminal = call_status in ("completed", "busy", "failed", "no-answer", "canceled")
+        if terminal:
+            _dm.record_call_completed(tenant_id, campaign_id, call_status)
+            dialer_session_manager.on_call_ended(call_sid, campaign_id)
+        if amd_status == "human":
+            _dm.record_call_answered(tenant_id, campaign_id)
+        elif amd_status in ("machine_start", "machine_end_beep", "machine_end_silence", "machine_end_other"):
+            _dm.record_call_machine(tenant_id, campaign_id)
+
+        return JSONResponse({"received": True})
+
+    return [
+        Route("/campaigns/{campaign_id}/dialer/start", dialer_start, methods=["POST"]),
+        Route("/campaigns/{campaign_id}/dialer/stop", dialer_stop, methods=["POST"]),
+        Route("/campaigns/{campaign_id}/dialer/status", dialer_status, methods=["GET"]),
+        Route("/dialer/twilio/status", twilio_status_callback, methods=["POST"]),
+    ]
 
 
 __all__ = ["create_web_api"]

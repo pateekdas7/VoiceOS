@@ -58,3 +58,24 @@ def record_campaign_activated(tenant_id: str) -> None:
 
 def record_campaign_completed(tenant_id: str) -> None:
     SAAS_CAMPAIGN_COMPLETED.labels(tenant_id=tenant_id).inc()
+
+
+LEADS_IMPORTED: Counter = Counter(
+    "voiceos_campaign_leads_imported_total",
+    "Total valid (non-duplicate) leads imported into campaigns.",
+    labelnames=["tenant_id"],
+)
+
+PIPELINES_CREATED: Counter = Counter(
+    "voiceos_campaign_pipelines_created_total",
+    "Total campaign pipelines created.",
+    labelnames=["tenant_id"],
+)
+
+
+def record_leads_imported(tenant_id: str, count: int) -> None:
+    LEADS_IMPORTED.labels(tenant_id=tenant_id).inc(count)
+
+
+def record_pipeline_created(tenant_id: str) -> None:
+    PIPELINES_CREATED.labels(tenant_id=tenant_id).inc()
