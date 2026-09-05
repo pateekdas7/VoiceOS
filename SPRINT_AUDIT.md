@@ -3,6 +3,8 @@
 > **Purpose:** determine the *actual* implementation status of the repository from source code, tests, migrations, infrastructure, and git history — not from planning documents alone. Conducted because tracking docs (`CURRENT_SPRINT.md`, `PROJECT_STATUS.md`) were suspected of being stale relative to real committed work.
 >
 > **Read-only.** No code, tests, migrations, or configuration were modified to produce this document. Nothing was committed or pushed.
+>
+> **Reconciliation note — 2026-09-05 (A10):** the "GPU node" referenced throughout this doc means the L4/A6000 hosted VM as of the sprint being audited. **Current GPU (2026-09-05): Kaggle T4×2** — test setup, no dedicated VM. CPU node IP rotates every session; treat any hardcoded IP in this audit as historical.
 
 ---
 

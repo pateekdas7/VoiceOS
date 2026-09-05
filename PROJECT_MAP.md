@@ -3,6 +3,8 @@
 > **Purpose of this document:** a single reference for an engineer joining the project — what VoiceOS is, how it's architected, what's actually built vs. spec-only, how it deploys, and where every moving part lives. Produced by a full read-through of the architecture volumes, documentation suite, sprint history, infrastructure code, and application source tree. Read-only research artifact — no code was changed to produce this.
 >
 > **Snapshot date:** 2026-07-11 (as of Sprint-027 complete, Sprint-028 not started).
+>
+> **Reconciliation note — 2026-09-05 (A10):** the §5 GPU topology below (NVIDIA L4 @ `217.18.55.96` and later A6000) is HISTORICAL. **Current GPU (as of 2026-09-05): Kaggle T4×2 kernel-hosted, test setup, no dedicated GPU VM.** All GPU work — inference, forensic notebooks, Veena drift experiments — runs on Kaggle. See auto-memory `project_gpu_server.md` + `feedback_kaggle_t4x2.md`. The **CPU node IP rotates every session** (past values include `101.53.141.75`, `101.53.139.84`, `205.147.102.94`, `101.53.138.67`); do NOT hardcode. Ask the user for the current IP before SSH. §0.2 MongoDB drift and §0.3 LLM model version drift already surface the correct deployed reality (Mongo has 5 collections; LLM is `Qwen2.5-7B-Instruct-FP8-dynamic`) — those are closed, deployed reality is authoritative.
 
 ---
 
