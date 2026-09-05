@@ -1,0 +1,101 @@
+================================================================================
+V1 vs V2 REGRESSION MATRIX (per-seed pairs, N = 206 )
+================================================================================
+Total unique texts: 103
+
+V1 outcomes: F=164 M=40 A=2  (male-rate=19.4%)
+V2 outcomes: F=185 M=20 A=1  (male-rate=9.7%)
+
+V1→V2 transitions (seed pairs):
+  FIXED   (M→F): 25
+  REGRESS (F→M): 5
+  Both M→M:      15
+  Both F→F:      158
+
+================================================================================
+PER-CATEGORY
+================================================================================
+CAT     N  V1F/V1M/V1A  V2F/V2M/V2A   FIX REG  V1_male%  V2_male%
+ACR    11   22/  0/  0   21/  0/  1     0   0      0.0%      0.0%
+DT      3    6/  0/  0    6/  0/  0     0   0      0.0%      0.0%
+DV      6    8/  4/  0   10/  2/  0     2   0     33.3%     16.7%
+DVN    12   18/  6/  0   18/  6/  0     3   3     25.0%     25.0%
+EN      6   10/  2/  0   11/  1/  0     2   1     16.7%      8.3%
+FIN     4    6/  2/  0    7/  1/  0     1   0     25.0%     12.5%
+HG      5   10/  0/  0   10/  0/  0     0   0      0.0%      0.0%
+KD      7    5/  9/  0   11/  3/  0     6   0     64.3%     21.4%
+LG      3    6/  0/  0    6/  0/  0     0   0      0.0%      0.0%
+MIX    15   21/  9/  0   27/  3/  0     7   1     30.0%     10.0%
+MP      5    7/  2/  1    8/  2/  0     0   0     20.0%     20.0%
+NM      3    6/  0/  0    6/  0/  0     0   0      0.0%      0.0%
+NUM     7   10/  4/  0   12/  2/  0     2   0     28.6%     14.3%
+PAY     7   14/  0/  0   14/  0/  0     0   0      0.0%      0.0%
+SH      3    4/  2/  0    6/  0/  0     2   0     33.3%      0.0%
+ST      6   11/  0/  1   12/  0/  0     0   0      0.0%      0.0%
+
+================================================================================
+V2 REMAINING FAILURES (V2 male-drift at seed 42 OR seed 43)
+================================================================================
+  [DV] dv_confirmation           V1=['male-drift', 'female-kavya'] V2=['male-drift', 'female-kavya']  'Dhanyavaad, aapki confirmation mil gayi hai.'
+  [DV] dv_payment_kal            V1=['female-kavya', 'male-drift'] V2=['female-kavya', 'male-drift']  'Dhanyavaad, aapka payment kal receive ho jayega.'
+  [DVN] dvn_dhanyavaad            V1=['female-kavya', 'female-kavya'] V2=['male-drift', 'male-drift']  'धन्यवाद सर, आपके उत्तर का इंतज़ार रहेगा।'
+  [DVN] dvn_kripya                V1=['female-kavya', 'male-drift'] V2=['male-drift', 'male-drift']  'कृपया प्रतीक्षा करें।'
+  [DVN] dvn_shukriya              V1=['male-drift', 'male-drift'] V2=['male-drift', 'male-drift']  'शुक्रिया सर आपके समय के लिए।'
+  [EN] en_confirm_pay            V1=['female-kavya', 'female-kavya'] V2=['female-kavya', 'male-drift']  'Please confirm the payment details.'
+  [FIN] fin_cibil                 V1=['male-drift', 'male-drift'] V2=['male-drift', 'female-kavya']  'CIBIL score check karna zaroori hai.'
+  [KD] kd_min1                   V1=['male-drift', 'male-drift'] V2=['male-drift', 'male-drift']  'Total outstanding hai as of aaj.'
+  [KD] kd_outstanding_24k        V1=['male-drift', 'male-drift'] V2=['female-kavya', 'male-drift']  'Total outstanding 24,568 rupees hai as of aaj.'
+  [MIX] mix_dhanyavaad_pay        V1=['male-drift', 'male-drift'] V2=['male-drift', 'male-drift']  'धन्यवाद, आपका payment successful रहा है।'
+  [MIX] mix_icici_stmt            V1=['female-kavya', 'female-kavya'] V2=['female-kavya', 'male-drift']  'ICICI Bank का statement भेज दिया है।'
+  [MP] mp_out_short              V1=['male-drift', 'male-drift'] V2=['male-drift', 'male-drift']  'Total outstanding hai as of aaj.'
+  [NUM] num_percentage            V1=['male-drift', 'male-drift'] V2=['male-drift', 'male-drift']  'Interest rate 8.5 percent hai monthly.'
+
+================================================================================
+V2 REGRESSIONS vs V1 (V1 both-female → V2 any-male)
+================================================================================
+  [DVN] dvn_dhanyavaad            V1=['female-kavya', 'female-kavya'] V2=['male-drift', 'male-drift']  'धन्यवाद सर, आपके उत्तर का इंतज़ार रहेगा।'
+  [EN] en_confirm_pay            V1=['female-kavya', 'female-kavya'] V2=['female-kavya', 'male-drift']  'Please confirm the payment details.'
+  [MIX] mix_icici_stmt            V1=['female-kavya', 'female-kavya'] V2=['female-kavya', 'male-drift']  'ICICI Bank का statement भेज दिया है।'
+Total pure regressions: 3
+
+================================================================================
+V1→V2 FIXES (V1 any-male → V2 no-male)
+================================================================================
+  [DV] dv_short                  V1=['male-drift', 'male-drift'] V2=['female-kavya', 'female-kavya']  'Dhanyavaad sir.'
+  [DVN] dvn_maaf                  V1=['male-drift', 'female-kavya'] V2=['female-kavya', 'female-kavya']  'माफ़ कीजिए सर, थोड़ी तकनीकी समस्या थी।'
+  [DVN] dvn_meeting_time          V1=['male-drift', 'male-drift'] V2=['female-kavya', 'female-kavya']  'बैठक कल सुबह दस बजे होगी।'
+  [EN] en_good_morning           V1=['male-drift', 'male-drift'] V2=['female-kavya', 'female-kavya']  'Good morning, this is a test message.'
+  [KD] kd_dhanyavaad_pay         V1=['male-drift', 'male-drift'] V2=['female-kavya', 'female-kavya']  'Dhanyavaad, aapki payment successful ho gayi hai.'
+  [KD] kd_num_9m                 V1=['male-drift', 'male-drift'] V2=['female-kavya', 'female-kavya']  '9,876,543 rupees ka total amount pending hai.'
+  [KD] kd_upi_pay                V1=['male-drift', 'female-kavya'] V2=['female-kavya', 'female-kavya']  'Sir kya aap UPI se payment karna prefer karenge?'
+  [MIX] mix_customer_care         V1=['male-drift', 'male-drift'] V2=['female-kavya', 'female-kavya']  'Customer care से contact करें आप।'
+  [MIX] mix_hdfc_credit           V1=['female-kavya', 'male-drift'] V2=['female-kavya', 'female-kavya']  'HDFC Bank से 5,000 रुपये credit हो गए हैं।'
+  [MIX] mix_karnataka             V1=['male-drift', 'male-drift'] V2=['female-kavya', 'female-kavya']  'कर्नाटक बैंक से आपका payment complete हो गया है।'
+  [MIX] mix_otp_shared            V1=['female-kavya', 'male-drift'] V2=['female-kavya', 'female-kavya']  'आपने OTP share किया कया?'
+  [MIX] mix_pending_amount        V1=['female-kavya', 'male-drift'] V2=['female-kavya', 'female-kavya']  'Pending amount 25,000 रुपये है।'
+  [NUM] num_installments          V1=['male-drift', 'male-drift'] V2=['female-kavya', 'female-kavya']  '36 installments mein loan repay hoga.'
+  [SH] sh_thanks                 V1=['male-drift', 'male-drift'] V2=['female-kavya', 'female-kavya']  'Dhanyavaad sir.'
+Total full fixes: 14
+
+================================================================================
+UPI OVERLAY (V2 vs V2+UPI at seed 42)
+================================================================================
+  kd_upi_pay                 V1=male-drift  V2=female-kavya  V2+UPI=female-kavya
+  acr_upi_1                  V1=female-kavya  V2=female-kavya  V2+UPI=female-kavya
+  acr_upi_2                  V1=female-kavya  V2=female-kavya  V2+UPI=female-kavya
+  acr_upi_3                  V1=female-kavya  V2=female-kavya  V2+UPI=female-kavya
+  acr_upi_4                  V1=female-kavya  V2=female-kavya  V2+UPI=female-kavya
+  acr_upi_5                  V1=female-kavya  V2=female-kavya  V2+UPI=female-kavya
+  mix_upi_success            V1=female-kavya  V2=female-kavya  V2+UPI=female-kavya
+
+================================================================================
+DEVA OVERLAY (diagnostic — separate synthetic keys)
+================================================================================
+  kd_outstanding_24k         V2+Deva=female-kavya  med_f0=219.2  text='कुल बकाया चौबीस हज़ार पाँच सौ अड़सठ रुपये है आज तक।'
+  kd_num_9m                  V2+Deva=female-kavya  med_f0=198.3  text='अठानवे लाख छिहत्तर हज़ार पाँच सौ तैंतालीस रुपये कुल बकाया है।'
+  num_amount_87k             V2+Deva=female-kavya  med_f0=200.8  text='कुल सत्तासी हज़ार छह सौ पचास रुपये का बकाया बाकी है।'
+  num_seven_digit            V2+Deva=female-kavya  med_f0=208.7  text='एक करोड़ पच्चीस लाख रुपये का loan amount finalize हो गया।'
+  kd_dhanyavaad_pay          V2+Deva=male-drift  med_f0=112.4  text='धन्यवाद, आपका भुगतान सफल हो गया है।'
+  pay_outstanding_1l         V2+Deva=female-kavya  med_f0=237.6  text='आपका बकाया एक लाख रुपये है।'
+  kd_principal_15k           V2+Deva=female-kavya  med_f0=193.5  text='मूल राशि पंद्रह हज़ार रुपये बाकी है।'
+  num_amount_50k             V2+Deva=female-kavya  med_f0=231.9  text='आपका amount पचास हज़ार रुपये है monthly।'

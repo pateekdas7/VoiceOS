@@ -1,0 +1,93 @@
+==============================================================================
+THREE-WAY COMPARISON: T4 (X4-B BF16) vs A6000 (this session) vs L4 (Git)
+==============================================================================
+
+--- ENV L4_BF16_SDPA_current vs T4_BF16 ---
+  gpu_name                   T4=Tesla T4                        A6000=NVIDIA L4
+  gpu_cap                    T4=[7, 5]                          A6000=[8, 9]
+  torch                      T4=2.10.0+cu128                    A6000=2.10.0+cu128
+  cuda                       T4=12.8                            A6000=12.8
+  cudnn                      T4=91002                           A6000=91002
+  transformers               T4=5.0.0                           A6000=5.0.0
+  bf16_supported             T4=True                            A6000=True
+  tf32_matmul_allow          T4=None                            A6000=False
+  matmul_precision           T4=highest                         A6000=highest
+  attn_impl_resolved         T4=None                            A6000=sdpa
+  model_commit_hash          T4=8b770f9e69e6b35ef320d4cd70a99a4ab6dd022f  A6000=8b770f9e69e6b35ef320d4cd70a99a4ab6dd022f
+
+=== PER-TEXT COMPARISON (same seed=42) ===
+idx bucket    text                                                T4_cls -> A6000_cls_by_run
+--------------------------------------------------------------------------------------------
+  0 drift     Aapke bank se transfer complete ho gaya hai.        female-kavya -> L4_BF16_SDPA_current:female-kavya
+  1 drift     Sir kya aap UPI se payment karna prefer karenge?    female-kavya -> L4_BF16_SDPA_current:male-drift
+  2 drift     Total outstanding 24,568 rupees hai as of aaj.      male-drift   -> L4_BF16_SDPA_current:male-drift
+  3 drift     Principal amount 15,000 rupees baaki hai.           female-kavya -> L4_BF16_SDPA_current:female-kavya
+  4 stable    Namaste sir, main Kavya bol rahi hoon Rajat Fina    female-kavya -> L4_BF16_SDPA_current:female-kavya
+  5 stable    Namaste madam, main Kavya bol rahi hoon.            female-kavya -> L4_BF16_SDPA_current:female-kavya
+  6 stable    Namaste sir aap kaise hain aaj?                     female-kavya -> L4_BF16_SDPA_current:female-kavya
+  7 stable    Dhanyavaad sir, aapke response ka intezaar raheg    male-drift   -> L4_BF16_SDPA_current:female-kavya
+  8 stable    Dhanyavaad, aapki payment successful ho gayi hai    male-drift   -> L4_BF16_SDPA_current:male-drift
+  9 stable    Sir, aapke account par 12,500 rupees ka outstand    female-kavya -> L4_BF16_SDPA_current:female-kavya
+ 10 stable    Aap kaise hain?                                     female-kavya -> L4_BF16_SDPA_current:female-kavya
+ 11 stable    Kripa karke wait karein.                            female-kavya -> L4_BF16_SDPA_current:female-kavya
+ 12 english   Good morning, this is a test message.               male-drift   -> L4_BF16_SDPA_current:male-drift
+ 13 english   Your account balance is one thousand five hundre    female-kavya -> L4_BF16_SDPA_current:female-kavya
+ 14 num_heavy 9,876,543 rupees ka total amount pending hai.       male-drift   -> L4_BF16_SDPA_current:male-drift
+ 15 min_pair  Total outstanding hai as of aaj.                    male-drift   -> L4_BF16_SDPA_current:male-drift
+ 16 min_pair  Total outstanding amount check kar rahi hoon.       female-kavya -> L4_BF16_SDPA_current:ambiguous
+ 17 min_pair  Aapke bank se successful transaction huwa hai.      female-kavya -> L4_BF16_SDPA_current:female-kavya
+ 18 min_pair  Bank transfer ho chuka hai sir, dhyaan dijiye.      female-kavya -> L4_BF16_SDPA_current:female-kavya
+
+=== FIRST-TOKEN DIVERGENCE (T4 vs each A6000 run) ===
+  [L4_BF16_SDPA_current][ 0] div_at_audio_token=3 (frame=0 pos=3) len(T4)=210 len(A6000)=203 DIVERGE
+  [L4_BF16_SDPA_current][ 1] div_at_audio_token=0 (frame=0 pos=0) len(T4)=238 len(A6000)=245 DIVERGE
+  [L4_BF16_SDPA_current][ 2] div_at_audio_token=8 (frame=1 pos=1) len(T4)=364 len(A6000)=392 DIVERGE
+  [L4_BF16_SDPA_current][ 3] div_at_audio_token=7 (frame=1 pos=0) len(T4)=238 len(A6000)=224 DIVERGE
+  [L4_BF16_SDPA_current][ 4] div_at_audio_token=5 (frame=0 pos=5) len(T4)=273 len(A6000)=252 DIVERGE
+  [L4_BF16_SDPA_current][ 5] div_at_audio_token=3 (frame=0 pos=3) len(T4)=196 len(A6000)=203 DIVERGE
+  [L4_BF16_SDPA_current][ 6] div_at_audio_token=4 (frame=0 pos=4) len(T4)=140 len(A6000)=168 DIVERGE
+  [L4_BF16_SDPA_current][ 7] div_at_audio_token=1 (frame=0 pos=1) len(T4)=280 len(A6000)=266 DIVERGE
+  [L4_BF16_SDPA_current][ 8] div_at_audio_token=3 (frame=0 pos=3) len(T4)=273 len(A6000)=238 DIVERGE
+  [L4_BF16_SDPA_current][ 9] div_at_audio_token=1 (frame=0 pos=1) len(T4)=350 len(A6000)=329 DIVERGE
+  [L4_BF16_SDPA_current][10] div_at_audio_token=0 (frame=0 pos=0) len(T4)=70 len(A6000)=77 DIVERGE
+  [L4_BF16_SDPA_current][11] div_at_audio_token=2 (frame=0 pos=2) len(T4)=133 len(A6000)=126 DIVERGE
+  [L4_BF16_SDPA_current][12] div_at_audio_token=1 (frame=0 pos=1) len(T4)=196 len(A6000)=168 DIVERGE
+  [L4_BF16_SDPA_current][13] div_at_audio_token=2 (frame=0 pos=2) len(T4)=217 len(A6000)=252 DIVERGE
+  [L4_BF16_SDPA_current][14] div_at_audio_token=2 (frame=0 pos=2) len(T4)=343 len(A6000)=301 DIVERGE
+  [L4_BF16_SDPA_current][15] div_at_audio_token=10 (frame=1 pos=3) len(T4)=196 len(A6000)=189 DIVERGE
+  [L4_BF16_SDPA_current][16] div_at_audio_token=4 (frame=0 pos=4) len(T4)=196 len(A6000)=203 DIVERGE
+  [L4_BF16_SDPA_current][17] div_at_audio_token=3 (frame=0 pos=3) len(T4)=224 len(A6000)=231 DIVERGE
+  [L4_BF16_SDPA_current][18] div_at_audio_token=3 (frame=0 pos=3) len(T4)=217 len(A6000)=203 DIVERGE
+
+=== SPEAKER-EMBEDDING FINGERPRINT (kavya cos-to-others) ===
+  T4_BF16       : {
+  "kavya": 1.0,
+  "apsara": 1.0,
+  "agastya": 0.9999999403953552,
+  "vinaya": 1.0,
+  "maitri": 0.9886500835418701,
+  "charu": 0.9999999403953552,
+  "ishana": 0.9999998807907104,
+  "kyra": 0.9999999403953552,
+  "mohini": 0.9999999403953552,
+  "varun": 0.9999998807907104,
+  "soumya": 1.0
+}
+  L4_BF16_SDPA_current          : {
+  "kavya": 1.0,
+  "apsara": 1.0,
+  "agastya": 0.9999999403953552,
+  "vinaya": 1.0,
+  "maitri": 0.9886500835418701,
+  "charu": 0.9999999403953552,
+  "ishana": 0.9999998807907104,
+  "kyra": 0.9999999403953552,
+  "mohini": 0.9999999403953552,
+  "varun": 0.9999998807907104,
+  "soumya": 1.0
+}
+
+=== DETERMINISM (unique audio SHA over 3 reps per critical idx) ===
+  [L4_BF16_SDPA_current][idx=2] unique_sha=1 unique_first21=1 classes=['male-drift', 'male-drift', 'male-drift']
+  [L4_BF16_SDPA_current][idx=3] unique_sha=1 unique_first21=1 classes=['female-kavya', 'female-kavya', 'female-kavya']
+  [L4_BF16_SDPA_current][idx=15] unique_sha=1 unique_first21=1 classes=['male-drift', 'male-drift', 'male-drift']

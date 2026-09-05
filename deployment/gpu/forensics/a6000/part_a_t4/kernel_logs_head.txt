@@ -1,0 +1,236 @@
+[{"stream_name":"stderr","time":6.988630001,"data":"0.00s - Debugger warning: It seems that frozen modules are being used, which may\n"}
+,{"stream_name":"stderr","time":6.989415822,"data":"0.00s - make the debugger miss breakpoints. Please pass -Xfrozen_modules=off\n"}
+,{"stream_name":"stderr","time":6.989421344,"data":"0.00s - to python to disable frozen modules.\n"}
+,{"stream_name":"stderr","time":6.989424018,"data":"0.00s - Note: Debugging will proceed. Set PYDEVD_DISABLE_FILE_VALIDATION=1 to disable this validation.\n"}
+,{"stream_name":"stderr","time":7.571379888,"data":"0.00s - Debugger warning: It seems that frozen modules are being used, which may\n"}
+,{"stream_name":"stderr","time":7.571408271,"data":"0.00s - make the debugger miss breakpoints. Please pass -Xfrozen_modules=off\n"}
+,{"stream_name":"stderr","time":7.571413344,"data":"0.00s - to python to disable frozen modules.\n"}
+,{"stream_name":"stderr","time":7.571417479,"data":"0.00s - Note: Debugging will proceed. Set PYDEVD_DISABLE_FILE_VALIDATION=1 to disable this validation.\n"}
+,{"stream_name":"stdout","time":13.111202329,"data":"======================================================================\n"}
+,{"stream_name":"stdout","time":13.111258988,"data":"VOICEOS SPRINT-29 PHASE-3 — REAL KAGGLE GPU VALIDATION\n"}
+,{"stream_name":"stdout","time":13.111264014,"data":"======================================================================\n"}
+,{"stream_name":"stdout","time":13.111267446,"data":"Timestamp: 2026-08-27 10:14:17 UTC\n"}
+,{"stream_name":"stdout","time":13.111270926,"data":"Python:    3.12.13 (main, Mar  4 2026, 09:23:07) [GCC 11.4.0]\n"}
+,{"stream_name":"stdout","time":13.592701859,"data":"\n"}
+,{"stream_name":"stdout","time":13.592734863,"data":"--- nvidia-smi ---\n"}
+,{"stream_name":"stdout","time":13.592745793,"data":"Thu Aug 27 10:14:17 2026       \n"}
+,{"stream_name":"stdout","time":13.592749608,"data":"+-----------------------------------------------------------------------------------------+\n"}
+,{"stream_name":"stdout","time":13.592752818,"data":"| NVIDIA-SMI 580.159.04             Driver Version: 580.159.04     CUDA Version: 13.0     |\n"}
+,{"stream_name":"stdout","time":13.592771708,"data":"+-----------------------------------------+------------------------+----------------------+\n"}
+,{"stream_name":"stdout","time":13.592777303,"data":"| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |\n"}
+,{"stream_name":"stdout","time":13.59278224,"data":"| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |\n"}
+,{"stream_name":"stdout","time":13.592787402,"data":"|                                         |                        |               MIG M. |\n"}
+,{"stream_name":"stdout","time":13.592793171,"data":"|=========================================+========================+======================|\n"}
+,{"stream_name":"stdout","time":13.592798387,"data":"|   0  Tesla T4                       Off |   00000000:00:04.0 Off |                    0 |\n"}
+,{"stream_name":"stdout","time":13.592803092,"data":"| N/A   43C    P8              9W /   70W |       0MiB /  15360MiB |      0%      Default |\n"}
+,{"stream_name":"stdout","time":13.592807454999999,"data":"|                                         |                        |                  N/A |\n"}
+,{"stream_name":"stdout","time":13.592811982,"data":"+-----------------------------------------+------------------------+----------------------+\n"}
+,{"stream_name":"stdout","time":13.592816317,"data":"|   1  Tesla T4                       Off |   00000000:00:05.0 Off |                    0 |\n"}
+,{"stream_name":"stdout","time":13.59282086,"data":"| N/A   43C    P8              9W /   70W |       0MiB /  15360MiB |      0%      Default |\n"}
+,{"stream_name":"stdout","time":13.592862211,"data":"|                                         |                        |                  N/A |\n"}
+,{"stream_name":"stdout","time":13.592867027,"data":"+-----------------------------------------+------------------------+----------------------+\n"}
+,{"stream_name":"stdout","time":13.59287114,"data":"\n"}
+,{"stream_name":"stdout","time":13.592874206,"data":"+-----------------------------------------------------------------------------------------+\n"}
+,{"stream_name":"stdout","time":13.592877542,"data":"| Processes:                                                                              |\n"}
+,{"stream_name":"stdout","time":13.592880882,"data":"|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |\n"}
+,{"stream_name":"stdout","time":13.592884102,"data":"|        ID   ID                                                               Usage      |\n"}
+,{"stream_name":"stdout","time":13.592887546,"data":"|=========================================================================================|\n"}
+,{"stream_name":"stdout","time":13.592890818,"data":"|  No running processes found                                                             |\n"}
+,{"stream_name":"stdout","time":13.592895647,"data":"+-----------------------------------------------------------------------------------------+\n"}
+,{"stream_name":"stdout","time":13.592899354,"data":"\n"}
+,{"stream_name":"stdout","time":13.592902669,"data":"--- PyTorch GPU Properties ---\n"}
+,{"stream_name":"stdout","time":13.592905723,"data":"PyTorch:          2.10.0+cu128\n"}
+,{"stream_name":"stdout","time":13.592908862,"data":"CUDA available:   True\n"}
+,{"stream_name":"stdout","time":13.592911843,"data":"CUDA runtime:     12.8\n"}
+,{"stream_name":"stdout","time":13.592915023,"data":"cuDNN:            91002\n"}
+,{"stream_name":"stdout","time":13.592918198,"data":"\n"}
+,{"stream_name":"stdout","time":13.592937311,"data":"GPU 0: Tesla T4\n"}
+,{"stream_name":"stdout","time":13.59294413,"data":"  VRAM:    14.56 GB (14911 MiB)\n"}
+,{"stream_name":"stdout","time":13.592947897,"data":"  Compute: 7.5 (sm_75)\n"}
+,{"stream_name":"stdout","time":13.592951058,"data":"  BF16 tensor cores: False (requires sm_80+)\n"}
+,{"stream_name":"stdout","time":13.592954365,"data":"  FP16 tensor cores: True\n"}
+,{"stream_name":"stdout","time":13.592957591,"data":"\n"}
+,{"stream_name":"stdout","time":13.592960735,"data":"GPU 1: Tesla T4\n"}
+,{"stream_name":"stdout","time":13.592963879,"data":"  VRAM:    14.56 GB (14911 MiB)\n"}
+,{"stream_name":"stdout","time":13.592967015,"data":"  Compute: 7.5 (sm_75)\n"}
+,{"stream_name":"stdout","time":13.592970467,"data":"  BF16 tensor cores: False (requires sm_80+)\n"}
+,{"stream_name":"stdout","time":13.592973813,"data":"  FP16 tensor cores: True\n"}
+,{"stream_name":"stdout","time":13.592976996,"data":"\n"}
+,{"stream_name":"stdout","time":13.592980232,"data":"--- Disk ---\n"}
+,{"stream_name":"stdout","time":13.592987222,"data":"Filesystem      Size  Used Avail Use% Mounted on\n"}
+,{"stream_name":"stdout","time":13.592990623,"data":"/dev/loop1       20G  248K   20G   1% /kaggle/working\n"}
+,{"stream_name":"stdout","time":13.592993777,"data":"\n"}
+,{"stream_name":"stdout","time":13.592996743,"data":"--- RAM ---\n"}
+,{"stream_name":"stdout","time":13.593000077,"data":"               total        used        free      shared  buff/cache   available\n"}
+,{"stream_name":"stdout","time":13.593003441,"data":"Mem:            31Gi       1.1Gi        26Gi       1.0Mi       3.4Gi        29Gi\n"}
+,{"stream_name":"stdout","time":13.593013117,"data":"Swap:             0B          0B          0B\n"}
+,{"stream_name":"stdout","time":13.593017153,"data":"\n"}
+,{"stream_name":"stdout","time":13.60997444,"data":"======================================================================\n"}
+,{"stream_name":"stdout","time":13.610001287,"data":"KAGGLE T4 vs A6000 PRODUCTION SPECIFICATION\n"}
+,{"stream_name":"stdout","time":13.610011045,"data":"======================================================================\n"}
+,{"stream_name":"stdout","time":13.610013836,"data":"\n"}
+,{"stream_name":"stdout","time":13.61001604,"data":"Production:  NVIDIA RTX A6000 | sm_86 | 46.0GB × 1\n"}
+,{"stream_name":"stdout","time":13.610019032,"data":"Kaggle:      Tesla T4 × 2 | sm_75 | 14.56GB × 2 = 29.1GB\n"}
+,{"stream_name":"stdout","time":13.610021991,"data":"\n"}
+,{"stream_name":"stdout","time":13.610024236,"data":"  KAGGLE LIMITATION: BF16 runs in FP32 emulation (no BF16 tensor cores on sm_75; requires sm_80+)\n"}
+,{"stream_name":"stdout","time":13.610027504,"data":"  KAGGLE LIMITATION: FP8 hardware not supported (T4=sm_75, requires Ada/Hopper sm_89+); Qwen FP8 dequantizes at runtime — still functional\n"}
+,{"stream_name":"stdout","time":13.610044359,"data":"  KAGGLE LIMITATION: LLM: gpu_memory_utilization 0.32→0.85, max_model_len 4096→512 (T4=14.6GB vs A6000=46GB)\n"}
+,{"stream_name":"stdout","time":13.610048619,"data":"\n"}
+,{"stream_name":"stdout","time":13.610052263,"data":"T4 per-GPU VRAM: 14.56 GB | Total: 29.1 GB\n"}
+,{"stream_name":"stdout","time":13.610056304,"data":"VRAM plan: LLM on GPU0 (15GB) | STT+TTS on GPU1 (15GB)\n"}
+,{"stream_name":"stdout","time":13.610060502,"data":"  GPU0 LLM: ~12.4GB @ util=0.85 \u003c 14.6GB T4 OK\n"}
+,{"stream_name":"stdout","time":13.610064301,"data":"  GPU1 STT+TTS: ~1.8+6.0=7.8GB \u003c 14.6GB T4 OK\n"}
+,{"stream_name":"stdout","time":13.610067751999999,"data":"  STT=~1.8GB + TTS=~6GB = 7.8GB \u003c 15GB → fits on GPU1\n"}
+,{"stream_name":"stdout","time":13.610071232,"data":"\n"}
+,{"stream_name":"stdout","time":13.610074484,"data":"Production spec NOT changed. A6000 spec remains authoritative.\n"}
+,{"stream_name":"stdout","time":13.610077939,"data":"Kaggle T4 overrides apply ONLY during this temporary validation.\n"}
+,{"stream_name":"stdout","time":13.610081366,"data":"\n"}
+,{"stream_name":"stdout","time":13.610084687,"data":"Limitations found: 3\n"}
+,{"stream_name":"stdout","time":13.713788242,"data":"======================================================================\n"}
+,{"stream_name":"stdout","time":13.713813004,"data":"INSTALL PRODUCTION DEPENDENCIES\n"}
+,{"stream_name":"stdout","time":13.713817588,"data":"======================================================================\n"}
+,{"stream_name":"stdout","time":13.713821432,"data":"PyTorch pre-installed on Kaggle — not reinstalling\n"}
+,{"stream_name":"stdout","time":22.935210782,"data":"  OK: faster-whisper==1.2.1 (9s)\n"}
+,{"stream_name":"stdout","time":27.800222906,"data":"  OK: ctranslate2==4.8.0 (5s)\n"}
+,{"stream_name":"stdout","time":41.39202006,"data":"  OK: transformers==5.12.1 (14s)\n"}
+,{"stream_name":"stdout","time":44.502009843,"data":"  OK: tokenizers==0.22.2 (3s)\n"}
+,{"stream_name":"stdout","time":49.174751903,"data":"  OK: huggingface_hub==0.28.0 (5s)\n"}
+,{"stream_name":"stdout","time":54.132886826000004,"data":"  OK: accelerate==1.7.0 (5s)\n"}
+,{"stream_name":"stdout","time":57.525343349,"data":"  OK: snac==1.0.0 (3s)\n"}
+,{"stream_name":"stdout","time":65.014702028,"data":"  OK: numpy==2.3.5 (7s)\n"}
+,{"stream_name":"stdout","time":69.382725853,"data":"  OK: fastapi==0.115.6 (4s)\n"}
+,{"stream_name":"stdout","time":73.20777778,"data":"  OK: uvicorn[standard]==0.30.6 (4s)\n"}
+,{"stream_name":"stdout","time":79.577646353,"data":"  OK: pydantic==2.10.4 (6s)\n"}
+,{"stream_name":"stdout","time":83.844337839,"data":"  OK: httpx==0.27.0 (4s)\n"}
+,{"stream_name":"stdout","time":83.844379645,"data":"\n"}
+,{"stream_name":"stdout","time":83.844385856,"data":"Installing vLLM (production pin: 0.24.0)...\n"}
+,{"stream_name":"stdout","time":337.268621939,"data":"  OK: vllm==0.24.0 (253s)\n"}
+,{"stream_name":"stdout","time":337.268659954,"data":"\n"}
+,{"stream_name":"stdout","time":337.268667326,"data":"--- Versions installed ---\n"}
+,{"stream_name":"stdout","time":337.268673647,"data":"  torch: 2.10.0+cu128\n"}
+,{"stream_name":"stdout","time":343.524736602,"data":"  faster_whisper: 1.2.1\n"}
+,{"stream_name":"stdout","time":343.524780117,"data":"  ctranslate2: 4.8.0\n"}
+,{"stream_name":"stdout","time":343.524787281,"data":"  transformers: 5.12.1\n"}
+,{"stream_name":"stdout","time":343.524792037,"data":"  snac: 1.0.0\n"}
+,{"stream_name":"stdout","time":343.524796318,"data":"  httpx: 0.28.1\n"}
+,{"stream_name":"stdout","time":343.524800702,"data":"  vllm: NOT INSTALLED\n"}
+,{"stream_name":"stdout","time":343.524805301,"data":"\n"}
+,{"stream_name":"stdout","time":343.524810102,"data":"Installation: 13/13 OK | Failed: none\n"}
+,{"stream_name":"stdout","time":343.594424528,"data":"Cloning claude/ssh-gpu-cpu-servers-y99fib...\n"}
+,{"stream_name":"stdout","time":344.746448206,"data":"Cloned: 02d1f3b100d787d1e58b15c7a9162deacad2e446 fix(phase-5): replace tunnel cell with CELL SERVE that restarts GPU services\n"}
+,{"stream_name":"stdout","time":344.746475989,"data":"Commit 182fea6 verified: False\n"}
+,{"stream_name":"stdout","time":344.746482721,"data":"  ✓ deployment/gpu/services/tts/server.py\n"}
+,{"stream_name":"stdout","time":344.746488469,"data":"  ✓ deployment/gpu/services/stt/server.py\n"}
+,{"stream_name":"stdout","time":344.746493003,"data":"  ✓ deployment/gpu/audio/pacer.py\n"}
+,{"stream_name":"stdout","time":344.746497452,"data":"  ✓ deployment/gpu/tests/test_audio_pipeline.py\n"}
+,{"stream_name":"stdout","time":344.746502618,"data":"\n"}
+,{"stream_name":"stdout","time":344.746507279,"data":"Python path: /kaggle/working/voiceos\n"}
+,{"stream_name":"stdout","time":344.746512308,"data":"HF cache:    /kaggle/working/hf\n"}
+,{"stream_name":"stdout","time":344.767996971,"data":"Speaker-Lock sweep patch applied to /kaggle/working/voiceos/deployment/gpu/services/tts/server.py\n"}
+,{"stream_name":"stdout","time":344.768020364,"data":"  - Per-text CUDA RNG seed anchor: ON (determinism)\n"}
+,{"stream_name":"stdout","time":344.768026999,"data":"  - Official Veena sampling: temperature=0.4 top_p=0.9 (RESTORED)\n"}
+,{"stream_name":"stdout","time":344.768032133,"data":"  - Optional lock_tokens/boot_temp per-request (default lock_tokens=0 = off)\n"}
+,{"stream_name":"stdout","time":344.76803682,"data":"  - SpeakerLockLogitsProcessor scales scores in lock region\n"}
+,{"stream_name":"stdout","time":344.768041326,"data":"PATCH VERIFICATION OK — all markers present, Option B tightening reverted, official sampling restored\n"}
+,{"stream_name":"stdout","time":344.945782493,"data":"======================================================================\n"}
+,{"stream_name":"stdout","time":344.945812916,"data":"REAL STT VALIDATION — Whisper large-v3-turbo (int8_float16)\n"}
+,{"stream_name":"stdout","time":344.945820292,"data":"======================================================================\n"}
+,{"stream_name":"stdout","time":344.945825655,"data":"\n"}
+,{"stream_name":"stdout","time":344.945840355,"data":"Downloading whisper-large-v3-turbo (~1.5 GB)...\n"}
+,{"stream_name":"stderr","time":345.328472581,"data":"Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\n"}
+,{"stream_name":"stderr","time":345.328519526,"data":"\n"}
+,{"stream_name":"stderr","time":345.328525172,"data":"Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\n"}
+,{"stream_name":"stdout","time":351.516691464,"data":"  Downloaded in 7s\n"}
+,{"stream_name":"stdout","time":351.516744296,"data":"\n"}
+,{"stream_name":"stdout","time":351.516751724,"data":"Loading WhisperModel (int8_float16, cuda:0)...\n"}
+,{"stream_name":"stdout","time":355.34573975,"data":"  Loaded 3817ms | VRAM delta: 0 MiB\n"}
+,{"stream_name":"stdout","time":356.14747779,"data":"  Warmup: 814ms\n"}
+,{"stream_name":"stdout","time":356.493698518,"data":"  Trial 1: 345ms | lang=hi | words=4\n"}
+,{"stream_name":"stdout","time":356.826822655,"data":"  Trial 2: 333ms | lang=hi | words=4\n"}
+,{"stream_name":"stdout","time":357.007735197,"data":"  Trial 3: 335ms | lang=hi | words=4\n"}
+,{"stream_name":"stdout","time":357.00776965,"data":"\n"}
+,{"stream_name":"stdout","time":357.007775443,"data":"REAL KAGGLE GPU — STT STATUS: PASS\n"}
+,{"stream_name":"stdout","time":357.007780501,"data":"  Load=3817ms | Warmup=814ms | Avg=338ms\n"}
+,{"stream_name":"stdout","time":357.007785297,"data":"  VRAM delta=0MiB | Peak=0MiB\n"}
+,{"stream_name":"stdout","time":357.153141089,"data":"======================================================================\n"}
+,{"stream_name":"stdout","time":357.153183164,"data":"REAL LLM VALIDATION — Qwen2.5-7B-Instruct-FP8 via vLLM (GPU 0)\n"}
+,{"stream_name":"stdout","time":357.153191633,"data":"======================================================================\n"}
+,{"stream_name":"stdout","time":357.153197433,"data":"KAGGLE LIMITATION: util=0.85, max_model_len=512 (vs prod: util=0.32, max_len=4096)\n"}
+,{"stream_name":"stdout","time":357.153202845,"data":"\n"}
+,{"stream_name":"stdout","time":357.153207555,"data":"REAL KAGGLE GPU — LLM STATUS: BLOCKED: vLLM not installed\n"}
+,{"stream_name":"stdout","time":357.273585059,"data":"======================================================================\n"}
+,{"stream_name":"stdout","time":357.273650155,"data":"REAL TTS VALIDATION — Veena 3B BF16 + SNAC (CRITICAL: PCM16LE check)\n"}
+,{"stream_name":"stdout","time":357.27365805,"data":"======================================================================\n"}
+,{"stream_name":"stdout","time":357.273663735,"data":"This test verifies the fix for the 'Na--mas--te' float32/PCM16 mismatch\n"}
+,{"stream_name":"stdout","time":357.273668842,"data":"\n"}
+,{"stream_name":"stdout","time":357.273673087,"data":"[Step 1] Starting TTS server (Veena 3B BF16, GPU 0)...\n"}
+,{"stream_name":"stdout","time":357.273677883,"data":"  Downloads: maya-research/Veena (~6GB) + hubertsiuzdak/snac_24khz\n"}
+,{"stream_name":"stdout","time":357.273684481,"data":"  Then: model load + SNAC warmup (~3-5 min)\n"}
+,{"stream_name":"stdout","time":408.499642317,"data":"  TTS ready in 51095ms\n"}
+,{"stream_name":"stdout","time":408.499695131,"data":"\n"}
+,{"stream_name":"stdout","time":408.499715179,"data":"[Step 2] PCM16LE format contract check\n"}
+,{"stream_name":"stdout","time":408.499722015,"data":"  encoding:    'pcm16le' (EXPECTED: 'pcm16le')\n"}
+,{"stream_name":"stdout","time":408.499728214,"data":"  chunk_bytes: 4096 (EXPECTED: 4096; float32 bug = 8192)\n"}
+,{"stream_name":"stdout","time":408.499744585,"data":"  mock:        False (EXPECTED: False)\n"}
+,{"stream_name":"stdout","time":408.499749166,"data":"\n"}
+,{"stream_name":"stdout","time":408.499752932,"data":"[Step 3] Synthesize Hindi text\n"}
+,{"stream_name":"stdout","time":408.499756962,"data":"  Text: नमस्ते, मैं Kavya बोल रही हूं। payment के बारे में बात करनी थी।\n"}
+,{"stream_name":"stdout","time":424.313117406,"data":"  Audio:     203808 bytes | 101904 samples | 4246ms\n"}
+,{"stream_name":"stdout","time":424.313153812,"data":"  PCM16LE aligned: True\n"}
+,{"stream_name":"stdout","time":424.313159574,"data":"  Int16 range:     True\n"}
+,{"stream_name":"stdout","time":424.313164345,"data":"  TTFA:            1348ms (target \u003c750ms)\n"}
+,{"stream_name":"stdout","time":424.313169462,"data":"  Synthesis time:  15817ms\n"}
+,{"stream_name":"stdout","time":424.313174072,"data":"  Chunk sizes:     [4096, 7200]\n"}
+,{"stream_name":"stdout","time":424.313178613,"data":"  Float32 bug (8192B chunks): ABSENT ✓\n"}
+,{"stream_name":"stdout","time":424.313183715,"data":"  VRAM peak GPU 0: 0 MiB (target: 7980 MiB)\n"}
+,{"stream_name":"stdout","time":424.31318835,"data":"\n"}
+,{"stream_name":"stdout","time":424.313192772,"data":"TTS STATUS: PASS\n"}
+,{"stream_name":"stdout","time":424.313197254,"data":"\n"}
+,{"stream_name":"stdout","time":424.313201754,"data":"[Step 4] AudioPacer: PCM16LE 24kHz → μ-law 8kHz → 20ms frames\n"}
+,{"stream_name":"stdout","time":424.313206553,"data":"  Input:   203808 bytes PCM16LE\n"}
+,{"stream_name":"stdout","time":424.313211036,"data":"  Output:  212 frames × 160 bytes μ-law = 4240ms\n"}
+,{"stream_name":"stdout","time":424.313215614,"data":"  All 160B: True | Valid μ-law: True\n"}
+,{"stream_name":"stdout","time":424.313220098,"data":"  Underruns: 0 | Silence: 0\n"}
+,{"stream_name":"stdout","time":424.313224522,"data":"  Cancel works: True\n"}
+,{"stream_name":"stdout","time":424.313229125,"data":"  Sample Twilio msg: ...{\"event\": \"media\", \"streamSid\": \"MX_TEST\", \"media\": {\"payload\": \"LiwrKiorLC4xNjx...\n"}
+,{"stream_name":"stdout","time":424.313234464,"data":"\n"}
+,{"stream_name":"stdout","time":424.313238741,"data":"AUDIO PACER STATUS: PASS\n"}
+,{"stream_name":"stdout","time":424.313243124,"data":"\n"}
+,{"stream_name":"stdout","time":424.313247424,"data":"[Step 5] MANDATORY Hindi Sentence Continuity (REAL Veena)\n"}
+,{"stream_name":"stdout","time":424.313252048,"data":"  Sentence: नमस्ते सर, मैं Kavya बोल रही हूं। आपके loan account के बारे में बात करनी थी। क्या आप थोड़ा वक्त दे सकते हैं?\n"}
+,{"stream_name":"stdout","time":448.010878284,"data":"\n"}
+,{"stream_name":"stdout","time":448.010941103,"data":"  Chunks: 79 | Sizes: [4096, 7200]\n"}
+,{"stream_name":"stdout","time":448.010951934,"data":"  Total audio: 326688 bytes = 6806ms\n"}
+,{"stream_name":"stdout","time":448.010957186,"data":"  TTFA: 1046ms | Synthesis: 23634ms\n"}
+,{"stream_name":"stdout","time":448.010961423,"data":"  Inter-chunk: avg=290ms max=321ms\n"}
+,{"stream_name":"stdout","time":448.010966103,"data":"  Pacer frames: 340 × 20ms = 6800ms\n"}
+,{"stream_name":"stdout","time":448.010972415,"data":"  Underruns: 0 (MUST be 0 at real-time speed)\n"}
+,{"stream_name":"stdout","time":448.010976813,"data":"  Silence: 0 frames\n"}
+,{"stream_name":"stdout","time":448.010981084,"data":"  Float32 absent: True\n"}
+,{"stream_name":"stdout","time":448.010985645,"data":"\n"}
+,{"stream_name":"stdout","time":448.010999332,"data":"HINDI CONTINUITY STATUS: PASS\n"}
+,{"stream_name":"stdout","time":448.260727476,"data":"======================================================================\n"}
+,{"stream_name":"stdout","time":448.260760669,"data":"REAL E2E PIPELINE — STT → LLM → TTS → AudioPacer\n"}
+,{"stream_name":"stdout","time":448.260766421,"data":"======================================================================\n"}
+,{"stream_name":"stdout","time":448.260770143,"data":"GPUs available: 2\n"}
+,{"stream_name":"stdout","time":448.260775097,"data":"  GPU 0: Tesla T4 | 14911 MiB\n"}
+,{"stream_name":"stdout","time":448.260781706,"data":"  GPU 1: Tesla T4 | 14911 MiB\n"}
+,{"stream_name":"stdout","time":448.260784092,"data":"\n"}
+,{"stream_name":"stdout","time":448.260786304,"data":"Mode: PARALLEL dual-GPU  (LLM=GPU0 | STT+TTS=GPU1)\n"}
+,{"stream_name":"stdout","time":448.260788674,"data":"      Mirrors production: all 3 services concurrent, real call latency\n"}
+,{"stream_name":"stdout","time":448.260791015,"data":"\n"}
+,{"stream_name":"stdout","time":448.260793158,"data":"Resolving model paths from cache...\n"}
+,{"stream_name":"stdout","time":472.536250575,"data":"  Whisper: /kaggle/working/hf/whisper/models--mobiuslabsgmbh--faster-whisper-large-v3-turbo/snapshots/0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf\n"}
+,{"stream_name":"stdout","time":472.53635662,"data":"  Qwen FP8: /kaggle/working/hf/models--RedHatAI--Qwen2.5-7B-Instruct-FP8-dynamic/snapshots/a4f1d5442ea284bc8e5a3b3e1a4d528f7d6caacb\n"}
+,{"stream_name":"stdout","time":472.53636378,"data":"  Veena: maya-research/Veena (HF pull on TTS server start)\n"}
+,{"stream_name":"stdout","time":472.53636866,"data":"\n"}
+,{"stream_name":"stdout","time":472.536372675,"data":"[1/3] Starting LLM on GPU 0 (Qwen FP8, util=0.85)...\n"}
+,{"stream_name":"stdout","time":472.536378185,"data":"  LLM pid=429\n"}
+,{"stream_name":"stdout","time":472.536382417,"data":"[2/3] Starting STT on GPU 1 (Whisper large-v3-turbo)...\n"}
+,{"stream_name":"stdout","time":472.536387377,"data":"  STT pid=430\n"}
+,{"stream_name":"stdout","time":472.536392114,"data":"[3/3] Starting TTS on GPU 1 (Veena 3B BF16 + SNAC, shared)...\n"}
+,{"stream_name":"stdout","time":472.536396557,"data":"  TTS pid=431\n"}
+,{"stream_name":"stdout","time":472.536400757,"data":"\n"}
+,{"stream_name":"stdout","time":472.536405054,"data":"Waiting for all 3 services (parallel startup)...\n"}
+,{"stream_name":"stdout","time":533.31451185,"data":"    ...61s waiting http://localhost:8000/health\n"}
+]
