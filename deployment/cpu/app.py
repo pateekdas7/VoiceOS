@@ -161,7 +161,19 @@ def build_crm_repositories(conn: object) -> object:
     return CRMRepositories(customer=CustomerRepository(conn), party=PartyRepository(conn))
 
 
-def build_customer_context_assembler(conn: object) -> object:
+def build_customer_service(conn: object) -> object:
+    """Single authoritative CustomerService instance. Shared between
+    build_customer_context_assembler() (used by ConversationEngine) and
+    build_shared_call_dependencies() (used by the /voice HTTP handler for
+    ANI-based customer_id resolution) so both paths see the same source
+    of truth."""
+    from src.services.crm.service import CustomerService
+    return CustomerService(repositories=build_crm_repositories(conn))
+
+
+def build_customer_context_assembler(
+    conn: object, customer_service: object | None = None
+) -> object:
     from src.libs.repositories.consent import ConsentRepository
     from src.libs.repositories.emi_schedule import EMIScheduleRepository
     from src.libs.repositories.loan_account import LoanAccountRepository
@@ -169,10 +181,10 @@ def build_customer_context_assembler(conn: object) -> object:
     from src.services.collections.loan_account import LoanAccountService
     from src.services.crm.context_assembler import CustomerContextAssembler
     from src.services.crm.party import PartyService
-    from src.services.crm.service import CustomerService
 
     crm_repos = build_crm_repositories(conn)
-    customer_service = CustomerService(repositories=crm_repos)
+    if customer_service is None:
+        customer_service = build_customer_service(conn)
     party_service = PartyService(repository=crm_repos.party)
     emi_service = EMIScheduleService(repository=EMIScheduleRepository(conn))
     loan_service = LoanAccountService(repository=LoanAccountRepository(conn), emi_schedule_service=emi_service)
@@ -473,15 +485,26 @@ def build_conversation_engine() -> object:
 
 
 def build_stt_service(gpu_scheduler: object) -> object:
-    """Real GPU-backed STT via WhisperHTTPAdapter (Path-A Phase 3) — the
-    piece that let this composition root reach the GPU node's /transcribe
-    endpoint for the first time."""
-    from src.services.stt.adapters.whisper_http_adapter import WhisperHTTPAdapter
+    """Real GPU-backed STT.
+
+    Selects between HTTP one-shot (WhisperHTTPAdapter — POST /transcribe) and
+    truly-streaming WebSocket (WhisperStreamingAdapter — WS /transcribe_ws)
+    via the VOICEOS_STT_STREAMING env flag. Streaming is the target once the
+    GPU-side WS endpoint is validated; HTTP remains the safe fallback."""
     from src.services.stt.service import STTService, STTServiceConfig
 
     base_url = _gpu_service_url("STT_BASE_URL", 8100)
     breaker = build_circuit_breaker_registry().get_or_create("stt")  # type: ignore[attr-defined]
-    adapter = WhisperHTTPAdapter(gpu_scheduler=gpu_scheduler, base_url=base_url, breaker=breaker)
+    streaming = _env("VOICEOS_STT_STREAMING", "0").strip() == "1"
+    _stt_logger = logging.getLogger("voiceos.deployment.cpu")
+    if streaming:
+        from src.services.stt.adapters.whisper_streaming_adapter import WhisperStreamingAdapter
+        adapter = WhisperStreamingAdapter(gpu_scheduler=gpu_scheduler, base_url=base_url, breaker=breaker)
+        _stt_logger.info("STT adapter=WhisperStreamingAdapter base_url=%s (VOICEOS_STT_STREAMING=1)", base_url)
+    else:
+        from src.services.stt.adapters.whisper_http_adapter import WhisperHTTPAdapter
+        adapter = WhisperHTTPAdapter(gpu_scheduler=gpu_scheduler, base_url=base_url, breaker=breaker)
+        _stt_logger.info("STT adapter=WhisperHTTPAdapter base_url=%s (VOICEOS_STT_STREAMING=0)", base_url)
     return STTService.create(adapter=adapter, config=STTServiceConfig(default_language=_env("STT_LANGUAGE", "hi")))
 
 
@@ -515,6 +538,13 @@ def build_shared_call_dependencies() -> object:
     from src.services.media_gateway.twilio_ws_entrypoint import SharedCallDependencies
 
     gpu_scheduler = build_gpu_scheduler()
+    # Fresh CustomerService reading from the same authoritative Postgres —
+    # /voice's ANI lookup and ConversationEngine's context assembly both
+    # end up at the same customers table, so source-of-truth is shared
+    # even though the client objects are constructed independently.
+    customer_service = build_customer_service(build_postgres_connection())
+    from src.services.tts.greeting_cache import GreetingCache
+    greeting_cache = GreetingCache()
     return SharedCallDependencies(
         account_sid=_env("TWILIO_ACCOUNT_SID", required=True),
         auth_token=_env("TWILIO_AUTH_TOKEN", required=True),
@@ -524,6 +554,7 @@ def build_shared_call_dependencies() -> object:
         audio_preprocessor=build_audio_preprocessor(),
         stt_service=build_stt_service(gpu_scheduler),
         conversation_engine=build_conversation_engine(),
+        customer_service=customer_service,
         language=_env("STT_LANGUAGE", "hi"),
         # See SharedCallDependencies.public_ws_base_url's docstring — required
         # whenever this process runs behind a tunnel/reverse-proxy (e.g. a
@@ -534,6 +565,7 @@ def build_shared_call_dependencies() -> object:
         public_ws_base_url=_env("PUBLIC_WS_BASE_URL", ""),
         recording_dir=_env("CALL_RECORDING_DIR", ""),
         greeting_timeout_s=float(_env("GREETING_TIMEOUT_S", "60.0")),
+        greeting_cache=greeting_cache,
     )
 
 
@@ -599,6 +631,29 @@ def serve() -> None:
     port = int(_env("MEDIA_GATEWAY_PORT", "8010"))
     deps = build_shared_call_dependencies()
     app = create_twilio_media_stream_app(deps)  # type: ignore[arg-type]
+    async def _warm_greeting_cache() -> None:
+        try:
+            from src.libs.contracts.streaming import VoiceConfig
+            from src.engines.prompt_builder.kavya_persona import build_greeting_text
+            lender = _env("LENDER_NAME", "Rajat Finance")
+            customer_name = _env("GREETING_CACHE_CUSTOMER_NAME", "")
+            greeting_text = build_greeting_text(customer_name=customer_name, lender_name=lender)
+            tts_service = deps.conversation_engine._tts  # type: ignore[attr-defined]
+            voice_config = VoiceConfig()
+            logger.info("GreetingCache: scheduling warm-up (lender=%r customer_name=%r text_len=%d)", lender, customer_name, len(greeting_text))
+            ok = await deps.greeting_cache.warm_up(greeting_text, tts_service, voice_config)  # type: ignore[union-attr]
+            if ok:
+                logger.info("GreetingCache: warm-up succeeded - greetings will splice from cache")
+            else:
+                logger.warning("GreetingCache: warm-up returned False - live TTS will handle greetings")
+        except Exception:
+            logger.exception("GreetingCache: warm-up crashed - live TTS will handle greetings")
+
+    async def _startup() -> None:
+        import asyncio as _aio
+        _aio.create_task(_warm_greeting_cache())
+
+    app.router.on_startup.append(_startup)
     logger.info("Serving Twilio Media Streams WS entrypoint on 0.0.0.0:%d/twilio/media-stream", port)
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
 

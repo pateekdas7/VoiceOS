@@ -38,7 +38,7 @@ import time
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
@@ -495,6 +495,232 @@ def main() -> None:
     )
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 
+
+
+# ---------------------------------------------------------------------------
+# --- BEGIN STREAMING WS ENDPOINT ---
+# Streaming WebSocket endpoint (Sprint-STT-Streaming).
+#
+# Contract (matches WhisperStreamingAdapter):
+#   client -> server: binary PCM16LE frames (16 kHz mono, any size)
+#                     OR text JSON control frame {"type":"eos"} / {"type":"config", ...}.
+#   server -> client: text JSON {"words":[...], "partial": bool} with
+#                     words = [{word, confidence, start_ms, end_ms, is_final}].
+#
+# Algorithm: LocalAgreement-2. A word becomes stable (is_final=True) iff it
+# appeared at the same position with the same text in the last 2 partial
+# transcripts. Words newer than the last stable position are streamed as
+# is_final=False. On close (client EOS or WebSocketDisconnect) we run one
+# final higher-beam transcription and emit any remaining tail as is_final=True.
+# ---------------------------------------------------------------------------
+
+_STREAMING_PARTIAL_INTERVAL_MS = 250   # min gap between partial re-transcribes
+_STREAMING_MIN_APPEND_BYTES = 16000    # ~500ms @ 16 kHz PCM16LE (samples*2)
+_STREAMING_MAX_BUFFER_S = 30.0         # cap sliding buffer at 30s of audio
+
+
+def _local_agreement_2(prev_words: list[str], cur_words: list[str]) -> int:
+    """Length of stable prefix where prev_words[i] == cur_words[i]."""
+    n = min(len(prev_words), len(cur_words))
+    stable = 0
+    for i in range(n):
+        if prev_words[i] == cur_words[i]:
+            stable += 1
+        else:
+            break
+    return stable
+
+
+async def _run_transcribe_async(pcm_bytes: bytes, language: str, beam_size: int) -> list[dict]:
+    """Run faster-whisper in shared thread pool; return normalised word dicts."""
+    import asyncio as _asyncio
+
+    if not pcm_bytes:
+        return []
+
+    if _mock_mode:
+        def _run_mock() -> list[dict]:
+            segs, _info = _model.transcribe([], language=language or "hi", beam_size=1)
+            out: list[dict] = []
+            for seg in segs:
+                for w in seg.words or []:
+                    out.append({
+                        "word": w.word.strip(),
+                        "confidence": float(w.probability),
+                        "start_ms": int(w.start * 1000),
+                        "end_ms": int(w.end * 1000),
+                    })
+            return out
+        loop = _asyncio.get_running_loop()
+        return await loop.run_in_executor(_stt_executor, _run_mock)
+
+    if not _HAS_NUMPY:
+        raise RuntimeError("numpy not available; cannot stream STT in real mode")
+
+    audio_f32 = _pcm16le_to_float32(pcm_bytes)
+    if len(audio_f32) == 0:
+        return []
+
+    def _run() -> list[dict]:
+        segs, _info = _model.transcribe(
+            audio_f32,
+            language=language or None,
+            beam_size=beam_size,
+            word_timestamps=True,
+        )
+        out: list[dict] = []
+        for seg in segs:
+            for w in seg.words or []:
+                out.append({
+                    "word": w.word.strip(),
+                    "confidence": float(w.probability),
+                    "start_ms": int(w.start * 1000),
+                    "end_ms": int(w.end * 1000),
+                })
+        return out
+
+    loop = _asyncio.get_running_loop()
+    return await loop.run_in_executor(_stt_executor, _run)
+
+
+@app.websocket("/transcribe_ws")
+async def transcribe_ws(ws: WebSocket) -> None:
+    """Streaming STT WebSocket. Optional query param `language` (default 'hi')."""
+    await ws.accept()
+    if not _model_ready:
+        try:
+            await ws.send_json({"error": "model_not_ready"})
+        finally:
+            await ws.close(code=1013)
+        return
+
+    language = ws.query_params.get("language") or "hi"
+    partial_beam = 1
+    final_beam = 5
+
+    buffer = bytearray()
+    prev_words_text: list[str] = []
+    stable_idx = 0
+    stable_words_out: list[dict] = []
+    last_partial_ts = 0.0
+    last_buffer_len = 0
+    client_closed = False
+
+    async def _emit_partial(force: bool = False) -> None:
+        nonlocal last_partial_ts, last_buffer_len, prev_words_text, stable_idx, stable_words_out
+        if not buffer:
+            return
+        now = time.monotonic()
+        appended = len(buffer) - last_buffer_len
+        gap_ms = (now - last_partial_ts) * 1000
+        if not force and (appended < _STREAMING_MIN_APPEND_BYTES or gap_ms < _STREAMING_PARTIAL_INTERVAL_MS):
+            return
+        last_partial_ts = now
+        last_buffer_len = len(buffer)
+        try:
+            cur_words = await _run_transcribe_async(bytes(buffer), language, partial_beam)
+        except Exception as exc:
+            logger.exception("streaming partial transcribe failed")
+            try:
+                await ws.send_json({"error": f"transcribe_failed: {exc}"})
+            except Exception:
+                pass
+            return
+        cur_text = [w["word"] for w in cur_words]
+        agreed = _local_agreement_2(prev_words_text, cur_text)
+        new_stable_end = agreed
+        emit: list[dict] = []
+        for i in range(stable_idx, new_stable_end):
+            w = dict(cur_words[i])
+            w["is_final"] = True
+            emit.append(w)
+            stable_words_out.append(w)
+        for i in range(new_stable_end, len(cur_words)):
+            w = dict(cur_words[i])
+            w["is_final"] = False
+            emit.append(w)
+        stable_idx = new_stable_end
+        prev_words_text = cur_text
+        if emit:
+            try:
+                await ws.send_json({"words": emit, "partial": True})
+            except Exception:
+                return
+
+    async def _emit_final() -> None:
+        if not buffer:
+            try:
+                await ws.send_json({"words": [], "partial": False})
+            except Exception:
+                pass
+            return
+        try:
+            cur_words = await _run_transcribe_async(bytes(buffer), language, final_beam)
+        except Exception as exc:
+            logger.exception("streaming final transcribe failed")
+            try:
+                await ws.send_json({"error": f"transcribe_failed: {exc}"})
+            except Exception:
+                pass
+            return
+        committed = len(stable_words_out)
+        tail_words: list[dict] = []
+        for i in range(committed, len(cur_words)):
+            w = dict(cur_words[i])
+            w["is_final"] = True
+            tail_words.append(w)
+        try:
+            await ws.send_json({"words": tail_words, "partial": False})
+        except Exception:
+            pass
+
+    try:
+        while True:
+            try:
+                msg = await ws.receive()
+            except WebSocketDisconnect:
+                client_closed = True
+                break
+            if msg.get("type") == "websocket.disconnect":
+                client_closed = True
+                break
+            data = msg.get("bytes")
+            if data is not None:
+                if not data:
+                    continue
+                buffer.extend(data)
+                max_bytes = int(_STREAMING_MAX_BUFFER_S * 16000 * 2)
+                if len(buffer) > max_bytes:
+                    drop = len(buffer) - max_bytes
+                    del buffer[:drop]
+                    last_buffer_len = max(0, last_buffer_len - drop)
+                await _emit_partial()
+                continue
+            text_frame = msg.get("text")
+            if text_frame is not None:
+                import json as _json
+                try:
+                    ctrl = _json.loads(text_frame)
+                except Exception:
+                    continue
+                if ctrl.get("type") == "eos":
+                    break
+                if ctrl.get("type") == "config":
+                    language = ctrl.get("language", language) or language
+                    continue
+    finally:
+        try:
+            await _emit_final()
+        except Exception:
+            logger.exception("failed to emit final transcription")
+        try:
+            if not client_closed:
+                await ws.close()
+        except Exception:
+            pass
+
+
+# --- END STREAMING WS ENDPOINT ---
 
 if __name__ == "__main__":
     main()
