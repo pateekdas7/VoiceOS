@@ -649,11 +649,15 @@ def serve() -> None:
         except Exception:
             logger.exception("GreetingCache: warm-up crashed - live TTS will handle greetings")
 
-    async def _startup() -> None:
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _lifespan(_app):
         import asyncio as _aio
         _aio.create_task(_warm_greeting_cache())
+        yield
 
-    app.router.on_startup.append(_startup)
+    app.router.lifespan_context = _lifespan
     logger.info("Serving Twilio Media Streams WS entrypoint on 0.0.0.0:%d/twilio/media-stream", port)
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
 

@@ -63,6 +63,7 @@ from src.services.playback.scheduler import PlaybackScheduler
 from src.services.policy_engine.decision import PolicyDecision, PolicyOutcome
 from src.services.policy_engine.service import PolicyEngineService
 from src.services.tts.service import TTSService
+from src.services.tts.startup_buffer_gate import StartupBufferGate, TTSMode
 from src.services.tts.streaming_pipeline import TrueStreamingPipeline
 
 from src.libs.observability.metrics import call_count_total as _call_count_total
@@ -583,6 +584,7 @@ class ConversationEngine:
         intent_history: list[str] | None = None,
         identity_verified: bool = False,
         silence_duration_ms: int = 0,
+        cancel_event: "asyncio.Event | None" = None,
     ) -> list[AudioClause]:
         """Process one customer turn end-to-end.
 
@@ -609,7 +611,8 @@ class ConversationEngine:
 
         if self._tracer is None:
             return await self._handle_turn_impl(
-                turn, playback, context, intent_history, identity_verified, silence_duration_ms
+                turn, playback, context, intent_history, identity_verified, silence_duration_ms,
+                cancel_event=cancel_event,
             )
 
         with self._tracer.start_span(
@@ -618,7 +621,8 @@ class ConversationEngine:
         ) as span:
             trace_id = format(span.get_span_context().trace_id, "032x")
             clauses = await self._handle_turn_impl(
-                turn, playback, context, intent_history, identity_verified, silence_duration_ms, trace_id=trace_id
+                turn, playback, context, intent_history, identity_verified, silence_duration_ms,
+                trace_id=trace_id, cancel_event=cancel_event,
             )
         return clauses
 
@@ -631,12 +635,14 @@ class ConversationEngine:
         identity_verified: bool,
         silence_duration_ms: int,
         trace_id: str = "",
+        cancel_event: "asyncio.Event | None" = None,
     ) -> list[AudioClause]:
         """The actual per-turn pipeline — see :meth:`handle_turn` for the public contract."""
         _t0 = time.monotonic()
         try:
             result = await self.__handle_turn_body(
-                turn, playback, context, intent_history, identity_verified, silence_duration_ms, trace_id
+                turn, playback, context, intent_history, identity_verified, silence_duration_ms, trace_id,
+                cancel_event=cancel_event,
             )
         except Exception as exc:
             _metrics.record_error(type(exc).__name__)
@@ -654,6 +660,7 @@ class ConversationEngine:
         identity_verified: bool,
         silence_duration_ms: int,
         trace_id: str = "",
+        cancel_event: "asyncio.Event | None" = None,
     ) -> list[AudioClause]:
         # Step 0 — Sprint-020 (V4 Ch13 §13.7): detective prompt-injection screen.
         # Structural containment (Law of Authority) is the real defense; this
@@ -802,14 +809,34 @@ class ConversationEngine:
                     turn.call_id,
                     turn.turn_id,
                 )
-                clauses = await self._run_llm_streaming_path(prompt_text, response_plan, playback, customer_name)
+                # Phase I Gate 1 — buffer the entire LLM response before any
+                # audio reaches Twilio so mid-response TTS latency cannot
+                # starve playback into audible gaps.
+                clauses = await self._run_llm_streaming_path(
+                    prompt_text, response_plan, playback, customer_name,
+                    tts_mode="full_response",
+                    cancel_event=cancel_event,
+                )
                 all_clauses.extend(clauses)
                 full_output_text = " ".join(c.text for c in all_clauses)
             else:
                 full_output_text = dialogue_output.reply_text
-                all_clauses.extend(await self.speak_scripted_text(full_output_text, playback, response_plan))
+                # Phase I Gate 1 — same full-response buffering for the
+                # scripted golden path: ClauseSplitter still segments the
+                # reply, but every clause waits inside the FULL_RESPONSE
+                # gate until is_final, then releases FIFO to the scheduler.
+                all_clauses.extend(await self.speak_scripted_text(
+                    full_output_text, playback, response_plan,
+                    tts_mode="full_response",
+                ))
         else:
-            clauses = await self._run_llm_streaming_path(prompt_text, response_plan, playback, customer_name)
+            # Phase I Gate 1 — buffer the whole response even in the
+            # dialogue-response-not-wired legacy path.
+            clauses = await self._run_llm_streaming_path(
+                prompt_text, response_plan, playback, customer_name,
+                tts_mode="full_response",
+                cancel_event=cancel_event,
+            )
             all_clauses.extend(clauses)
             full_output_text = " ".join(c.text for c in all_clauses)
 
@@ -863,6 +890,7 @@ class ConversationEngine:
         text: str,
         playback: PlaybackScheduler,
         response_plan: ResponsePlan | None = None,
+        tts_mode: str | None = None,
     ) -> list[AudioClause]:
         """Synthesize a fixed string (not an LLM stream) through the same
         governance/validation/TTS/playback pipeline every LLM turn uses.
@@ -883,12 +911,37 @@ class ConversationEngine:
         async def _single_chunk() -> AsyncIterator[TokenChunk]:
             yield TokenChunk(text=text, token_id=0, finish_reason="stop")
 
+        # ``tts_mode`` overrides VOICEOS_TTS_MODE for THIS one call only,
+        # constructing a per-turn StartupBufferGate at the requested mode.
+        # The greeting caller passes "blocking" so all greeting clauses are
+        # held until is_final=True, then released FIFO — this eliminates the
+        # 337–353ms inter-clause gaps that came from serial per-clause TTS
+        # HTTP POSTs and were audible as mid-word breaks in Gate 3C.
+        gate: StartupBufferGate | None = None
+        if tts_mode is not None:
+            try:
+                mode_enum = TTSMode(tts_mode)
+            except ValueError:
+                logger.warning(
+                    "speak_scripted_text: unknown tts_mode=%r — falling back to env default",
+                    tts_mode,
+                )
+                mode_enum = None
+            if mode_enum is not None and mode_enum != TTSMode.STREAMING:
+                gate = StartupBufferGate(
+                    playback=playback,
+                    mode=mode_enum,
+                    threshold_ms=0,
+                    generation=playback.generation,
+                )
+
         return await self._pipeline.run(
             token_stream=_single_chunk(),
             response_plan=plan,
             tts_service=self._tts,
             validator=self._validator,
             playback=playback,
+            gate=gate,
         )
 
     async def _run_llm_streaming_path(
@@ -897,6 +950,8 @@ class ConversationEngine:
         response_plan: ResponsePlan,
         playback: PlaybackScheduler,
         customer_name: str = "",
+        tts_mode: str | None = None,
+        cancel_event: "asyncio.Event | None" = None,
     ) -> list[AudioClause]:
         """The original LLM token-streaming path (Sprint-009-018), extracted
         so it can be invoked either as the whole-call fallback (no
@@ -908,12 +963,37 @@ class ConversationEngine:
         the same Call-002 readiness pass, the persona/register gate
         (customer_name plumbed through so LLM-generated replies get the
         same name-scrub/register enforcement the scripted path already had
-        via DialogueResponseEngine's own guard pass)."""
+        via DialogueResponseEngine's own guard pass).
+
+        Phase I Gate 1 — ``tts_mode`` overrides ``VOICEOS_TTS_MODE`` for
+        this one turn: when set to ``"full_response"`` every clause the
+        splitter emits is held in a per-turn ``StartupBufferGate`` until
+        ``is_final=True`` or ``flush_final()``, and nothing reaches the
+        scheduler mid-response. Leaving it ``None`` restores the pre-Phase-I
+        env-driven default (streaming pass-through)."""
         token_stream = await self._llm.generate_stream(
             prompt=prompt_text,
             response_plan=response_plan,
             max_tokens=response_plan.delivery.max_response_tokens,
+            cancel_event=cancel_event,
         )
+        gate: StartupBufferGate | None = None
+        if tts_mode is not None:
+            try:
+                mode_enum = TTSMode(tts_mode)
+            except ValueError:
+                logger.warning(
+                    "_run_llm_streaming_path: unknown tts_mode=%r — "
+                    "falling back to env default", tts_mode,
+                )
+                mode_enum = None
+            if mode_enum is not None and mode_enum != TTSMode.STREAMING:
+                gate = StartupBufferGate(
+                    playback=playback,
+                    mode=mode_enum,
+                    threshold_ms=0,
+                    generation=playback.generation,
+                )
         return await self._pipeline.run(
             token_stream=token_stream,
             response_plan=response_plan,
@@ -921,6 +1001,7 @@ class ConversationEngine:
             validator=self._validator,
             playback=playback,
             customer_name=customer_name,
+            gate=gate,
         )
 
     async def _persist_finalized_commitment(

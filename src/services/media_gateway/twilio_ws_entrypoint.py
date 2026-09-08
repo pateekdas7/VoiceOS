@@ -45,9 +45,13 @@ from __future__ import annotations
 
 import audioop
 import logging
+import re
 import time
+import uuid
+from datetime import datetime
+from collections import deque
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from starlette.applications import Starlette
@@ -61,9 +65,12 @@ from src.libs.contracts.context import CustomerContext
 from src.libs.contracts.events.audio_events import BargeinDetected, VADSpeechEnd, VADSpeechStart
 from src.libs.contracts.primitives import TenantId
 from src.libs.contracts.streaming import WordHypothesis
+from src.libs.contracts.turn import TurnInput, TurnRole, UtteranceSegment
 from src.services.audio_preprocessing.service import AudioPreprocessorService
 from src.services.audio_session_manager.service import AudioSessionManagerService
 from src.services.media_gateway.adapters.twilio_websocket import TwilioWebSocketAdapter
+from src.services.media_gateway.admission import AdmissionRegistry
+from src.services.media_gateway.auth import validate_twilio_signature
 from src.services.media_gateway.call_recorder import CallRecorder
 from src.services.media_gateway.protocol import ADAPTER_TYPE_TWILIO
 from src.services.media_gateway.service import MediaGatewayService
@@ -77,8 +84,10 @@ from src.services.vad_endpointing.vad_engine import VADEngine, VADModelProtocol
 
 if TYPE_CHECKING:
     from src.services.conversation_engine.engine import ConversationEngine
+    from src.services.crm.service import CustomerService
     from src.services.dialogue_manager.service import DialogueManager
     from src.services.stt.service import STTService
+    from src.services.tts.greeting_cache import GreetingCache
 
 logger = logging.getLogger("voiceos.media_gateway.twilio_ws")
 
@@ -107,6 +116,32 @@ class SharedCallDependencies:
     audio_preprocessor: AudioPreprocessorService
     stt_service: STTService
     conversation_engine: ConversationEngine
+    customer_service: CustomerService | None = None
+    """Authoritative CRM lookup used by /voice to resolve customer_id from
+    the caller's phone number (ANI for inbound calls, DNIS/To for
+    outbound-api Direction) BEFORE minting TwiML. Same
+    ``CustomerService`` instance that already lives inside
+    ``CustomerContextAssembler`` — shared so both paths see the same
+    authoritative source. When ``None`` (unit-test fixtures, or a
+    deployment without CRM), /voice skips the lookup and emits TwiML
+    with no ``customer_id`` Parameter — WSS then sees an empty value and
+    the dialogue safely renders ``clarify_no_record`` instead of
+    fabricating a balance. Never trusts a caller-provided value: the
+    ``customer_id`` embedded in TwiML comes only from THIS lookup, so
+    what WSS reads from ``customParameters`` is authoritative-by-origin
+    even though customParameters as a channel is caller-controlled."""
+    admission_registry: AdmissionRegistry = field(default_factory=AdmissionRegistry)
+    """Two-stage admission for Twilio Media Streams. HTTP /voice validates
+    X-Twilio-Signature and mints a single-use token bound to (CallSid,
+    AccountSid, tenant_id) which is embedded in the TwiML <Stream>
+    <Parameter/>. WSS /twilio/media-stream verifies + consumes the token
+    from start.customParameters before any session resource is allocated.
+    Twilio never sends X-Twilio-Signature on the WebSocket upgrade — the
+    previous design attempted HMAC on WSS anyway, which unconditionally
+    failed against real Twilio traffic while unit tests fabricated the
+    header and silently passed. Default factory issues a fresh in-memory
+    registry per process; production shares one instance across every
+    call (all methods are async-safe under an internal asyncio.Lock)."""
     vad_model_factory: type[VADModelProtocol] | Any = None  # see build_vad_model() in deployment/cpu/app.py
     language: str = "hi"
     speak_greeting: bool = True
@@ -159,6 +194,14 @@ class SharedCallDependencies:
     string (the default) disables recording entirely (no CallRecorder is
     constructed), preserving prior behavior for every existing test and
     deployment that hasn't opted in."""
+    greeting_cache: "GreetingCache | None" = None
+    """Optional pre-synthesised u-law greeting cache. When set and a hit
+    is found for the rendered greeting text, _speak_greeting() splices the
+    cached 20 ms frames straight into the outbound WebSocket at wire-cadence
+    (bypassing GPU TTS entirely, cutting greeting TTFA from ~19s to ~0ms).
+    On miss, or when None, the pre-existing live-TTS path runs unchanged.
+    Warm-up is scheduled off the Starlette on_startup hook so process boot
+    is never blocked on GPU TTS."""
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +290,23 @@ class CallOrchestrator:
         self._current_turn_queue: asyncio.Queue[AudioFrame | None] | None = None
         self._turn_active = False
         self._turn_index = 0
+        # Stable-suffix orchestrator: signalled when VADSpeechEnd fires for
+        # the current turn (queue sentinel already pushed). The orchestrator
+        # uses this as its "safety-net" trigger: if it has not yet
+        # speculatively fired an LLM task by end-of-speech, it fires now on
+        # the finalized stable_prefix; if it has fired but the fired prefix
+        # is stale relative to the final prefix, it cancels and refires.
+        self._vad_speech_ended = asyncio.Event()
+        # Debounce window before a stable prefix is considered stable enough
+        # to speculatively fire an LLM turn. 250 ms matches the spec (long
+        # enough to let LocalAgreement-2 stabilise across the next chunk,
+        # short enough that TTFT budget doesn't collapse).
+        self._stable_debounce_s: float = 0.250
+        # Minimum stable word count before speculative fire is allowed. Below
+        # this we simply keep accumulating — a 1- or 2-word prefix is almost
+        # never enough context to plan a useful reply and firing on it just
+        # wastes GPU cycles that would be cancelled milliseconds later.
+        self._stable_min_words: int = 3
         self._out_seq = 0
         self._closing = False
         self._dialogue_manager: DialogueManager | None = None
@@ -256,6 +316,17 @@ class CallOrchestrator:
         # every frame Twilio ever sees is exactly 160 bytes (20 ms @ 8 kHz
         # μ-law). Cleared on barge-in / generation advance / WS disconnect.
         self._send_ulaw_carry: bytes = b""
+
+        # Repeat-intent watchdog state (populated during greeting playback).
+        # Holds the most recent preprocessed (PCM16LE @ 16 kHz) inbound frames
+        # so the watchdog can hand ~1.5 s of audio to the STT adapter every
+        # ~500 ms and match the caller's transcript against a repeat-intent
+        # keyword regex. Frames are appended in _pump_inbound; the watchdog
+        # is spawned alongside _speak_greeting() in run().
+        # 16000 Hz * 2 bytes/sample * 1.5 s ~= 48000 bytes; a per-20-ms-frame
+        # deque of maxlen 80 comfortably covers the 1.5 s window.
+        self._greeting_audio_buffer: deque[AudioFrame] = deque(maxlen=80)
+        self._greeting_watchdog_active: bool = False
 
     @classmethod
     async def create(
@@ -325,6 +396,13 @@ class CallOrchestrator:
                 if self._recorder is not None:
                     self._recorder.add_inbound_audio(pre.pcm_data, int(pre.config.sample_rate))
 
+                # Feed the repeat-intent watchdog's ring buffer while it is
+                # active (i.e. during greeting playback). The watchdog polls
+                # this buffer every ~500 ms; frames outside the greeting
+                # window are neither buffered nor transcribed.
+                if self._greeting_watchdog_active:
+                    self._greeting_audio_buffer.append(pre)
+
                 if self._turn_active and self._current_turn_queue is not None:
                     await self._current_turn_queue.put(pre)
 
@@ -353,11 +431,21 @@ class CallOrchestrator:
         if isinstance(event, VADSpeechStart) and not self._turn_active:
             self._current_turn_queue = asyncio.Queue()
             self._turn_active = True
+            # New turn opening: clear the end-of-speech signal from the
+            # previous turn so the stable-suffix orchestrator does not
+            # observe a stale VADSpeechEnd carried over from turn N-1.
+            self._vad_speech_ended.clear()
             self._turn_ready.set()
         elif isinstance(event, VADSpeechEnd) and self._turn_active:
             if self._current_turn_queue is not None:
                 await self._current_turn_queue.put(None)
             self._turn_active = False
+            # Signal the stable-suffix orchestrator: this turn's audio
+            # stream is now closed. If it hasn't fired an LLM task yet it
+            # will fire the safety-net now on whatever stable_prefix it
+            # has; if it has fired but the fired prefix diverges from the
+            # final prefix it will cancel-and-refire.
+            self._vad_speech_ended.set()
         elif isinstance(event, BargeinDetected):
             logger.info("Barge-in detected on call %s — flushing playback", self._call_id)
             if self._recorder is not None:
@@ -390,9 +478,25 @@ class CallOrchestrator:
             await self._run_turns_one_iteration()
 
     async def _run_turns_one_iteration(self) -> None:
-        """One turn's worth of STT -> DialogueManager -> ConversationEngine ->
-        outbound audio. Split out from _run_turns() so orchestration logic is
-        testable without driving the (otherwise infinite) polling loop."""
+        """Stable-suffix orchestrator: consumes STT WordHypotheses as they
+        stream in during speech, tracks the growing stable prefix, and
+        speculatively fires an LLM/TTS turn once the prefix has been
+        stable for _stable_debounce_s seconds (default 250 ms) with at
+        least _stable_min_words words (default 3). If the stable prefix
+        later grows materially the current LLM task is cancelled (via
+        its asyncio.Event) and a new task is fired on the extended prefix.
+
+        Every cancel-and-refire bumps playback.generation (via
+        preempt_current_clause + flush) so the last-mile _send_clause
+        gate guarantees no TTS clause synthesised for a superseded
+        prefix ever reaches Twilio.
+
+        Design constants:
+          * debounce = 250 ms; min_words = 3.
+          * materially-extends: >=2 new words OR >30% growth on fired.
+          * Safety-net at VADSpeechEnd: refire on any single-word extension.
+          * Empty-prefix fallback: short-circuit to no-reply.
+        """
         if self._dialogue_manager is None:
             from src.services.dialogue_manager.service import DialogueManager
 
@@ -402,46 +506,192 @@ class CallOrchestrator:
         if queue is None:
             return
 
+        import asyncio
+
         stt_start = time.monotonic()
-        # STTService.transcribe_stream() is an `async def` that RETURNS the
-        # async generator (it does `return await self._adapter
-        # .transcribe_stream(...)`), so it must be awaited to get an object
-        # `async for` can iterate -- without the await this is a bare
-        # coroutine and the turn loop dies with "'async for' requires an
-        # object with __aiter__ method, got coroutine". Found via a live
-        # Call-002 trial; unit tests missed it because they patch
-        # transcribe_stream with a plain lambda returning an async generator
-        # directly, which is iterable without awaiting.
         word_stream: AsyncIterator[WordHypothesis] = await self._deps.stt_service.transcribe_stream(
             _queue_to_frame_gen(queue), language=self._deps.language
         )
-        turn = await self._dialogue_manager.ingest_stream(word_stream)
+
+        stable_prefix: list[str] = []
+        last_growth_ts: float = time.monotonic()
+        fired_prefix: list[str] | None = None
+        llm_task: asyncio.Task[list[Any]] | None = None
+        llm_cancel_event: asyncio.Event | None = None
+        stream_exhausted = False
+
+        def _materially_extends(fired: list[str], current: list[str]) -> bool:
+            new_words = len(current) - len(fired)
+            if new_words <= 0:
+                return False
+            if new_words >= 2:
+                return True
+            base = max(len(fired), 1)
+            return (new_words / base) > 0.30
+
+        def _fire_llm(prefix_words: list[str]) -> tuple[asyncio.Task[list[Any]], asyncio.Event]:
+            try:
+                self._playback.preempt_current_clause()
+            except Exception:
+                logger.exception("preempt_current_clause failed")
+            asyncio.ensure_future(self._playback.flush())
+            self._playback.clear_barge_in()
+
+            transcript = " ".join(prefix_words)
+            segments = tuple(
+                UtteranceSegment(text=w, start_ms=0, end_ms=0, confidence=1.0)
+                for w in prefix_words
+            )
+            synth_turn = TurnInput(
+                turn_id=str(uuid.uuid4()),
+                call_id=self._call_id,
+                tenant_id=self._tenant_id,
+                role=TurnRole.CUSTOMER,
+                transcript=transcript,
+                segments=segments,
+                created_at=datetime.utcnow(),
+                correlation_id="",
+                trace_id="",
+                turn_index=self._turn_index,
+            )
+            cev = asyncio.Event()
+            task = asyncio.create_task(
+                self._deps.conversation_engine.handle_turn(
+                    turn=synth_turn,
+                    playback=self._playback,
+                    context=self._context,
+                    identity_verified=self._identity_verified,
+                    cancel_event=cev,
+                )
+            )
+            return task, cev
+
+        async def _cancel_and_wait(task: asyncio.Task[list[Any]], cev: asyncio.Event) -> None:
+            cev.set()
+            if not task.done():
+                task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                if not task.cancelled():
+                    logger.debug("cancelled LLM task raised", exc_info=True)
+
+        aiter = word_stream.__aiter__()
+
+        async def _next_hypothesis() -> WordHypothesis | None:
+            try:
+                return await aiter.__anext__()
+            except StopAsyncIteration:
+                return None
+
+        pending_next: asyncio.Task[WordHypothesis | None] | None = None
+
+        try:
+            while not stream_exhausted:
+                if pending_next is None:
+                    pending_next = asyncio.create_task(_next_hypothesis())
+
+                now = time.monotonic()
+                elapsed_since_growth = now - last_growth_ts
+                debounce_remaining = max(0.0, self._stable_debounce_s - elapsed_since_growth)
+
+                waiters: list[asyncio.Future[Any]] = [pending_next]
+                if llm_task is not None:
+                    waiters.append(llm_task)
+
+                should_debounce = (
+                    fired_prefix is None
+                    and len(stable_prefix) >= self._stable_min_words
+                )
+                timeout = debounce_remaining if should_debounce else None
+
+                done, _pending = await asyncio.wait(
+                    waiters, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
+                )
+
+                if pending_next in done:
+                    hyp = pending_next.result()
+                    pending_next = None
+                    if hyp is None:
+                        stream_exhausted = True
+                    elif hyp.is_final and hyp.word:
+                        stable_prefix.append(hyp.word)
+                        last_growth_ts = time.monotonic()
+                        if fired_prefix is not None and _materially_extends(fired_prefix, stable_prefix):
+                            assert llm_task is not None and llm_cancel_event is not None
+                            logger.info(
+                                "stable-suffix: material extension after fire (fired=%d, now=%d) - cancel-and-refire",
+                                len(fired_prefix), len(stable_prefix),
+                            )
+                            await _cancel_and_wait(llm_task, llm_cancel_event)
+                            llm_task, llm_cancel_event = _fire_llm(list(stable_prefix))
+                            fired_prefix = list(stable_prefix)
+                elif llm_task is not None and llm_task in done:
+                    pass
+                else:
+                    if fired_prefix is None and len(stable_prefix) >= self._stable_min_words:
+                        logger.info(
+                            "stable-suffix: debounce elapsed - speculative fire on %d-word prefix",
+                            len(stable_prefix),
+                        )
+                        llm_task, llm_cancel_event = _fire_llm(list(stable_prefix))
+                        fired_prefix = list(stable_prefix)
+        finally:
+            if pending_next is not None and not pending_next.done():
+                pending_next.cancel()
+                try:
+                    await pending_next
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+        await self._vad_speech_ended.wait()
+
         stt_latency_ms = int((time.monotonic() - stt_start) * 1000)
 
-        if not turn.transcript.strip():
+        if not stable_prefix:
+            if llm_task is not None and llm_cancel_event is not None:
+                await _cancel_and_wait(llm_task, llm_cancel_event)
             if self._recorder is not None:
                 self._recorder.event(
                     "stt_empty_turn", turn_index=self._turn_index, latency_ms=stt_latency_ms,
                     call_time_ms=self._call_time_ms(),
                 )
-            return  # silence/noise-only turn — nothing to respond to
+            return
+
+        if fired_prefix is None:
+            logger.info(
+                "stable-suffix: safety-net fire at VADSpeechEnd on %d-word prefix",
+                len(stable_prefix),
+            )
+            llm_task, llm_cancel_event = _fire_llm(list(stable_prefix))
+            fired_prefix = list(stable_prefix)
+        elif len(stable_prefix) > len(fired_prefix):
+            logger.info(
+                "stable-suffix: VADSpeechEnd - final prefix (%d) extends fired (%d), refire",
+                len(stable_prefix), len(fired_prefix),
+            )
+            assert llm_task is not None and llm_cancel_event is not None
+            await _cancel_and_wait(llm_task, llm_cancel_event)
+            llm_task, llm_cancel_event = _fire_llm(list(stable_prefix))
+            fired_prefix = list(stable_prefix)
+
+        assert llm_task is not None
 
         if self._recorder is not None:
             self._recorder.event(
                 "stt_final",
                 turn_index=self._turn_index,
-                transcript=turn.transcript,
+                transcript=" ".join(stable_prefix),
                 latency_ms=stt_latency_ms,
                 call_time_ms=self._call_time_ms(),
             )
 
         dialogue_start = time.monotonic()
-        clauses = await self._deps.conversation_engine.handle_turn(
-            turn=turn,
-            playback=self._playback,
-            context=self._context,
-            identity_verified=self._identity_verified,
-        )
+        try:
+            clauses = await llm_task
+        except asyncio.CancelledError:
+            logger.warning("stable-suffix: final LLM task cancelled - no clauses to send")
+            return
         dialogue_latency_ms = int((time.monotonic() - dialogue_start) * 1000)
 
         if self._recorder is not None:
@@ -615,6 +865,83 @@ class CallOrchestrator:
     # Lifecycle
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Repeat-intent watchdog (runs alongside greeting playback)
+    # ------------------------------------------------------------------
+
+    # Case-insensitive whole-word match on common Hindi/Hinglish/English
+    # "repeat / what did you say?" cues. If the caller utters any of these
+    # while the greeting is still playing, the watchdog releases the
+    # PlaybackScheduler's greeting-protection window early so the AI can
+    # respond immediately instead of waiting for the full greeting to end.
+    _REPEAT_INTENT_RE = re.compile(
+        r"\b(repeat|dobara|kya bola|samajh nahi|kya kaha|what|pardon|excuse me|phir se)\b",
+        re.IGNORECASE,
+    )
+
+    async def _repeat_intent_watchdog(self) -> None:
+        """Runs during greeting playback. Buffers inbound user audio, runs a
+        lightweight STT poll every ~500ms, and if the transcript matches a
+        repeat-intent keyword, calls self._playback.clear_protection() to end
+        greeting protection early."""
+        import asyncio
+
+        self._greeting_watchdog_active = True
+        # Drop any stale frames from a previous call/greeting.
+        self._greeting_audio_buffer.clear()
+        try:
+            while not self._closing:
+                await asyncio.sleep(0.5)
+                # Snapshot the ring buffer; empty => nothing to transcribe yet.
+                frames = list(self._greeting_audio_buffer)
+                if not frames:
+                    continue
+
+                async def _frame_gen(_frames: list[AudioFrame]) -> AsyncIterator[AudioFrame]:
+                    for f in _frames:
+                        yield f
+
+                try:
+                    word_stream: AsyncIterator[WordHypothesis] = (
+                        await self._deps.stt_service.transcribe_stream(
+                            _frame_gen(frames), language=self._deps.language
+                        )
+                    )
+                    transcript_parts: list[str] = []
+                    async for word in word_stream:
+                        transcript_parts.append(word.word)
+                    transcript = " ".join(transcript_parts).strip()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.debug(
+                        "Call %s: repeat-intent watchdog STT poll failed",
+                        self._call_id,
+                        exc_info=True,
+                    )
+                    continue
+
+                if not transcript:
+                    continue
+
+                if self._REPEAT_INTENT_RE.search(transcript):
+                    logger.info(
+                        "greeting repeat-intent detected: '%s' \u2014 releasing protection",
+                        transcript,
+                    )
+                    try:
+                        self._playback.clear_protection()
+                    except Exception:
+                        logger.exception(
+                            "Call %s: clear_protection() raised", self._call_id
+                        )
+                    return
+        except asyncio.CancelledError:
+            return
+        finally:
+            self._greeting_watchdog_active = False
+            self._greeting_audio_buffer.clear()
+
     async def _speak_greeting(self) -> None:
         """Path-A Phase 6g: speak the call-open identity-verification
         greeting before any customer turn, so DialogueResponseEngine's
@@ -629,6 +956,58 @@ class CallOrchestrator:
             return
         if self._recorder is not None:
             self._recorder.event("greeting", text=greeting, call_time_ms=self._call_time_ms())
+        # Greeting-cache fast path: if we have pre-synthesised u-law bytes
+        # for this exact greeting text, splice them straight into the
+        # outbound Twilio stream at wire cadence (20 ms per 160-byte frame).
+        # This bypasses GPU TTS entirely and cuts greeting TTFA from ~19s
+        # to ~5 ms. Barge-in still works because we tick playback.generation
+        # through the same protected mechanism used by the live path.
+        if self._deps.greeting_cache is not None:
+            frames = self._deps.greeting_cache.get_frames(greeting)
+            if frames:
+                import asyncio as _asyncio_gc, time as _time_gc
+                logger.info(
+                    "twilio_ws: greeting-cache HIT (%d frames, ~%d ms) - splicing directly",
+                    len(frames), len(frames) * 20,
+                )
+                greeting_generation = self._playback.generation
+                self._playback.set_protected(greeting_generation)
+                self._vad.set_playback_active(True, playback_seq=self._turn_index)
+                _t_start_gc = _time_gc.monotonic()
+                _first_frame_at = None
+                try:
+                    for i, frame_bytes in enumerate(frames):
+                        # Barge-in / generation-advance check between frames.
+                        if self._playback.generation != greeting_generation:
+                            logger.info(
+                                "twilio_ws: greeting-cache barge-in at frame %d/%d",
+                                i, len(frames),
+                            )
+                            break
+                        self._out_seq += 1
+                        out_frame = _clause_to_mulaw_frame(
+                            frame_bytes, seq=self._out_seq, rtp_ts=self._out_seq * 160,
+                        )
+                        await self._adapter.send_frame(out_frame)
+                        if _first_frame_at is None:
+                            _first_frame_at = _time_gc.monotonic()
+                            logger.info(
+                                "PACE_DIAG greeting_cache_ttfa_ms=%d",
+                                int((_first_frame_at - _t_start_gc) * 1000),
+                            )
+                        # Pace at 20 ms/frame so we do not flood Twilio.
+                        await _asyncio_gc.sleep(0.020)
+                finally:
+                    self._vad.set_playback_active(False)
+                    self._playback.clear_protection()
+                _wall_gc = int((_time_gc.monotonic() - _t_start_gc) * 1000)
+                logger.info(
+                    "PACE_DIAG greeting_cache_done wall_ms=%d out_seq=%d",
+                    _wall_gc, self._out_seq,
+                )
+                return
+            else:
+                logger.info("twilio_ws: greeting-cache MISS - falling back to live TTS")
 
         # Stream the greeting out as TrueStreamingPipeline synthesises it,
         # rather than awaiting the whole list first. Measured on the real GPU:
@@ -649,8 +1028,14 @@ class CallOrchestrator:
         # that the scheduler would reject anyway but that would waste GPU
         # cycles.
         greeting_generation = self._playback.generation
+        # Uninterruptible first greeting: protect this generation from
+        # VAD-triggered barge-in until greeting_done fires (cleared in
+        # the finally-block below).
+        self._playback.set_protected(greeting_generation)
         synth_task = asyncio.create_task(
-            self._deps.conversation_engine.speak_scripted_text(greeting, self._playback)
+            self._deps.conversation_engine.speak_scripted_text(
+                greeting, self._playback, tts_mode="streaming"
+            )
         )
         self._vad.set_playback_active(True, playback_seq=self._turn_index)
         try:
@@ -690,6 +1075,9 @@ class CallOrchestrator:
                 int((self._pace_greeting_first_frame_at - self._pace_greeting_start) * 1000) if getattr(self, "_pace_greeting_first_frame_at", None) else -1,
                 self._out_seq,
             )
+            # Uninterruptible greeting complete: restore normal barge-in
+            # behavior. Inside finally so protection is cleared even on exception.
+            self._playback.clear_protection()
         # Phase E — if we cancelled synth_task, awaiting it will re-raise
         # CancelledError; swallow that specifically (the cancel was
         # intentional, not a failure).
@@ -715,27 +1103,35 @@ class CallOrchestrator:
             async def _speak_greeting_task() -> None:
                 from src.services.media_gateway.metrics import GREETING_OUTCOMES
 
+                watchdog_task = asyncio.create_task(self._repeat_intent_watchdog())
                 try:
-                    await asyncio.wait_for(self._speak_greeting(), timeout=self._deps.greeting_timeout_s)
-                    GREETING_OUTCOMES.labels(outcome="ok").inc()
-                except TimeoutError:
-                    GREETING_OUTCOMES.labels(outcome="timeout").inc()
-                    logger.error(
-                        "Call %s: greeting timed out after %.1fs (GPU TTS unreachable/slow?) — "
-                        "proceeding to turn processing without it",
-                        self._call_id,
-                        self._deps.greeting_timeout_s,
-                    )
-                    if self._recorder is not None:
-                        self._recorder.event(
-                            "greeting_timeout", timeout_s=self._deps.greeting_timeout_s,
-                            call_time_ms=self._call_time_ms(),
+                    try:
+                        await asyncio.wait_for(self._speak_greeting(), timeout=self._deps.greeting_timeout_s)
+                        GREETING_OUTCOMES.labels(outcome="ok").inc()
+                    except TimeoutError:
+                        GREETING_OUTCOMES.labels(outcome="timeout").inc()
+                        logger.error(
+                            "Call %s: greeting timed out after %.1fs (GPU TTS unreachable/slow?) — "
+                            "proceeding to turn processing without it",
+                            self._call_id,
+                            self._deps.greeting_timeout_s,
                         )
-                except Exception:
-                    GREETING_OUTCOMES.labels(outcome="error").inc()
-                    logger.exception("Call %s: greeting failed — proceeding to turn processing without it", self._call_id)
-                    if self._recorder is not None:
-                        self._recorder.event("greeting_error", call_time_ms=self._call_time_ms())
+                        if self._recorder is not None:
+                            self._recorder.event(
+                                "greeting_timeout", timeout_s=self._deps.greeting_timeout_s,
+                                call_time_ms=self._call_time_ms(),
+                            )
+                    except Exception:
+                        GREETING_OUTCOMES.labels(outcome="error").inc()
+                        logger.exception("Call %s: greeting failed — proceeding to turn processing without it", self._call_id)
+                        if self._recorder is not None:
+                            self._recorder.event("greeting_error", call_time_ms=self._call_time_ms())
+                finally:
+                    watchdog_task.cancel()
+                    try:
+                        await watchdog_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
 
             if self._deps.speak_greeting:
                 tasks.append(asyncio.create_task(_speak_greeting_task()))
@@ -818,38 +1214,109 @@ def create_twilio_media_stream_app(deps: SharedCallDependencies) -> Starlette:
                 await websocket.close(code=4000)
                 return
 
-        call_id = start_msg.get("start", {}).get("callSid", "") or start_msg.get("start", {}).get("streamSid", "")
+        start = start_msg.get("start", {}) if isinstance(start_msg, dict) else {}
+        msg_call_sid = start.get("callSid", "") or ""
+        msg_stream_sid = start.get("streamSid", "") or ""
+        msg_account_sid = start.get("accountSid", "") or ""
+        custom_params = start.get("customParameters", {}) or {}
+        # Twilio Media Streams: <Parameter name="admission_token" value="…"/>
+        # inside <Stream> is forwarded to WSS in start.customParameters. Case
+        # is preserved by Twilio; the /voice handler always emits the
+        # lower-case key so lookup is deterministic.
+        admission_token = custom_params.get("admission_token", "") or ""
+
+        call_id = msg_call_sid or msg_stream_sid
         if not call_id:
-            logger.error("Twilio WS connection with no callSid/streamSid in start message — closing")
+            logger.error("Twilio WS start message missing both callSid and streamSid — closing 4001")
             await websocket.close(code=4001)
             return
 
-        # See SharedCallDependencies.public_ws_base_url's docstring: Twilio's
-        # signature is computed over the public URL it was told to connect
-        # to, which this process cannot observe directly when running behind
-        # a tunnel/reverse-proxy — websocket.url would be the internal
-        # address, and the signature would never validate against it.
-        request_url = (
-            f"{deps.public_ws_base_url}{websocket.url.path}" if deps.public_ws_base_url else str(websocket.url)
+        # AR-2 (auth-before-allocation): admission verification runs BEFORE
+        # any per-call resource is allocated (no orchestrator, no session
+        # gate admit, no VAD engine, no ConversationEngine.start_call).
+        # A failed admission increments the rejection metric via
+        # session_gate.reject() and closes the WebSocket immediately.
+        expected_account_sid = deps.account_sid
+        # Fail-closed on missing accountSid in the start message: a valid
+        # Twilio connection always includes it; passing "" to the registry
+        # never matches any ticket (issue() rejects empty account_sid) so
+        # the account-bound isolation invariant holds.
+        supplied_account_sid = msg_account_sid
+        if not admission_token:
+            reason = "missing_admission_token"
+            logger.warning(
+                "WSS admission rejected: %s call_sid=%s stream_sid=%s",
+                reason, msg_call_sid, msg_stream_sid,
+            )
+            deps.media_gateway_service.gate.reject(
+                call_id=call_id, reason=reason, adapter_type=ADAPTER_TYPE_TWILIO,
+            )
+            await websocket.close(code=4401)
+            return
+
+        ok, reason, ticket = await deps.admission_registry.verify_and_consume(
+            token=admission_token,
+            call_sid=msg_call_sid,
+            account_sid=supplied_account_sid,
         )
+        if not ok:
+            logger.warning(
+                "WSS admission rejected: %s call_sid=%s account_sid=%s",
+                reason, msg_call_sid, supplied_account_sid,
+            )
+            deps.media_gateway_service.gate.reject(
+                call_id=call_id, reason=reason, adapter_type=ADAPTER_TYPE_TWILIO,
+            )
+            await websocket.close(code=4401)
+            return
+
+        # Defense-in-depth: the ticket's account_sid was checked by
+        # verify_and_consume, but we also verify against the process's
+        # configured expected account_sid — a token minted under this
+        # process cannot be honored against a different expected account.
+        if ticket is not None and ticket.account_sid != expected_account_sid:
+            logger.warning(
+                "WSS admission rejected: admission_token_account_expected_mismatch "
+                "expected=%s ticket=%s",
+                expected_account_sid, ticket.account_sid,
+            )
+            deps.media_gateway_service.gate.reject(
+                call_id=call_id,
+                reason="admission_token_account_expected_mismatch",
+                adapter_type=ADAPTER_TYPE_TWILIO,
+            )
+            await websocket.close(code=4401)
+            return
+
+        # Admission verified. Construct credentials that the adapter's
+        # authenticate() will accept via the admission-verified branch —
+        # `admission_verified="true"` is a private in-process signal set
+        # only by this handler AFTER the registry consume succeeded, and
+        # AR-2 is preserved (adapter.authenticate still runs inside
+        # admit_adapter, and gate.admit still runs before adapter.connect).
         credentials = {
-            "account_sid": deps.account_sid,
+            "account_sid": expected_account_sid,
             "auth_token": deps.auth_token,
-            "url": request_url,
-            "params": "{}",
-            "x_twilio_signature": websocket.headers.get("x-twilio-signature", ""),
-            "expected_account_sid": deps.account_sid,
+            "expected_account_sid": expected_account_sid,
+            "admission_verified": "true",
+            "admission_call_sid": msg_call_sid,
         }
 
-        # Assemble the real, authoritative CustomerContext when the call was
-        # placed with a known customer_id (outbound trials — see
-        # scripts/place_call002.py — pass it as a <Stream><Parameter>; an
-        # inbound-only deployment would resolve this from ANI/DNIS lookup
-        # instead, not built here since Call-002 is outbound). Without this,
-        # every greeting/reply would address the customer with an empty
-        # name (ConversationEngine.build_greeting() falls back to "" when
-        # context is None) — previously always the case, since nothing
-        # here ever called start_call() at all before this fix.
+        # Assemble the real, authoritative CustomerContext from the
+        # customer_id embedded in <Stream><Parameter/>. Two production
+        # sources of that parameter:
+        #   * Outbound trials (scripts/place_call002.py) attach it directly
+        #     to the TwiML before Twilio dials.
+        #   * Inbound/outbound-api calls resolve it via the /voice handler
+        #     above, which does ANI→CustomerService.find_by_phone() before
+        #     minting TwiML (Gate 3D P1). The value WSS reads here is thus
+        #     authoritative-by-origin even though customParameters as a
+        #     channel is caller-controlled.
+        # When no customer_id is present (CRM miss, wrong number, /voice
+        # skipped the lookup), context stays None and DialogueResponseEngine
+        # falls through to clarify_no_record rather than fabricating a
+        # balance (Fix D — see engines/dialogue_response/engine.py
+        # _resolve_outstanding_minor).
         customer_id = start_msg.get("start", {}).get("customParameters", {}).get("customer_id", "")
 
         # Consent-revocation defense-in-depth (V4 Ch2 — RBI FPC / DPDP).
@@ -891,6 +1358,19 @@ def create_twilio_media_stream_app(deps: SharedCallDependencies) -> Starlette:
                 )
             except Exception:
                 logger.exception("start_call() failed for customer_id=%s call_id=%s — proceeding without context", customer_id, call_id)
+        else:
+            # No customer_id on the WSS start event — either the outbound
+            # placement did not attach a <Parameter name="customer_id"/> to
+            # <Stream>, or /voice's ANI→CustomerService lookup found no
+            # matching customer for this phone number. Downstream will
+            # render the clarify_no_record template rather than fabricate
+            # a balance (see engines/dialogue_response/engine.py
+            # _resolve_outstanding_minor).
+            logger.warning(
+                "twilio_ws: no customer_id on WSS start.customParameters (call_id=%s) — "
+                "CustomerContext will be None and dialogue will use clarify_no_record template",
+                call_id,
+            )
 
         orchestrator = await CallOrchestrator.create(
             call_id=call_id,
@@ -934,17 +1414,169 @@ def create_twilio_media_stream_app(deps: SharedCallDependencies) -> Starlette:
                 forward_task.cancel()
             await asyncio.gather(forward_task, return_exceptions=True)
 
-    def _twiml_voice(request):
-        host = request.headers.get("host") or request.url.hostname
-        wss = f"wss://{host}/twilio/media-stream"
-        xml = (
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
-            "<Response><Connect><Stream url=\"" + wss + "\"/></Connect></Response>"
-        )
-        return Response(xml, media_type="application/xml")
+    def _public_http_base_url() -> str:
+        """Public HTTPS base URL Twilio POSTs /voice to — derived from the
+        wss:// PUBLIC_WS_BASE_URL used for the Media Stream upgrade so
+        signature validation runs against the exact URL Twilio signed."""
+        base = deps.public_ws_base_url or ""
+        if base.startswith("wss://"):
+            return "https://" + base[len("wss://"):]
+        if base.startswith("ws://"):
+            return "http://" + base[len("ws://"):]
+        return base
 
     async def _voice(request):
-        return _twiml_voice(request)
+        """HTTP webhook handler.
+
+        Twilio POSTs form-encoded call metadata (CallSid, AccountSid, From,
+        To, …) with an X-Twilio-Signature header covering the URL and
+        alphabetically-sorted POST param key/value pairs. This handler:
+
+          1. Reads the form body and X-Twilio-Signature header.
+          2. Reconstructs the public URL Twilio actually signed against
+             (behind a tunnel/reverse-proxy the local request URL differs
+             from what Twilio signed — see public_ws_base_url docstring).
+          3. Validates the HMAC-SHA1 signature via validate_twilio_signature.
+          4. Enforces AccountSid == deps.account_sid (cross-account defense).
+          5. Mints a single-use admission token bound to (CallSid,
+             AccountSid, tenant_id) via AdmissionRegistry.
+          6. Emits TwiML with <Stream><Parameter name="admission_token"
+             value="…"/> so Twilio forwards it back on the WSS upgrade.
+
+        Any failure returns a 403 with no TwiML — Twilio will fail the
+        call cleanly rather than opening a WebSocket that gets rejected
+        by admission verification (which would be the same outcome, but
+        wastes a WS handshake and pollutes the WSS rejection metrics).
+        """
+        # Parse Twilio's application/x-www-form-urlencoded body with stdlib
+        # so this handler carries no runtime dependency on python-multipart
+        # (which starlette.Request.form() would pull in even for URL-encoded
+        # bodies in some starlette versions). Multipart bodies are not
+        # supported here — Twilio only sends URL-encoded form data.
+        try:
+            raw_body = await request.body()
+        except Exception:
+            logger.warning("/voice rejected: body read error")
+            return Response("Bad Request", status_code=400, media_type="text/plain")
+
+        content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+        if content_type and content_type != "application/x-www-form-urlencoded":
+            logger.warning("/voice rejected: unsupported content-type %r", content_type)
+            return Response("Unsupported Media Type", status_code=415, media_type="text/plain")
+
+        from urllib.parse import parse_qsl as _parse_qsl
+        try:
+            params = dict(_parse_qsl(raw_body.decode("utf-8"), keep_blank_values=True))
+        except Exception:
+            logger.warning("/voice rejected: form parse error")
+            return Response("Bad Request", status_code=400, media_type="text/plain")
+
+        signature = request.headers.get("x-twilio-signature", "")
+        if not signature:
+            logger.warning("/voice rejected: missing X-Twilio-Signature header")
+            return Response("Forbidden", status_code=403, media_type="text/plain")
+
+        public_base = _public_http_base_url()
+        if public_base:
+            signed_url = f"{public_base.rstrip('/')}{request.url.path}"
+        else:
+            signed_url = str(request.url)
+
+        if not validate_twilio_signature(deps.auth_token, signed_url, params, signature):
+            logger.warning(
+                "/voice rejected: invalid X-Twilio-Signature url=%s call_sid=%s",
+                signed_url, params.get("CallSid", ""),
+            )
+            return Response("Forbidden", status_code=403, media_type="text/plain")
+
+        call_sid = params.get("CallSid", "") or ""
+        account_sid = params.get("AccountSid", "") or ""
+        if not call_sid or not account_sid:
+            logger.warning(
+                "/voice rejected: missing CallSid or AccountSid in POST body (have=%s)",
+                sorted(params.keys()),
+            )
+            return Response("Bad Request", status_code=400, media_type="text/plain")
+
+        if account_sid != deps.account_sid:
+            logger.warning(
+                "/voice rejected: AccountSid mismatch expected=%s got=%s",
+                deps.account_sid, account_sid,
+            )
+            return Response("Forbidden", status_code=403, media_type="text/plain")
+
+        # ANI → CustomerService lookup (RI-5: authoritative-by-origin).
+        # We resolve customer_id from the Twilio-supplied phone number
+        # BEFORE minting TwiML. The result is embedded as a <Parameter/>
+        # so WSS receives a customer_id whose sole provenance is our own
+        # CRM lookup — customParameters as a channel is caller-controlled,
+        # but this specific value is not caller-provided.
+        #   * Direction=inbound        → customer is the caller (From)
+        #   * Direction=outbound-api   → customer is the callee (To)
+        # When lookup fails (no CRM match, no CustomerService configured,
+        # or empty phone), we omit the parameter entirely. WSS will then
+        # fall through to clarify_no_record instead of fabricating any
+        # balance (Fix D).
+        resolved_customer_id: str = ""
+        direction = (params.get("Direction", "") or "").lower()
+        from_number = params.get("From", "") or ""
+        to_number = params.get("To", "") or ""
+        caller_phone = to_number if "outbound" in direction else from_number
+        if deps.customer_service is not None and caller_phone:
+            try:
+                customer = deps.customer_service.find_by_phone(
+                    TenantId(deps.tenant_id), caller_phone,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "/voice CRM lookup failed call_sid=%s phone=%s err=%s",
+                    call_sid, caller_phone, exc,
+                )
+                customer = None
+            if customer is not None:
+                resolved_customer_id = str(customer.customer_id)
+                logger.info(
+                    "/voice resolved customer call_sid=%s direction=%s phone=%s customer_id=%s",
+                    call_sid, direction, caller_phone, resolved_customer_id,
+                )
+            else:
+                logger.info(
+                    "/voice no CRM match call_sid=%s direction=%s phone=%s "
+                    "(WSS will render clarify_no_record)",
+                    call_sid, direction, caller_phone,
+                )
+        else:
+            logger.info(
+                "/voice skipping CRM lookup call_sid=%s customer_service=%s phone=%r",
+                call_sid, deps.customer_service is not None, caller_phone,
+            )
+
+        ticket = await deps.admission_registry.issue(
+            call_sid=call_sid,
+            account_sid=account_sid,
+            tenant_id=deps.tenant_id,
+        )
+
+        host = request.headers.get("host") or request.url.hostname
+        wss = f"wss://{host}/twilio/media-stream"
+        # secrets.token_urlsafe uses only URL-safe base64 [-_A-Za-z0-9] so
+        # no XML-attribute escaping is required for value. Escape anyway
+        # so a future token-format change cannot silently break TwiML.
+        import xml.sax.saxutils as _xmlutils
+        token_attr = _xmlutils.quoteattr(ticket.token)
+        wss_attr = _xmlutils.quoteattr(wss)
+        customer_param = ""
+        if resolved_customer_id:
+            customer_attr = _xmlutils.quoteattr(resolved_customer_id)
+            customer_param = f"<Parameter name=\"customer_id\" value={customer_attr}/>"
+        xml = (
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+            f"<Response><Connect><Stream url={wss_attr}>"
+            f"<Parameter name=\"admission_token\" value={token_attr}/>"
+            f"{customer_param}"
+            "</Stream></Connect></Response>"
+        )
+        return Response(xml, media_type="application/xml")
 
     async def _health(request):
         return Response("ok", media_type="text/plain")
