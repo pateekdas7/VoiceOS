@@ -23,9 +23,11 @@ class TTSAdapter(Protocol):
     a uniform clause-level streaming contract.
 
     The adapter MUST:
-    - Accept an async stream of text chunks from the LLM token stream.
-    - Use ClauseSplitter internally to assemble complete clauses.
-    - Synthesize each clause and yield an AudioClause.
+    - Accept an async stream of text chunks that together form ONE clause.
+      Sentence segmentation is performed upstream by ``ClauseSplitter``
+      inside ``TrueStreamingPipeline``; the adapter MUST NOT re-split.
+    - Synthesize the clause and yield an AudioClause per audio chunk as it
+      is decoded by the backend.
     - Request VRAM from the GPU Scheduler before inference (V7 Ch6).
 
     Architecture: V1 Ch15-17.

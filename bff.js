@@ -554,20 +554,50 @@ app.get('/campaigns/:id', requireAuth, async (req, res) => {
 
 app.put('/campaigns/:id', requireAuth, async (req, res) => {
   try {
-    const { name, description, target_call_count, daily_start_hour, daily_end_hour, timezone } = req.body;
+    const {
+      name, description, target_call_count,
+      daily_start_hour, daily_end_hour, timezone,
+      scheduled_start, scheduled_end,
+      allowed_weekdays, excluded_dates,
+      max_attempts, retry_interval_hours,
+    } = req.body;
+
+    // Coerce arrays where present (frontend may send undefined = no change)
+    const weekdays = Array.isArray(allowed_weekdays)
+      ? allowed_weekdays.map(n => parseInt(n, 10)).filter(n => n >= 1 && n <= 7)
+      : null;
+    const excl = Array.isArray(excluded_dates)
+      ? excluded_dates.filter(d => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d))
+      : null;
+
     const r = await pool.query(
       `UPDATE campaigns SET
-        name=COALESCE($1,name), description=COALESCE($2,description),
+        name=COALESCE($1,name),
+        description=COALESCE($2,description),
         target_call_count=COALESCE($3,target_call_count),
         daily_start_hour=COALESCE($4,daily_start_hour),
         daily_end_hour=COALESCE($5,daily_end_hour),
-        timezone=COALESCE($6,timezone), updated_at=now()
-       WHERE campaign_id=$7 RETURNING *`,
-      [name, description, target_call_count, daily_start_hour, daily_end_hour, timezone, req.params.id]
+        timezone=COALESCE($6,timezone),
+        scheduled_start=COALESCE($7::timestamptz,scheduled_start),
+        scheduled_end=COALESCE($8::timestamptz,scheduled_end),
+        allowed_weekdays=COALESCE($9::smallint[],allowed_weekdays),
+        excluded_dates=COALESCE($10::date[],excluded_dates),
+        max_attempts=COALESCE($11,max_attempts),
+        retry_interval_hours=COALESCE($12,retry_interval_hours),
+        updated_at=now()
+       WHERE campaign_id=$13 RETURNING *`,
+      [
+        name, description, target_call_count,
+        daily_start_hour, daily_end_hour, timezone,
+        scheduled_start || null, scheduled_end || null,
+        weekdays, excl,
+        max_attempts, retry_interval_hours,
+        req.params.id,
+      ]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'not_found' });
     res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { console.error('PUT /campaigns error:', e.message); res.status(500).json({ error: 'server_error', detail: e.message }); }
 });
 
 const LIFECYCLE_TRANSITIONS = {
@@ -648,6 +678,76 @@ app.delete('/campaigns/:id/distribution-rules/:ruleId', requireAuth, async (req,
   } catch (e) { res.status(500).json({ error: 'server_error' }); }
 });
 
+// ═════════════════════════════════════════════════════════════════════════════
+// PIPELINES — CRUD (backs frontend/lib/local-pipelines.ts)
+// ═════════════════════════════════════════════════════════════════════════════
+app.get('/campaigns/:id/pipelines', requireAuth, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT pipeline_id, campaign_id, tenant_id, name, status, created_at, updated_at, created_by
+         FROM pipelines
+        WHERE campaign_id=$1 AND tenant_id=$2
+        ORDER BY created_at ASC`,
+      [req.params.id, req.user.tenant_id]
+    );
+    res.json(r.rows);
+  } catch (e) { console.error('pipelines list:', e); res.status(500).json({ error: 'server_error' }); }
+});
+
+app.post('/campaigns/:id/pipelines', requireAuth, async (req, res) => {
+  try {
+    const { name } = req.body || {};
+    if (!name || !String(name).trim()) return res.status(400).json({ error: 'missing_name' });
+    // Verify tenant owns campaign
+    const cam = await pool.query(
+      'SELECT campaign_id FROM campaigns WHERE campaign_id=$1 AND tenant_id=$2',
+      [req.params.id, req.user.tenant_id]
+    );
+    if (!cam.rows.length) return res.status(404).json({ error: 'campaign_not_found' });
+
+    const r = await pool.query(
+      `INSERT INTO pipelines (tenant_id, campaign_id, name, status, created_by)
+       VALUES ($1,$2,$3,'ACTIVE',$4)
+       RETURNING pipeline_id, campaign_id, tenant_id, name, status, created_at, updated_at, created_by`,
+      [req.user.tenant_id, req.params.id, String(name).trim(), req.user.email || req.user.sub || '']
+    );
+    res.status(201).json(r.rows[0]);
+  } catch (e) { console.error('pipeline create:', e); res.status(500).json({ error: 'server_error' }); }
+});
+
+app.get('/campaigns/:id/pipelines/:pipelineId', requireAuth, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT pipeline_id, campaign_id, tenant_id, name, status, created_at, updated_at, created_by
+         FROM pipelines
+        WHERE pipeline_id=$1 AND campaign_id=$2 AND tenant_id=$3`,
+      [req.params.pipelineId, req.params.id, req.user.tenant_id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'pipeline_not_found' });
+    res.json(r.rows[0]);
+  } catch (e) { console.error('pipeline get:', e); res.status(500).json({ error: 'server_error' }); }
+});
+
+app.patch('/campaigns/:id/pipelines/:pipelineId', requireAuth, async (req, res) => {
+  try {
+    const { name, status } = req.body || {};
+    const set = [], vals = [];
+    if (name && String(name).trim()) { vals.push(String(name).trim()); set.push(`name=$${vals.length}`); }
+    if (status && ['DRAFT','ACTIVE','PAUSED','ARCHIVED'].includes(status)) { vals.push(status); set.push(`status=$${vals.length}`); }
+    if (!set.length) return res.status(400).json({ error: 'no_updates' });
+    set.push('updated_at=now()');
+    vals.push(req.params.pipelineId, req.params.id, req.user.tenant_id);
+    const r = await pool.query(
+      `UPDATE pipelines SET ${set.join(', ')}
+        WHERE pipeline_id=$${vals.length-2} AND campaign_id=$${vals.length-1} AND tenant_id=$${vals.length}
+        RETURNING pipeline_id, campaign_id, tenant_id, name, status, created_at, updated_at, created_by`,
+      vals
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'pipeline_not_found' });
+    res.json(r.rows[0]);
+  } catch (e) { console.error('pipeline patch:', e); res.status(500).json({ error: 'server_error' }); }
+});
+
 // Lifecycle state machine — registered AFTER specific sub-resource routes
 app.post('/campaigns/:id/:action', requireAuth, async (req, res) => {
   try {
@@ -719,8 +819,8 @@ app.post('/campaigns/:id/leads/upload', requireAuth, async (req, res) => {
       console.log('[upload] column_mapping json:', cmJson?.slice(0,80));
       const imp = await client.query(
         `INSERT INTO lead_imports (campaign_id,tenant_id,filename,original_columns,column_mapping,status,total_rows,rows_data)
-         VALUES ($1,$2,$3,$4,$5::jsonb,'PROCESSING',$6,$7::jsonb) RETURNING import_id`,
-        [campaignId, tenantId, filename || 'upload.csv', columns, cmJson, rows.length, JSON.stringify(rows)]
+         VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,'PROCESSING',$6,$7::jsonb) RETURNING import_id`,
+        [campaignId, tenantId, filename || 'upload.csv', JSON.stringify(columns), cmJson, rows.length, JSON.stringify(rows)]
       );
       importId = imp.rows[0].import_id;
     }

@@ -83,10 +83,22 @@ class TestOutputValidator:
         assert result.plan_id == plan.plan_id
 
     def test_short_output_rejected(self) -> None:
+        # Fix B (Gate 3D): the 3-word minimum still rejects arbitrary short
+        # text. Use "hi bye" (2 words, not in _SHORT_SAFE_ACK allowlist).
         validator = OutputValidator()
         plan = _make_plan()
-        result = validator.validate("ok", plan)
+        result = validator.validate("hi bye", plan)
         assert not result.valid
+
+    def test_short_safe_ack_exempt_from_min_words(self) -> None:
+        # Fix B (Gate 3D): deterministic conversational acknowledgements
+        # bypass the 3-word minimum. The 3-word rule is preserved for any
+        # other short text (see test_short_output_rejected above).
+        validator = OutputValidator()
+        plan = _make_plan()
+        for ack in ("हाँ", "जी", "ठीक है", "ok", "okay", "yes", "अच्छा"):
+            result = validator.validate(ack, plan)
+            assert result.valid, f"expected {ack!r} to bypass min-words check: {result.violations}"
 
     def test_amount_within_tolerance_accepted(self) -> None:
         validator = OutputValidator()

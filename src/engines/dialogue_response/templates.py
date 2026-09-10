@@ -95,7 +95,17 @@ SCRIPT_TEMPLATES: dict[str, str] = {
         "Sir, {outstanding} outstanding hai account pe — "
         "10 ko ya 15 ko, kaunsa better rahega?"
     ),
-
+    # ── No authoritative outstanding-balance available ────────────────────
+    # RI-5: asserting any amount here would be fabrication. This template
+    # asks the customer to identify their loan without ever committing to
+    # a number, and never contains an {outstanding} placeholder. Used only
+    # when both CustomerContext.primary_loan AND
+    # response_plan.facts['outstanding_balance_minor'] are absent — i.e.
+    # the authoritative CRM/Collections lookup failed for this call.
+    "clarify_no_record": (
+        "Sir, आपके account का detail अभी हमारे पास नहीं है — "
+        "क्या आप अपना loan account number बता सकते हैं?"
+    ),
     # ── Close scripts ─────────────────────────────────────────────────────
     "close_soft": (
         "Perfect sir — commitment note kar liya. "

@@ -28,6 +28,19 @@ logger = logging.getLogger(__name__)
 
 _MIN_OUTPUT_TOKENS = 3
 
+_SHORT_SAFE_ACK: frozenset[str] = frozenset({
+    "हाँ", "हां", "जी", "जी हाँ", "जी हां", "नहीं", "ना",
+    "ठीक", "ठीक है", "अच्छा", "बिल्कुल", "सही",
+    "ok", "okay", "sure", "yes", "no", "right", "correct",
+})
+"""Deterministic conversational acknowledgements exempt from the 3-word
+minimum. Every entry is a full-utterance reply a real caller/agent would
+say on its own; arbitrary short LLM output (partial words, hallucinated
+fragments) is still rejected. Whitespace/punctuation are stripped before
+membership check."""
+
+_ACK_PUNCT_STRIP = re.compile(r"[।.!?,;\s]+$")
+
 _AMOUNT_PATTERN = re.compile(r"(?:₹|Rs\.?\s*)(\d[\d,]*(?:\.\d{1,2})?)")
 
 
@@ -113,7 +126,9 @@ class OutputValidator:
 
         word_count = len(stripped.split())
         if word_count < _MIN_OUTPUT_TOKENS:
-            violations.append(f"Output too short: {word_count} words (min {_MIN_OUTPUT_TOKENS})")
+            ack_key = _ACK_PUNCT_STRIP.sub("", stripped).lower()
+            if ack_key not in _SHORT_SAFE_ACK:
+                violations.append(f"Output too short: {word_count} words (min {_MIN_OUTPUT_TOKENS})")
 
         # Must-not-say check.
         for mns_item in response_plan.must_not_say:

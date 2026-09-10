@@ -809,32 +809,28 @@ class ConversationEngine:
                     turn.call_id,
                     turn.turn_id,
                 )
-                # Phase I Gate 1 — buffer the entire LLM response before any
-                # audio reaches Twilio so mid-response TTS latency cannot
-                # starve playback into audible gaps.
+                # Play first clause as soon as threshold_ms of audio is buffered,
+                # stream remaining clauses concurrently (buffered_streaming mode).
                 clauses = await self._run_llm_streaming_path(
                     prompt_text, response_plan, playback, customer_name,
-                    tts_mode="full_response",
+                    tts_mode="buffered_streaming",
                     cancel_event=cancel_event,
                 )
                 all_clauses.extend(clauses)
                 full_output_text = " ".join(c.text for c in all_clauses)
             else:
                 full_output_text = dialogue_output.reply_text
-                # Phase I Gate 1 — same full-response buffering for the
-                # scripted golden path: ClauseSplitter still segments the
-                # reply, but every clause waits inside the FULL_RESPONSE
-                # gate until is_final, then releases FIFO to the scheduler.
+                # buffered_streaming: ClauseSplitter segments the reply; first
+                # clause releases after threshold_ms is buffered, rest stream behind.
                 all_clauses.extend(await self.speak_scripted_text(
                     full_output_text, playback, response_plan,
-                    tts_mode="full_response",
+                    tts_mode="buffered_streaming",
                 ))
         else:
-            # Phase I Gate 1 — buffer the whole response even in the
-            # dialogue-response-not-wired legacy path.
+            # buffered_streaming: legacy no-dialogue-response path.
             clauses = await self._run_llm_streaming_path(
                 prompt_text, response_plan, playback, customer_name,
-                tts_mode="full_response",
+                tts_mode="buffered_streaming",
                 cancel_event=cancel_event,
             )
             all_clauses.extend(clauses)

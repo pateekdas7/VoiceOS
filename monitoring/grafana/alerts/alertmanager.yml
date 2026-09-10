@@ -73,6 +73,6 @@ receivers:
   # (continue: true on each severity route ensures all routes fire).
   - name: voiceos-webhook
     webhook_configs:
-      - url: "${VOICEOS_WEBHOOK_URL:-http://web-api:8001/webhooks/alertmanager}"
+      - url: "http://web-api.voiceos-runtime.svc:8001/webhooks/alertmanager"
         send_resolved: true
         max_alerts: 0

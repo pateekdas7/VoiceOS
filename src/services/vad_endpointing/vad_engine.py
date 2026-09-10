@@ -60,25 +60,23 @@ class VADModelProtocol(Protocol):
 
 
 class SileroVADModel:
-    """Silero VAD v4 ONNX model via onnxruntime.
+    """Silero VAD v5 ONNX model via onnxruntime.
 
-    Wraps the LSTM-based Silero VAD v4 ONNX file and manages the hidden/cell
-    state tensors across windows.  Call ``reset()`` at the start of every new
-    call to zero out the recurrent state.
+    Wraps the Silero VAD v5 ONNX file (merged recurrent-state tensor) and
+    manages the recurrent state across windows. Call ``reset()`` at the
+    start of every new call to zero out the state.
 
-    Silero VAD v4 IO schema:
+    Silero VAD v5 IO schema:
         Inputs : ``input``  float32[1, window_size]
-                 ``h``      float32[2, 1, 64]   (LSTM hidden state)
-                 ``c``      float32[2, 1, 64]   (LSTM cell state)
-                 ``sr``     int64 scalar         (sample rate — must be 16000)
+                 ``state``  float32[2, 1, 128]   (merged recurrent state)
+                 ``sr``     int64 scalar         (sample rate — 16000)
         Outputs: ``output`` float32[1, 1]        (speech probability)
-                 ``hn``     float32[2, 1, 64]
-                 ``cn``     float32[2, 1, 64]
+                 ``stateN`` float32[2, 1, 128]   (next state)
 
     Architecture: V1 Ch6.2 (Silero VAD model selection and calibration).
     """
 
-    def __init__(self, model_path: str | Path) -> None:
+    def __init__(self, model_path):
         """Load the ONNX model from disk.
 
         Args:
@@ -95,41 +93,38 @@ class SileroVADModel:
             raise FileNotFoundError(
                 f"Silero VAD model not found at '{path}'. "
                 "Run `python src/services/vad_endpointing/models/download_silero.py` "
-                "to download the model (~1 MB)."
+                "to download the model."
             )
 
         session_opts = ort.SessionOptions()
         session_opts.inter_op_num_threads = 1
         session_opts.intra_op_num_threads = 1
-        session_opts.log_severity_level = 3  # suppress warnings
+        session_opts.log_severity_level = 3
 
         self._session = ort.InferenceSession(
             str(path),
             sess_options=session_opts,
             providers=["CPUExecutionProvider"],
         )
-        self._sr: np.ndarray = np.array(16000, dtype=np.int64)
-        self._h: np.ndarray = np.zeros((2, 1, 64), dtype=np.float32)
-        self._c: np.ndarray = np.zeros((2, 1, 64), dtype=np.float32)
+        self._sr = np.array(16000, dtype=np.int64)
+        self._state = np.zeros((2, 1, 128), dtype=np.float32)
 
-    def predict(self, pcm_int16: bytes) -> float:
-        """Run one 512-sample window through Silero VAD and return speech probability."""
+    def predict(self, pcm_int16):
+        """Run one 512-sample window through Silero VAD; return speech probability."""
         samples = np.frombuffer(pcm_int16, dtype=np.int16).astype(np.float32) / 32768.0
-        audio_input = samples[np.newaxis, :]  # shape [1, 512]
+        audio_input = samples[np.newaxis, :]
 
         ort_inputs = {
             "input": audio_input,
-            "h": self._h,
-            "c": self._c,
+            "state": self._state,
             "sr": self._sr,
         }
-        output, self._h, self._c = self._session.run(["output", "hn", "cn"], ort_inputs)
+        output, self._state = self._session.run(["output", "stateN"], ort_inputs)
         return float(output[0][0])
 
-    def reset(self) -> None:
-        """Zero-initialise the LSTM recurrent state."""
-        self._h = np.zeros((2, 1, 64), dtype=np.float32)
-        self._c = np.zeros((2, 1, 64), dtype=np.float32)
+    def reset(self):
+        """Zero-initialise the recurrent state."""
+        self._state = np.zeros((2, 1, 128), dtype=np.float32)
 
 
 # ---------------------------------------------------------------------------

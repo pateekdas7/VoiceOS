@@ -90,6 +90,30 @@ class TestPlaybackScheduler:
         with pytest.raises(InvariantViolationError):
             await scheduler.enqueue(_make_clause(2))
 
+    async def test_set_protected_suppresses_barge_in(self) -> None:
+        """set_protected(gen) then flush() must NOT advance the generation."""
+        scheduler = PlaybackScheduler()
+        gen_before = scheduler.generation
+        await scheduler.enqueue(_make_clause(0))
+        scheduler.set_protected(gen_before)
+        flushed = await scheduler.flush()
+        assert flushed == []
+        assert scheduler.generation == gen_before
+        # Queue was NOT drained -- protection preserves in-flight playback.
+        assert scheduler.depth == 1
+
+    async def test_clear_protection_restores_barge_in(self) -> None:
+        """clear_protection() then flush() advances generation normally."""
+        scheduler = PlaybackScheduler()
+        gen_before = scheduler.generation
+        await scheduler.enqueue(_make_clause(0))
+        scheduler.set_protected(gen_before)
+        scheduler.clear_protection()
+        flushed = await scheduler.flush()
+        assert len(flushed) == 1
+        assert scheduler.generation == gen_before + 1
+        assert scheduler.depth == 0
+
 
 class TestAudioOutput:
     def test_ulaw_conversion_returns_bytes(self) -> None:

@@ -526,6 +526,29 @@ def build_audio_preprocessor() -> object:
     return AudioPreprocessorService()
 
 
+def build_vad_model_factory():
+    """Return a callable factory for SileroVADModel, or None to fall back to EnergyVAD.
+
+    Reads SILERO_VAD_MODEL_PATH from the environment.  If the variable is set
+    and the file exists the factory is returned; otherwise None is returned and
+    the media-gateway will use EnergyVADModel as a fallback.
+    """
+    model_path = os.environ.get("SILERO_VAD_MODEL_PATH", "")
+    if not model_path:
+        logger.warning("SILERO_VAD_MODEL_PATH not set — VAD will use EnergyVADModel fallback")
+        return None
+    import pathlib as _pl
+    if not _pl.Path(model_path).exists():
+        logger.warning(
+            "SILERO_VAD_MODEL_PATH=%r does not exist — VAD will use EnergyVADModel fallback",
+            model_path,
+        )
+        return None
+    from src.services.vad_endpointing.vad_engine import SileroVADModel
+    logger.info("Silero VAD model found at %r — wiring SileroVADModel factory", model_path)
+    return lambda: SileroVADModel(model_path)
+
+
 def build_shared_call_dependencies() -> object:
     """Everything src/services/media_gateway/twilio_ws_entrypoint.py's
     Starlette app needs, constructed once for the life of the process —
@@ -566,6 +589,7 @@ def build_shared_call_dependencies() -> object:
         recording_dir=_env("CALL_RECORDING_DIR", ""),
         greeting_timeout_s=float(_env("GREETING_TIMEOUT_S", "60.0")),
         greeting_cache=greeting_cache,
+        vad_model_factory=build_vad_model_factory(),
     )
 
 
