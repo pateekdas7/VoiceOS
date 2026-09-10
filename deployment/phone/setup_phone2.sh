@@ -45,20 +45,25 @@ pkg install -y \
     build-essential clang make \
     libffi openssl \
     postgresql redis \
-    rust
+    golang rust
 ok "System packages installed"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2. cloudflared (ARM64 binary from GitHub)
+# 2. cloudflared (built from source via Go — the GitHub ARM64 binary is not PIE
+#    and won't run on Android. Go on Termux builds PIE automatically.)
 # ─────────────────────────────────────────────────────────────────────────────
-log "--- [2/9] cloudflared ---"
+log "--- [2/9] cloudflared (building from source — takes ~10 min) ---"
 if command -v cloudflared &>/dev/null; then
     warn "cloudflared already installed: $(cloudflared version 2>&1 | head -1)"
 else
-    CF_URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64"
-    curl -fL "$CF_URL" -o "$PREFIX/bin/cloudflared"
-    chmod +x "$PREFIX/bin/cloudflared"
-    cloudflared version | head -1 && ok "cloudflared installed" || die "cloudflared install failed"
+    # Ensure ~/go/bin is on PATH for this session
+    export PATH="$PATH:$HOME/go/bin"
+    go install github.com/cloudflare/cloudflared/cmd/cloudflared@latest \
+        && ok "cloudflared built and installed at ~/go/bin/cloudflared" \
+        || warn "cloudflared build failed — use 'ssh -R 80:localhost:8010 nokey@localhost.run' as tunnel instead"
+    # Persist PATH for future sessions
+    grep -q 'go/bin' "$HOME/.bashrc" 2>/dev/null \
+        || echo 'export PATH=$PATH:$HOME/go/bin' >> "$HOME/.bashrc"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -345,13 +350,17 @@ tmux new-window -t voiceos -n 'web-api'
 tmux send-keys -t voiceos:3 \
     "cd \$VOICEOS_DIR && bash deployment/cpu/start_webapi.sh" Enter
 
-# ── Window 4: cloudflared tunnel (exposes media-gw to Twilio) ─────────────────
-# Quick tunnel — URL changes every restart. Copy the URL shown here into:
-#   .env  →  PUBLIC_WS_BASE_URL=wss://<random>.trycloudflare.com
-#   Twilio Console → TwiML App → Voice Request URL → https://<same-random>.trycloudflare.com/voice
-tmux new-window -t voiceos -n 'cloudflared'
-tmux send-keys -t voiceos:4 \
-    "cloudflared tunnel --url http://localhost:8010 2>&1 | tee \$HOME/voiceos-logs/cloudflared.log" Enter
+# ── Window 4: tunnel (exposes media-gw to Twilio) ────────────────────────────
+# URL changes every restart. Copy it into .env PUBLIC_WS_BASE_URL and Twilio Console.
+# Uses cloudflared if available, otherwise falls back to localhost.run (SSH tunnel).
+tmux new-window -t voiceos -n 'tunnel'
+if command -v cloudflared &>/dev/null || [ -f "\$HOME/go/bin/cloudflared" ]; then
+    CF="\${HOME}/go/bin/cloudflared"
+    command -v cloudflared &>/dev/null && CF="cloudflared"
+    tmux send-keys -t voiceos:4 "\$CF tunnel --url http://localhost:8010 2>&1 | tee \$HOME/voiceos-logs/tunnel.log" Enter
+else
+    tmux send-keys -t voiceos:4 "echo 'cloudflared not found — using localhost.run SSH tunnel'; ssh -R 80:localhost:8010 nokey@localhost.run 2>&1 | tee \$HOME/voiceos-logs/tunnel.log" Enter
+fi
 
 echo ""
 echo "VoiceOS started in tmux session 'voiceos'."
