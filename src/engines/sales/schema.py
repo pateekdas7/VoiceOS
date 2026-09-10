@@ -10,6 +10,7 @@ Architecture: VoiceOS Phase 2 Sales Intelligence Layer.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
 
 
@@ -210,6 +211,16 @@ class SalesState:
     uncertain_fields: list[str] = field(default_factory=list)  # mentioned but unconfirmed
     unanswered_required_fields: list[str] = field(default_factory=list)
 
+    # Callback scheduling
+    requested_callback_time: datetime | None = None
+    """Customer-requested callback datetime (populated from DATE entity when
+    CALLBACK intent is detected). Asia/Kolkata timezone. None when the customer
+    requested a callback but did not specify a time, or when no callback was
+    requested this call.
+
+    Phase 3: used by SalesProductionActionDispatcher to invoke CallbackScheduler.
+    """
+
     # History
     last_sales_action: SalesAction | None = None
     previous_sales_action: SalesAction | None = None
@@ -245,6 +256,11 @@ class SalesState:
             "preferred_locality": self.preferred_locality,
             "site_visit_interest": self.site_visit_interest.value if self.site_visit_interest else None,
             "competitor_consideration": self.competitor_consideration,
+            "requested_callback_time": (
+                self.requested_callback_time.isoformat()
+                if self.requested_callback_time is not None
+                else None
+            ),
             "objections": self.objections,
             "objection_count": self.objection_count,
             "confirmed_fields": self.confirmed_fields,
@@ -292,6 +308,14 @@ class SalesState:
         svi = data.get("site_visit_interest")
         s.site_visit_interest = SiteVisitInterest(svi) if svi else None
         s.competitor_consideration = data.get("competitor_consideration")
+        _rct = data.get("requested_callback_time")
+        if _rct:
+            try:
+                s.requested_callback_time = datetime.fromisoformat(_rct)
+            except (ValueError, TypeError):
+                s.requested_callback_time = None
+        else:
+            s.requested_callback_time = None
         s.objections = data.get("objections", [])
         s.objection_count = data.get("objection_count", 0)
         s.confirmed_fields = data.get("confirmed_fields", [])

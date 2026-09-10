@@ -219,6 +219,8 @@ def create_web_api(
     report_repository: ReportRepositoryPort | None = None,
     capacity_forecast_repository: CapacityForecastRepositoryPort | None = None,
     system_x_service: Any = None,
+    call_summary_repository: Any = None,
+    callback_scheduler: Any = None,
     frontend_base_url: str,
     bff_public_url: str,
     health_aggregator: HealthAggregator | None = None,
@@ -405,6 +407,12 @@ def create_web_api(
 
     if system_x_service is not None:
         routes.extend(_build_system_x_routes(system_x_service))
+
+    # Phase 3: post-call sales summary + callback management endpoints.
+    if call_summary_repository is not None:
+        routes.extend(_build_call_summary_routes(call_summary_repository))
+    if callback_scheduler is not None:
+        routes.extend(_build_callbacks_routes(callback_scheduler))
 
     # Startup handlers for background tasks (GPU polling, daily aggregation).
     startup_handlers = _build_startup_handlers(gpu_fleet_monitor, analytics_service)
@@ -2508,6 +2516,69 @@ def _build_dialer_routes(
         Route("/campaigns/{campaign_id}/dialer/status", dialer_status, methods=["GET"]),
         Route("/dialer/twilio/status", twilio_status_callback, methods=["POST"]),
     ]
+
+
+def _build_call_summary_routes(call_summary_repository: Any) -> list[Route]:
+    """Client -> Phase 3 post-call sales summaries.
+
+    GET /calls/{call_id}/summary — retrieve the structured post-call summary
+    for a specific call_id, scoped to the authenticated tenant (AR-8).
+    """
+
+    async def get_call_summary(request: Request) -> JSONResponse:
+        try:
+            session = require_tenant_permission(request, PERM_READ_ALL)
+        except SessionRequiredError:
+            return _error(401, "UNAUTHENTICATED", "sign in required")
+        except ForbiddenError as exc:
+            return _error(403, "FORBIDDEN", str(exc))
+
+        call_id = request.path_params["call_id"]
+        tenant_id = str(_require_tenant_id(session))
+        summary = call_summary_repository.get(call_id, tenant_id)
+        if summary is None:
+            return _error(404, "NOT_FOUND", f"no summary found for call_id={call_id!r}")
+        return JSONResponse(summary)
+
+    return [Route("/calls/{call_id}/summary", get_call_summary, methods=["GET"])]
+
+
+def _build_callbacks_routes(callback_scheduler: Any) -> list[Route]:
+    """Client -> Phase 3 callback management.
+
+    GET /callbacks/pending?customer_id=... — list pending callbacks for a customer.
+    """
+
+    async def list_pending_callbacks(request: Request) -> JSONResponse:
+        try:
+            session = require_tenant_permission(request, PERM_READ_ALL)
+        except SessionRequiredError:
+            return _error(401, "UNAUTHENTICATED", "sign in required")
+        except ForbiddenError as exc:
+            return _error(403, "FORBIDDEN", str(exc))
+
+        tenant_id = _require_tenant_id(session)
+        customer_id_str = request.query_params.get("customer_id", "")
+        if not customer_id_str:
+            return _error(422, "VALIDATION_ERROR", "missing required query param: customer_id")
+
+        callbacks = callback_scheduler.find_pending(tenant_id, CustomerId(customer_id_str))
+        return JSONResponse(
+            [
+                {
+                    "callback_id": cb.callback_id,
+                    "call_id": str(cb.call_id),
+                    "customer_id": str(cb.customer_id),
+                    "preferred_time": cb.preferred_time.isoformat(),
+                    "timezone": cb.timezone,
+                    "phone_number": cb.phone_number,
+                    "recorded_at": cb.recorded_at.isoformat(),
+                }
+                for cb in callbacks
+            ]
+        )
+
+    return [Route("/callbacks/pending", list_pending_callbacks, methods=["GET"])]
 
 
 __all__ = ["create_web_api"]

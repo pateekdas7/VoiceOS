@@ -318,6 +318,8 @@ class ConversationEngine:
         lender_name: str = "",
         working_memory_store: Any | None = None,
         relationship_memory_store: Any | None = None,
+        sales_action_dispatcher: Any | None = None,
+        call_summary_repository: Any | None = None,
     ) -> None:
         self._cil = cil
         self._prompt_builder = prompt_builder
@@ -406,6 +408,19 @@ class ConversationEngine:
         # V2 Ch12 Relationship Memory: cross-call Postgres-backed customer state
         # loaded at call start and persisted at call end. Optional.
         self._relationship_memory_store = relationship_memory_store
+        # Per-call cache: call_id → RelationshipMemory loaded at start_call().
+        self._relationship_memories: dict[str, Any] = {}
+
+        # Phase 3: per-call sales production action wiring. Optional — None
+        # preserves pre-Phase-3 behavior (no callback scheduling, no handoff).
+        self._sales_action_dispatcher = sales_action_dispatcher
+        self._call_summary_repository = call_summary_repository
+
+        # Phase 3: per-call tenant_id cache so end_call() can scope the
+        # PostCallSummary write to the correct tenant without changing the
+        # existing end_call() signature (call_contexts stores CustomerContext,
+        # not the tenant_id).
+        self._call_tenant_ids: dict[str, str] = {}
 
         # One ConversationStateIntelligence tracker per active call — same
         # instance passed on every turn so dialogue-state persists across turns.
@@ -437,14 +452,17 @@ class ConversationEngine:
             raise RuntimeError("start_call() requires a context_assembler to be configured")
         context = self._context_assembler.assemble(tenant_id, CustomerId(customer_id), call_id)
         self._call_contexts[call_id] = context
+        self._call_tenant_ids[call_id] = str(tenant_id)
         if campaign_id is not None:
             self._call_campaign_ids[call_id] = campaign_id
 
-        # V2 Ch12: load relationship memory at call start so it is available
-        # to the CIL's AdaptiveConversationEngine on the very first turn.
+        # V2 Ch12: load relationship memory at call start and cache it so
+        # RelationshipContextBuilder can inject historical context into the
+        # LLM prompt on the very first turn without a second DB round-trip.
         if self._relationship_memory_store is not None:
             try:
-                self._relationship_memory_store.get(customer_id)
+                rm = self._relationship_memory_store.get(customer_id)
+                self._relationship_memories[call_id] = rm
             except Exception:
                 logger.warning("RelationshipMemoryStore.get() failed for customer %s", customer_id)
 
@@ -477,9 +495,41 @@ class ConversationEngine:
             except Exception:
                 logger.warning("RelationshipMemoryStore.update() failed for call %s", call_id)
 
+        # Phase 3: generate and persist post-call sales summary (best-effort).
+        _tenant_id = self._call_tenant_ids.get(call_id, "")
+        if self._call_summary_repository is not None and customer_id:
+            try:
+                from src.engines.sales.post_call_summary import generate_post_call_summary  # noqa: PLC0415
+                from src.engines.sales.schema import SalesState  # noqa: PLC0415
+                _wm_data: dict | None = None
+                if self._working_memory_store is not None:
+                    try:
+                        _wm = self._working_memory_store.get(call_id)
+                        _wm_data = _wm.sales_state
+                    except Exception:
+                        pass
+                if _wm_data:
+                    _ss = SalesState.from_dict(_wm_data)
+                    _call_summary = generate_post_call_summary(
+                        _ss,
+                        call_id=call_id,
+                        customer_id=customer_id,
+                        escalated=(outcome == "escalated"),
+                    )
+                    self._call_summary_repository.save(
+                        call_id=call_id,
+                        tenant_id=_tenant_id,
+                        customer_id=customer_id,
+                        summary=_call_summary,
+                    )
+            except Exception:
+                logger.warning("PostCallSummary.save() failed for call %s — continuing", call_id)
+
         self._call_contexts.pop(call_id, None)
         self._call_campaign_ids.pop(call_id, None)
         self._csi_trackers.pop(call_id, None)
+        self._call_tenant_ids.pop(call_id, None)
+        self._relationship_memories.pop(call_id, None)
 
     def campaign_id_for_call(self, call_id: str) -> str | None:
         """The campaign that dispatched ``call_id``, if any (Sprint-023)."""
@@ -716,6 +766,34 @@ class ConversationEngine:
             previous_sales_state=_prev_sales_state,
         )
 
+        # Step 2b — Phase 3: validate LeadStage FSM transition (best-effort).
+        # An invalid transition is logged as ERROR but never aborts turn processing
+        # — the call must continue even if the CIL produced a forbidden stage jump.
+        _new_sales_state = response_plan.sales_state
+        if _new_sales_state and _prev_sales_state:
+            try:
+                from src.engines.sales.pipeline_transitions import InvalidTransitionError, PipelineTransitionEngine  # noqa: PLC0415
+                from src.engines.sales.schema import LeadStage  # noqa: PLC0415
+                _prev_stage_val = _prev_sales_state.get("lead_stage")
+                _new_stage_val = _new_sales_state.get("lead_stage")
+                if _prev_stage_val and _new_stage_val and _prev_stage_val != _new_stage_val:
+                    try:
+                        PipelineTransitionEngine.evaluate(
+                            LeadStage(_prev_stage_val),
+                            LeadStage(_new_stage_val),
+                            reason=f"CIL turn {turn.turn_id}",
+                            trigger="SalesStateUpdater",
+                        )
+                    except InvalidTransitionError as _ite:
+                        logger.error(
+                            "ConversationEngine: invalid pipeline transition for call %s: %s",
+                            turn.call_id, _ite,
+                        )
+            except Exception:
+                logger.warning(
+                    "PipelineTransitionEngine check failed for call %s — continuing", turn.call_id
+                )
+
         # Detect a COUNTER negotiation move (agent proposed a counter-offer but
         # did not finalize commitment) and advance the per-call concession counter
         # so the next turn's NegotiationEngine knows how much runway is left.
@@ -725,6 +803,21 @@ class ConversationEngine:
 
         # Step 3 — Build deterministic prompt.
         prompt_text, _prompt_hash = self._prompt_builder.build(response_plan, context)
+
+        # Phase 3: append historical relationship context block to prompt (best-effort).
+        # Labeled "HISTORICAL" by RelationshipContextBuilder so the LLM cannot
+        # confuse past-call facts with current-turn state (architecture invariant).
+        _rm = self._relationship_memories.get(turn.call_id)
+        if _rm is not None:
+            try:
+                from src.engines.sales.relationship_context import RelationshipContextBuilder  # noqa: PLC0415
+                _ctx_block = RelationshipContextBuilder.build_block(_rm)
+                if _ctx_block:
+                    prompt_text = f"{prompt_text}\n\n{_ctx_block}"
+            except Exception:
+                logger.warning(
+                    "RelationshipContextBuilder failed for call %s — continuing", turn.call_id
+                )
 
         # Step 4 — RI-4: commit DecisionEnvelope before any external act.
         # Sprint-015: publishing is the authoritative effect this turn
@@ -757,6 +850,31 @@ class ConversationEngine:
         # commitment (RI-4: durably recorded before the agent ever speaks a
         # confirmation of it, i.e. before Step 5's LLM/TTS).
         await self._persist_finalized_commitment(turn, context, response_plan)
+
+        # Step 4b — Phase 3: dispatch production actions after RI-4 commit.
+        # SalesProductionActionDispatcher is best-effort — failures logged,
+        # never abort turn processing. HUMAN_HANDOFF is signalled to Step 5b.
+        _handoff_requested = False
+        if self._sales_action_dispatcher is not None and response_plan.sales_state:
+            try:
+                from src.engines.sales.schema import SalesAction  # noqa: PLC0415
+                _dispatched = self._sales_action_dispatcher.dispatch(
+                    response_plan.sales_state,
+                    context,
+                    turn.tenant_id,
+                    turn.call_id,
+                )
+                if _dispatched is not None:
+                    try:
+                        _da = SalesAction(_dispatched) if isinstance(_dispatched, str) else _dispatched
+                        _handoff_requested = (_da == SalesAction.HUMAN_HANDOFF)
+                    except (ValueError, TypeError):
+                        pass
+            except Exception:
+                logger.exception(
+                    "SalesProductionActionDispatcher.dispatch() failed for call %s — continuing",
+                    turn.call_id,
+                )
 
         # Sprint-015: track this call's Recoverable session state and take a
         # periodic snapshot (every `snapshot_every_n_turns` turns — V3 Ch6).
@@ -849,6 +967,27 @@ class ConversationEngine:
             )
             all_clauses.extend(clauses)
             full_output_text = " ".join(c.text for c in all_clauses)
+
+        # Step 5b — Phase 3: trigger human handoff AFTER the reply is spoken.
+        # Doing this after Step 5 (not before) ensures Kavya finishes her
+        # current turn before handing off — no mid-sentence cut-off.
+        if _handoff_requested and self._contact_center_service is not None:
+            try:
+                self.escalate_call(
+                    TenantId(turn.tenant_id),
+                    turn.call_id,
+                    reason="AI requested HUMAN_HANDOFF",
+                    ai_summary=full_output_text[:500],
+                )
+                logger.info(
+                    "ConversationEngine: HUMAN_HANDOFF escalation triggered for call %s",
+                    turn.call_id,
+                )
+            except Exception:
+                logger.exception(
+                    "ConversationEngine: escalate_call() failed for call %s — continuing without transfer",
+                    turn.call_id,
+                )
 
         # Step 6 — Async quality scoring (fire-and-forget, non-blocking).
         # Sprint-016: dispatched through the bounded WorkerPool at LOW

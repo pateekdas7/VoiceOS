@@ -1413,6 +1413,19 @@ def create_twilio_media_stream_app(deps: SharedCallDependencies) -> Starlette:
             if not forward_task.done():
                 forward_task.cancel()
             await asyncio.gather(forward_task, return_exceptions=True)
+            # Phase 3: persist post-call state (RelationshipMemory, PostCallSummary).
+            # Best-effort — never re-raise; the WS is already closing at this point.
+            try:
+                deps.conversation_engine.end_call(
+                    call_id,
+                    outcome="completed",
+                    customer_id=customer_id,
+                )
+            except Exception:
+                logger.exception(
+                    "end_call() failed in finally block for call_id=%s — continuing WS teardown",
+                    call_id,
+                )
 
     def _public_http_base_url() -> str:
         """Public HTTPS base URL Twilio POSTs /voice to — derived from the

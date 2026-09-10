@@ -406,6 +406,53 @@ def build_relationship_memory_store(conn: object) -> object:
     return RelationshipMemoryStore(conn)
 
 
+def build_callback_scheduler(conn: object) -> object:
+    """V5 Ch4.5: CallbackScheduler backed by Postgres CallbackRepository.
+
+    Publishes ``saas.callback.scheduled`` events via the EventBus Publisher
+    so downstream systems (dialer, CRM) can react to scheduled callbacks.
+    Uses a dedicated connection (clean transaction boundary).
+    """
+    from src.libs.event_bus.bus import EventBus
+    from src.libs.event_bus.publisher import Publisher
+    from src.libs.repositories.callback import CallbackRepository
+    from src.services.collections.callback import CallbackScheduler
+
+    raw_redis = build_raw_redis_client()
+    stream = _env("EVENT_BUS_STREAM", "voiceos-events")
+    bus = EventBus(raw_redis, stream=stream, max_retries=3)
+    publisher = Publisher(bus)
+    return CallbackScheduler(repository=CallbackRepository(conn), publisher=publisher)
+
+
+def build_call_summary_repository(conn: object) -> object:
+    """Phase 3: Postgres-backed post-call sales summary repository.
+
+    Stores structured summaries from generate_post_call_summary() for CRM
+    integration, analytics, and supervisor review. Uses ``call_summaries``
+    table (created lazily on first use via ensure_table()).
+    """
+    from src.libs.repositories.call_summary import PostCallSummaryRepository
+
+    repo = PostCallSummaryRepository(conn)
+    try:
+        repo.ensure_table()
+    except Exception:
+        logger.warning("PostCallSummaryRepository.ensure_table() failed — table may not exist yet")
+    return repo
+
+
+def build_sales_action_dispatcher(callback_scheduler: object) -> object:
+    """Phase 3: SalesProductionActionDispatcher wired with real CallbackScheduler.
+
+    SCHEDULE_FOLLOWUP → CallbackScheduler.schedule()
+    HUMAN_HANDOFF → returns signal; ConversationEngine calls escalate_call()
+    """
+    from src.engines.sales.production_actions import SalesProductionActionDispatcher
+
+    return SalesProductionActionDispatcher(callback_scheduler=callback_scheduler)
+
+
 def build_dialogue_response_engine() -> object:
     """The deterministic scripted-response FSM (Path-A Phase 6f) that
     drove Call-001 — zero-arg constructor, same pattern as build_cil()'s
@@ -484,6 +531,13 @@ def build_conversation_engine() -> object:
         # boundary — same pattern as promise_to_pay_service above).
         working_memory_store=build_working_memory_store(raw_redis),
         relationship_memory_store=build_relationship_memory_store(build_postgres_connection()),
+        # Phase 3: production action wiring — callback scheduling +
+        # post-call summary persistence. Each uses a dedicated Postgres
+        # connection to keep transaction boundaries clean.
+        sales_action_dispatcher=build_sales_action_dispatcher(
+            build_callback_scheduler(build_postgres_connection())
+        ),
+        call_summary_repository=build_call_summary_repository(build_postgres_connection()),
     )
     return engine
 

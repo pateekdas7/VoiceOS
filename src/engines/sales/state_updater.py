@@ -12,8 +12,10 @@ from __future__ import annotations
 import logging
 import re
 from copy import deepcopy
+from datetime import datetime, timezone
 
 from src.engines.entity_extraction.result import ExtractedEntities
+from src.engines.entity_extraction.slots import EntityType
 from src.engines.intent.result import IntentResult
 from src.engines.risk.result import RiskAssessment
 from src.engines.strategy.engine import StrategySelection
@@ -323,6 +325,7 @@ class SalesStateUpdater:
         transcript = intent.source_span
 
         self._update_requirements(state, transcript, entities)
+        self._update_callback_time(state, intent, entities)
         self._update_lead_stage(state, conversation_state)
         self._update_lead_intent(state, intent)
         self._update_objections(state, intent, risk)
@@ -433,6 +436,50 @@ class SalesStateUpdater:
             state.site_visit_interest = svi
             if QuestionField.SITE_VISIT_INTEREST.value not in state.confirmed_fields:
                 state.confirmed_fields.append(QuestionField.SITE_VISIT_INTEREST.value)
+
+    def _update_callback_time(
+        self,
+        state: SalesState,
+        intent: IntentResult,
+        entities: ExtractedEntities,
+    ) -> None:
+        """Extract and update requested_callback_time when CALLBACK intent is active.
+
+        Only updates from DATE entity — never invents a time. If intent is CALLBACK
+        but no DATE entity is present, leaves requested_callback_time as None.
+        If a new DATE entity is found, overwrites any previous value (customer may
+        have updated their preference).
+        """
+        if intent.label != IntentLabel.CALLBACK:
+            return
+
+        date_entity = entities.get(EntityType.DATE)
+        if date_entity is None:
+            # CALLBACK intent but no explicit date — do not invent a time.
+            return
+
+        try:
+            # Parse ISO 8601 date string from entity extractor.
+            parsed = datetime.fromisoformat(date_entity.normalized)
+            # Localize to Asia/Kolkata if no timezone info (entity extractor
+            # returns YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS without tz).
+            if parsed.tzinfo is None:
+                try:
+                    from zoneinfo import ZoneInfo
+                    parsed = parsed.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
+                except Exception:
+                    # zoneinfo unavailable in older envs — use UTC+5:30 offset.
+                    from datetime import timedelta
+                    parsed = parsed.replace(
+                        tzinfo=timezone(timedelta(hours=5, minutes=30))
+                    )
+            state.requested_callback_time = parsed
+        except (ValueError, TypeError):
+            # Malformed date string — do not update; keep previous value.
+            logger.debug(
+                "SalesStateUpdater: could not parse DATE entity for CALLBACK: %r",
+                date_entity.normalized,
+            )
 
     def _update_lead_stage(self, state: SalesState, conversation_state: str) -> None:
         """Map CIL conversation state → LeadStage."""
