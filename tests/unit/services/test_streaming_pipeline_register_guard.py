@@ -104,12 +104,16 @@ class TestRegisterGuardGate:
         assert "Prateek" in clauses[0].text
 
     async def test_literary_word_triggers_safe_fallback_on_final_clause(self) -> None:
+        # Fix C (Gate 3D): use a still-flagged literary word (प्रतीत) —
+        # भुगतान/राशि/विवरण were domain-vocab, moved out of _LITERARY. See
+        # test_register_guard.py::test_literary_word_flagged for the same
+        # substitution and the domain-vocab acceptance test alongside it.
         pipeline = TrueStreamingPipeline(ai_governance_service=None)
         playback = PlaybackScheduler()
         plan = _response_plan()
 
         clauses = await pipeline.run(
-            token_stream=await _single_token_stream("Aapka भुगतान समय पर करें।"),
+            token_stream=await _single_token_stream("Yeh उचित प्रतीत ho raha hai।"),
             response_plan=plan,
             tts_service=_tts_service(),
             validator=OutputValidator(),
@@ -117,7 +121,7 @@ class TestRegisterGuardGate:
         )
 
         assert len(clauses) == 1
-        assert "भुगतान" not in clauses[0].text
+        assert "प्रतीत" not in clauses[0].text
 
     async def test_clean_reply_passes_through_unmodified(self) -> None:
         """A reply with no register violations and no customer-name mention

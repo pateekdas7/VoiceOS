@@ -293,7 +293,7 @@ async def test_speak_greeting_synthesizes_and_sends_when_wired() -> None:
     clause = AudioClause(audio_data=b"\x00\x00" * 960, sample_rate=24000, text="namaste", clause_index=0, is_final=True)
     orch._deps.conversation_engine.build_greeting = MagicMock(return_value="Namaste sir, main Kavya bol rahi hoon.")
 
-    async def _fake_speak_scripted_text(text: str, playback: object) -> list[AudioClause]:
+    async def _fake_speak_scripted_text(text: str, playback: object, tts_mode=None) -> list[AudioClause]:
         await playback.enqueue(clause)  # type: ignore[attr-defined]
         return [clause]
 
@@ -359,3 +359,98 @@ async def test_run_does_not_hang_forever_when_greeting_tts_call_hangs() -> None:
     assert elapsed < 2.0, f"greeting hang blocked run() for {elapsed:.2f}s — timeout was not honored"
     orch._deps.conversation_engine.speak_scripted_text.assert_awaited_once()
     orch._deps.media_gateway_service.release_adapter.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Repeat-intent watchdog (Sprint-add: greeting-time interrupt on "kya bola")
+# ---------------------------------------------------------------------------
+
+
+def _make_watchdog_frame() -> AudioFrame:
+    """A single non-empty preprocessed frame, plausibly what
+    AudioPreprocessor.process_frame() would emit (PCM16LE @ 16 kHz, 20 ms)."""
+    cfg = AudioConfig(sample_rate=SampleRate.RATE_16K, encoding=Encoding.PCM16LE, channels=1)
+    # 20 ms @ 16 kHz mono = 320 samples * 2 bytes = 640 bytes
+    return AudioFrame(pcm_data=b"\x00\x01" * 320, seq=0, rtp_ts=0, recv_ts=0.0, config=cfg)
+
+
+@pytest.mark.asyncio
+async def test_repeat_intent_watchdog_releases_protection_on_kya_bola() -> None:
+    """Watchdog polls STT ~500ms and, on detecting a repeat-intent keyword,
+    calls PlaybackScheduler.clear_protection() and returns."""
+    import asyncio
+
+    from src.libs.contracts.streaming import WordHypothesis
+
+    orch = _make_orchestrator()
+
+    # Stub PlaybackScheduler.clear_protection so we can assert on it.
+    orch._playback = MagicMock()
+    orch._playback.clear_protection = MagicMock()
+
+    # STT mock returns a "kya bola" hypothesis.
+    async def _repeat_word_stream(*_a: object, **_kw: object) -> AsyncIterator[WordHypothesis]:
+        yield WordHypothesis(word="kya", confidence=0.9, start_ms=0, end_ms=200, is_final=False)
+        yield WordHypothesis(word="bola", confidence=0.9, start_ms=200, end_ms=400, is_final=True)
+
+    # Fresh generator per call (transcribe_stream is invoked once per tick).
+    orch._deps.stt_service.transcribe_stream = AsyncMock(side_effect=lambda *_a, **_kw: _repeat_word_stream())
+
+    # The watchdog clears the ring buffer on entry (defensive against
+    # stale frames from a prior call), so prime it *after* the watchdog
+    # has started — the very first 500 ms sleep is our chance to inject.
+    async def _prime_after_start() -> None:
+        await asyncio.sleep(0.1)
+        orch._greeting_audio_buffer.append(_make_watchdog_frame())
+
+    primer = asyncio.create_task(_prime_after_start())
+    try:
+        # Run the watchdog with a bounded timeout — it should return on
+        # first match well within this window.
+        await asyncio.wait_for(orch._repeat_intent_watchdog(), timeout=3.0)
+    finally:
+        primer.cancel()
+        try:
+            await primer
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    orch._playback.clear_protection.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_repeat_intent_watchdog_ignores_non_matching_transcript() -> None:
+    """Non-matching STT output must NOT trigger clear_protection() — the
+    greeting continues undisturbed."""
+    import asyncio
+
+    from src.libs.contracts.streaming import WordHypothesis
+
+    orch = _make_orchestrator()
+
+    orch._playback = MagicMock()
+    orch._playback.clear_protection = MagicMock()
+
+    async def _neutral_word_stream(*_a: object, **_kw: object) -> AsyncIterator[WordHypothesis]:
+        yield WordHypothesis(word="haan", confidence=0.9, start_ms=0, end_ms=200, is_final=False)
+        yield WordHypothesis(word="bilkul", confidence=0.9, start_ms=200, end_ms=400, is_final=True)
+
+    orch._deps.stt_service.transcribe_stream = AsyncMock(side_effect=lambda *_a, **_kw: _neutral_word_stream())
+
+    async def _prime_after_start() -> None:
+        await asyncio.sleep(0.1)
+        orch._greeting_audio_buffer.append(_make_watchdog_frame())
+
+    primer = asyncio.create_task(_prime_after_start())
+
+    # Watchdog will never match — cancel it after a couple of poll cycles.
+    task = asyncio.create_task(orch._repeat_intent_watchdog())
+    await asyncio.sleep(1.2)  # ~2 poll ticks
+    task.cancel()
+    primer.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+    orch._playback.clear_protection.assert_not_called()

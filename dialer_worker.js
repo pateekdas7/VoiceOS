@@ -74,17 +74,21 @@ const K = {
 
 // ─── DB / Redis clients ──────────────────────────────────────────────────────
 
-const pool = new Pool({
-  host:     process.env.POSTGRES_HOST || '/data/data/com.termux/files/usr/tmp',
-  database: process.env.POSTGRES_DB   || 'voiceos',
-  user:     process.env.POSTGRES_USER || process.env.USER || 'u0_a295',
-  max: 5,
-});
+const pool = process.env.POSTGRES_DSN
+  ? new Pool({ connectionString: process.env.POSTGRES_DSN, max: 5 })
+  : new Pool({
+      host:     process.env.POSTGRES_HOST || '127.0.0.1',
+      port:     parseInt(process.env.POSTGRES_PORT || '5432'),
+      database: process.env.POSTGRES_DB   || 'voiceos',
+      user:     process.env.POSTGRES_USER || 'voiceos',
+      password: process.env.POSTGRES_PASSWORD || '',
+      max: 5,
+    });
 pool.on('error', err => log.warn('[pg] idle client error:', err.message));
 
 // Two Redis clients: one for blocking ops (BRPOP), one for everything else.
-const redis    = new Redis({ host: '127.0.0.1', port: 6379, maxRetriesPerRequest: 3, retryStrategy: n => Math.min(n * 200, 2000) });
-const redisSub = new Redis({ host: '127.0.0.1', port: 6379, maxRetriesPerRequest: 3, retryStrategy: n => Math.min(n * 200, 2000) });
+const redis    = new Redis({ host: process.env.REDIS_HOST || '127.0.0.1', port: parseInt(process.env.REDIS_PORT||'6379'), password: process.env.REDIS_PASSWORD || undefined, maxRetriesPerRequest: 3, retryStrategy: n => Math.min(n * 200, 2000) });
+const redisSub = new Redis({ host: process.env.REDIS_HOST || '127.0.0.1', port: parseInt(process.env.REDIS_PORT||'6379'), password: process.env.REDIS_PASSWORD || undefined, maxRetriesPerRequest: 3, retryStrategy: n => Math.min(n * 200, 2000) });
 redis.on('error',    e => log.warn('Redis error', e.message));
 redisSub.on('error', e => log.warn('RedisSub error', e.message));
 
@@ -117,7 +121,8 @@ class ScheduleVerifier {
 
   async canCallNow(campaignId, tenantId) {
     const { rows } = await this._pool.query(
-      `SELECT status, daily_start_hour, daily_end_hour, timezone
+      `SELECT status, daily_start_hour, daily_end_hour, timezone,
+              scheduled_start, scheduled_end, allowed_weekdays, excluded_dates
        FROM campaigns WHERE campaign_id=$1 AND tenant_id=$2`,
       [campaignId, tenantId]
     );
@@ -126,19 +131,50 @@ class ScheduleVerifier {
     const c = rows[0];
     if (c.status !== 'ACTIVE') return { ok: false, reason: `campaign_${c.status.toLowerCase()}` };
 
-    // Convert current UTC time to campaign timezone for hour comparison
     const tz = c.timezone || 'Asia/Kolkata';
-    const nowInTz = new Date().toLocaleString('en-US', { timeZone: tz, hour12: false });
-    const localHour = parseInt(nowInTz.split(',')[1]?.trim().split(':')[0] ?? '0', 10);
+    const now = new Date();
 
+    // Absolute window (optional)
+    if (c.scheduled_start && now < new Date(c.scheduled_start)) {
+      return { ok: false, reason: 'before_scheduled_start', scheduled_start: c.scheduled_start };
+    }
+    if (c.scheduled_end && now > new Date(c.scheduled_end)) {
+      return { ok: false, reason: 'after_scheduled_end', scheduled_end: c.scheduled_end };
+    }
+
+    // Compute local YYYY-MM-DD, weekday (ISO 1=Mon..7=Sun), and hour in campaign tz
+    const fmt = new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', hour12: false, weekday: 'short',
+    });
+    const parts = fmt.formatToParts(now).reduce((o, p) => (o[p.type] = p.value, o), {});
+    const localDate = `${parts.year}-${parts.month}-${parts.day}`;
+    const localHour = parseInt(parts.hour, 10) % 24;
+    const wkMap = { Mon:1, Tue:2, Wed:3, Thu:4, Fri:5, Sat:6, Sun:7 };
+    const localWeekday = wkMap[parts.weekday] || 0;
+
+    // Excluded date list
+    const excluded = Array.isArray(c.excluded_dates) ? c.excluded_dates.map(d => (d instanceof Date ? d.toISOString().slice(0,10) : String(d).slice(0,10))) : [];
+    if (excluded.includes(localDate)) {
+      return { ok: false, reason: 'excluded_date', localDate };
+    }
+
+    // Allowed weekdays (defaults to all 7 in schema)
+    const allowedDays = Array.isArray(c.allowed_weekdays) && c.allowed_weekdays.length
+      ? c.allowed_weekdays.map(Number)
+      : [1,2,3,4,5,6,7];
+    if (!allowedDays.includes(localWeekday)) {
+      return { ok: false, reason: 'weekday_disallowed', localWeekday, allowedDays };
+    }
+
+    // Daily hour window
     const start = c.daily_start_hour ?? 9;
     const end   = c.daily_end_hour   ?? 18;
-
-    if (localHour < start || localHour >= end) {
+    if (localHour < start || localHour > end) {
       return { ok: false, reason: 'outside_calling_window', localHour, window: `${start}-${end}` };
     }
 
-    return { ok: true };
+    return { ok: true, localDate, localHour, localWeekday };
   }
 
   async markLeadInCall(leadId) {
@@ -243,7 +279,6 @@ class ActiveCallTracker {
   }
 
   async update(callSid, tenantId, { status, answeredAt, endedAt, durationS, disposition }) {
-    const sets = ['status=$2', 'updated_at now() -- no updated_at on active_calls'];
     await this._pool.query(
       `UPDATE active_calls SET
          status=$2,
@@ -330,7 +365,9 @@ class TwilioDialer {
   }
 
   async initiate(lead) {
-    const twimlUrl = `${this._bffUrl}/dialer/twiml?pipeline_id=${encodeURIComponent(lead.pipeline_id)}&language=${encodeURIComponent(lead.language || 'hi')}`;
+    // Point Twilio at media-gateway /voice so MG mints the admission_token itself.
+    const mgHttp = this._wsUrl.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:');
+    const twimlUrl = `${mgHttp}/voice`;
     const callbackUrl = `${this._bffUrl}/dialer/callback?pipeline_id=${encodeURIComponent(lead.pipeline_id)}&lead_id=${encodeURIComponent(lead.lead_id)}&tenant_id=${encodeURIComponent(lead.tenant_id)}`;
 
     const call = await this._client.calls.create({
@@ -374,7 +411,7 @@ class Pipeline extends EventEmitter {
     this._running = true;
     await this._registry.upsert({ id: this.id, campaignId: this.campaignId, tenantId: this.tenantId, name: this.name, status: 'IDLE' });
     log.info(`[Pipeline:${this.name}] started`);
-    this._loop().catch(e => log.error(`[Pipeline:${this.name}] loop crashed:`, e.message));
+    this._loop().catch(e => { log.error(`[Pipeline:${this.name}] loop crashed:`, e.message); this._running = false; });
   }
 
   // Called by main consumer — routes lead into this pipeline's buffer
@@ -719,9 +756,9 @@ class DialerWorker {
   async _routeToPipeline(lead) {
     const pid = lead.pipeline_id || `default-${lead.tenant_id}`;
 
-    if (!this._pipelines.has(pid)) {
-      // Auto-create pipeline on first lead
-      const p = new Pipeline({
+    let p = this._pipelines.get(pid);
+    if (!p) {
+      p = new Pipeline({
         id:          pid,
         campaignId:  lead.campaign_id,
         tenantId:    lead.tenant_id,
@@ -732,11 +769,24 @@ class DialerWorker {
         eventLogger: this._logger,
         dialer:      this._dialer,
       });
+      try {
+        await p.start();
+      } catch (e) {
+        log.error(`[Worker:${WORKER_ID}] Pipeline ${pid} failed to start: ${e.message}`);
+        throw e;
+      }
       this._pipelines.set(pid, p);
-      await p.start();
+    } else if (!p._running) {
+      log.warn(`[Worker:${WORKER_ID}] Pipeline ${pid} was dead — restarting`);
+      try {
+        await p.start();
+      } catch (e) {
+        log.error(`[Worker:${WORKER_ID}] Pipeline ${pid} restart failed: ${e.message}`);
+        throw e;
+      }
     }
 
-    this._pipelines.get(pid).enqueue(lead);
+    p.enqueue(lead);
   }
 
   // ── Retry queue consumer ──────────────────────────────────────────────────

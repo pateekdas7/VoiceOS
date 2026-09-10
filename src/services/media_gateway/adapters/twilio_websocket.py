@@ -123,17 +123,45 @@ class TwilioWebSocketAdapter(TransportAdapter):
     # ------------------------------------------------------------------
 
     async def authenticate(self, credentials: dict[str, str]) -> AuthResult:
-        """Validate the Twilio webhook signature before admitting the session.
+        """Validate carrier credentials before admitting the session (AR-2).
+
+        Two supported credential shapes:
+
+        * Admission-verified (Twilio Media Streams WSS path).
+          The `/twilio/media-stream` entrypoint runs the two-stage
+          admission protocol (see admission.py) — HTTP `/voice` mints a
+          single-use token bound to (CallSid, AccountSid, tenant_id)
+          which the WSS handler verifies + consumes against the
+          AdmissionRegistry BEFORE calling admit_adapter. On success it
+          hands us credentials with `admission_verified="true"` — a
+          private in-process signal set only after that registry consume
+          succeeded. This branch re-checks
+          `account_sid == expected_account_sid` as defense in depth and
+          returns success. Twilio never sends X-Twilio-Signature on the
+          WebSocket upgrade itself, so HMAC on WSS is not defined and
+          always failed against real Twilio traffic before this
+          two-stage protocol was in place.
+
+        * Legacy HMAC signature (HTTP webhook / existing unit tests).
+          Credentials WITHOUT `admission_verified="true"` fall through
+          to the historic HMAC-SHA1 path, keeping every existing unit
+          test in tests/unit/services/test_media_gateway.py green and
+          keeping the primitive available for any future HTTP-signed
+          transport.
 
         Sets ``_authenticated = True`` on success so connect() may proceed.
-
-        Args:
-            credentials: Must contain account_sid, auth_token, url, params
-                         (JSON string), x_twilio_signature, expected_account_sid.
-
-        Returns:
-            AuthResult with success=True when the HMAC-SHA1 signature is valid.
         """
+        if credentials.get("admission_verified") == "true":
+            expected = credentials.get("expected_account_sid", "")
+            got = credentials.get("account_sid", "")
+            if expected and got and expected != got:
+                return AuthResult(
+                    success=False,
+                    reason=f"account_sid_mismatch: got {got!r}",
+                )
+            self._authenticated = True
+            return AuthResult(success=True)
+
         result = self._authenticator.authenticate_twilio(credentials)
         if result.success:
             self._authenticated = True
@@ -188,11 +216,14 @@ class TwilioWebSocketAdapter(TransportAdapter):
                 # parses before any send_frame() call is possible in
                 # practice (media only flows after a session has started).
                 "streamSid": self._stream_sid or "",
+                # Twilio Media Streams outbound expects ONLY {event, streamSid,
+                # media.payload}. Sending extra fields (encoding, sampleRate,
+                # channels) in the media object triggers Twilio error 31951
+                # ("Stream Protocol Invalid message") and every outbound frame
+                # is silently dropped — verified via Twilio Monitor alerts on
+                # call CA3104d62bfb28af9d3fd9938515dbdc2a (2026-08-23).
                 "media": {
                     "payload": payload,
-                    "encoding": "audio/x-mulaw",
-                    "sampleRate": frame.config.sample_rate.value,
-                    "channels": frame.config.channels,
                 },
             }
         ).encode()
@@ -286,6 +317,8 @@ class TwilioWebSocketAdapter(TransportAdapter):
         """Process a Twilio 'start' message and emit AudioSessionStarted."""
         start = msg.get("start", {})
         self._stream_sid = start.get("streamSid", "")
+        import logging as _lg
+        _lg.getLogger("voiceos.twilio_ws").info("CALL_DIAG: stream_sid=%r callSid=%r", self._stream_sid, start.get("callSid", ""))
 
         # Use the Twilio CallSid as the CallId if none was pre-assigned.
         if self._call_id is None:

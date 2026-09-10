@@ -67,7 +67,7 @@ class VeenaAdapter:
         self,
         gpu_scheduler: GPUScheduler,
         base_url: str = _DEFAULT_BASE_URL,
-        speaker: str = "kavya",
+        speaker: str = "maitri",
         vram_mb: int = _VEENA_VRAM_MB,
         model_name: str = _VEENA_MODEL_NAME,
         timeout: float = 60.0,

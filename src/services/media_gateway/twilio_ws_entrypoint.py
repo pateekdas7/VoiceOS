@@ -429,6 +429,12 @@ class CallOrchestrator:
         import asyncio
 
         if isinstance(event, VADSpeechStart) and not self._turn_active:
+            if self._greeting_watchdog_active:
+                logger.info(
+                    "VADSpeechStart on call %s during greeting — discarding (greeting protection active)",
+                    self._call_id,
+                )
+                return
             self._current_turn_queue = asyncio.Queue()
             self._turn_active = True
             # New turn opening: clear the end-of-speech signal from the

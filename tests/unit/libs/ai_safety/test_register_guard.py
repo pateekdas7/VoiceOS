@@ -21,12 +21,34 @@ class TestRegisterGuardCheck:
         assert result.violation is None
 
     def test_literary_word_flagged(self) -> None:
+        # Fix C (Gate 3D): domain vocab (भुगतान, राशि, विवरण, कृपया,
+        # धन्यवाद) was removed from _LITERARY because a collections agent
+        # MUST be able to say those words. Genuinely literary Sanskrit
+        # (प्रतीत, अवगत, वाक्य, अंतिम, अवशेष, रात्रि, समक्ष) is still
+        # flagged. Test with one of the surviving entries.
         guard = RegisterGuard()
 
-        result = guard.check("Kripya apna भुगतान jaldi kar dijiye.")
+        result = guard.check("Yeh mujhe उचित प्रतीत ho raha hai.")
 
         assert result.clean is False
         assert result.violation == RegisterViolation.LITERARY
+
+    def test_collections_domain_vocab_accepted(self) -> None:
+        # Fix C (Gate 3D): a scripted/LLM reply containing collections-domain
+        # vocab must NOT be rejected as literary — a collections agent needs
+        # to be able to say भुगतान/राशि/विवरण/कृपया/धन्यवाद. This test locks
+        # in the removal from _LITERARY so a future edit can not silently
+        # re-add them.
+        guard = RegisterGuard()
+        for phrase in (
+            "Kripya apna भुगतान jaldi kar dijiye.",
+            "आपकी outstanding राशि kya hai sir?",
+            "Account का विवरण mere paas hai.",
+            "कृपया एक minute wait kariye.",
+            "धन्यवाद sir, बात हुई.",
+        ):
+            r = guard.check(phrase)
+            assert r.clean is True, (phrase, r.violation)
 
     def test_slang_flagged(self) -> None:
         guard = RegisterGuard()

@@ -46,10 +46,16 @@ class RegisterViolation(StrEnum):
 
 
 _LITERARY = (
-    "भुगतान", "कृपया", "प्रतीत", "अवगत", "राशि", "वाक्य", "अंतिम",
-    "अवशेष", "रात्रि", "धन्यवाद", "समक्ष", "विवरण",
+    "प्रतीत", "अवगत", "वाक्य", "अंतिम", "अवशेष", "रात्रि", "समक्ष",
 )  # fmt: skip
-"""Genuinely Sanskritized words that sound literary, not Delhi-office-casual, on a call."""
+"""Genuinely Sanskritized words that sound literary, not Delhi-office-casual, on a call.
+
+Kept intentionally narrow: domain vocabulary a collections agent MUST be
+able to say — भुगतान (payment), राशि (amount), विवरण (details),
+कृपया (please), धन्यवाद (thank you) — was previously in this list and
+caused every scripted/LLM reply that mentioned payment to be rejected on
+the real-call path (Gate 3C readiness). These are Delhi-office register,
+not literary Sanskrit; only the words above stay."""
 
 _SLANG = ("साला", "साली", "अबे", "भोसड़", "चूतिय", "कमीन", "यार ")  # trailing space intentional
 """Rude/slang words — never appropriate regardless of customer behavior."""

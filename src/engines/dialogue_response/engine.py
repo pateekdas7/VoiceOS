@@ -122,14 +122,35 @@ def _format_date_for_speech(iso_date: str) -> str:
         return iso_date
 
 
-def _resolve_outstanding_minor(context: CustomerContext | None, response_plan: ResponsePlan) -> int:
+def _resolve_outstanding_minor(
+    context: CustomerContext | None, response_plan: ResponsePlan
+) -> int | None:
+    """Return the authoritative outstanding balance in minor units, or None.
+
+    ``None`` means the amount is UNRESOLVED — no CustomerContext with a
+    primary_loan was assembled AND no authoritative fact reached the
+    ResponsePlan. Callers MUST route to the ``clarify_no_record`` template
+    branch rather than substituting 0, which would render "₹0 outstanding"
+    as if authoritative (a Law-of-Authority / RI-5 fabrication).
+
+    Zero is a legitimate return value only when the customer genuinely
+    owes zero (primary_loan.outstanding_balance.amount_minor == 0), never
+    as a sentinel for "unknown".
+    """
     if context is not None and context.primary_loan is not None:
         return context.primary_loan.outstanding_balance.amount_minor
-    fact = response_plan.facts.get("outstanding_balance")
+    # NB: ResponsePlanningEngine writes "outstanding_balance_minor" (see
+    # engines/response_planning/engine.py — the fact key was previously
+    # mis-read here as "outstanding_balance", so this fallback path was
+    # silently dead even when the fact was present).
+    fact = response_plan.facts.get("outstanding_balance_minor")
     if isinstance(fact, int):
         return fact
-    logger.warning("DialogueResponseEngine: no outstanding balance available on context or facts")
-    return 0
+    logger.warning(
+        "DialogueResponseEngine: no authoritative outstanding balance available "
+        "on context or ResponsePlan.facts — routing to clarify_no_record template"
+    )
+    return None
 
 
 @dataclass(frozen=True)
@@ -228,7 +249,7 @@ class DialogueResponseEngine:
         session: DialogueSessionState,
         user_text: str,
         customer_name: str,
-        outstanding_minor: int,
+        outstanding_minor: int | None,
         lender_name: str,
     ) -> tuple[str, Bucket | None]:
         if is_repeat_request(user_text):
@@ -244,6 +265,8 @@ class DialogueResponseEngine:
             session.set_identity_verified(True)
             session.set_dialogue_state_name("CONVERSATION")
             session.set_last_ask("when_pay")
+            if outstanding_minor is None:
+                return SCRIPT_TEMPLATES["clarify_no_record"], None
             return SCRIPT_TEMPLATES["identity_confirm"].format(outstanding=format_rupees(outstanding_minor)), None
         if verdict == "deny":
             session.set_dialogue_state_name("CLOSE")
@@ -256,18 +279,29 @@ class DialogueResponseEngine:
         # through an identity gate indefinitely.
         session.set_dialogue_state_name("CONVERSATION")
         session.set_last_ask("when_pay")
+        if outstanding_minor is None:
+            return SCRIPT_TEMPLATES["clarify_no_record"], None
         return SCRIPT_TEMPLATES["identity_confirm"].format(outstanding=format_rupees(outstanding_minor)), None
 
     # ------------------------------------------------------------------
     # CONVERSATION
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _anchor(outstanding_minor: int | None) -> str:
+        """Render the anchor template, or clarify_no_record when balance is
+        unresolved. Used everywhere the scripted path would otherwise assert
+        an amount without an authoritative source (RI-5)."""
+        if outstanding_minor is None:
+            return SCRIPT_TEMPLATES["clarify_no_record"]
+        return SCRIPT_TEMPLATES["anchor"].format(outstanding=format_rupees(outstanding_minor))
+
     def _handle_conversation(
         self,
         session: DialogueSessionState,
         user_text: str,
         response_plan: ResponsePlan,
-        outstanding_minor: int,
+        outstanding_minor: int | None,
         lender_name: str,
     ) -> tuple[str, Bucket]:
         entities = response_plan.entities
@@ -302,7 +336,7 @@ class DialogueResponseEngine:
             previous = session.assistant_replies
             if previous:
                 return previous[-1], bucket
-            return SCRIPT_TEMPLATES["anchor"].format(outstanding=format_rupees(outstanding_minor)), bucket
+            return self._anchor(outstanding_minor), bucket
 
         if bucket == Bucket.ASK_WHO:
             session.set_last_ask("when_pay")
@@ -310,6 +344,8 @@ class DialogueResponseEngine:
 
         if bucket == Bucket.ASK_AMOUNT:
             session.set_last_ask("when_pay")
+            if outstanding_minor is None:
+                return SCRIPT_TEMPLATES["clarify_no_record"], bucket
             return SCRIPT_TEMPLATES["ask_amount"].format(outstanding=format_rupees(outstanding_minor)), bucket
 
         if bucket == Bucket.HARDSHIP:
@@ -331,16 +367,24 @@ class DialogueResponseEngine:
                 session.set_dialogue_state_name("CLOSE")
                 return SCRIPT_TEMPLATES["close_soft"], bucket
             session.set_last_ask("when_pay")
-            return SCRIPT_TEMPLATES["anchor"].format(outstanding=format_rupees(outstanding_minor)), bucket
+            return self._anchor(outstanding_minor), bucket
 
         session.set_last_ask("when_pay")
-        return SCRIPT_TEMPLATES["anchor"].format(outstanding=format_rupees(outstanding_minor)), bucket
+        return self._anchor(outstanding_minor), bucket
 
-    def _handle_gives_amount(self, session: DialogueSessionState, user_text: str, outstanding_minor: int) -> str:
+    def _handle_gives_amount(
+        self, session: DialogueSessionState, user_text: str, outstanding_minor: int | None
+    ) -> str:
         amount_minor = session.commitment.get("amount_minor")
         if not amount_minor:
             session.set_last_ask("when_pay")
-            return SCRIPT_TEMPLATES["anchor"].format(outstanding=format_rupees(outstanding_minor))
+            return self._anchor(outstanding_minor)
+        if outstanding_minor is None:
+            # compute_installment_plan requires an authoritative balance to
+            # divide by; without one we cannot honestly say "X months to
+            # clear ₹Y". Ask for verification instead.
+            session.set_last_ask("when_pay")
+            return SCRIPT_TEMPLATES["clarify_no_record"]
         cadence = _detect_cadence(user_text)
         plan = compute_installment_plan(outstanding_minor, int(amount_minor), cadence)
         session.update_commitment(cadence=cadence)
@@ -386,7 +430,9 @@ class DialogueResponseEngine:
     # Register/name/tone cleanup — defense-in-depth on our own templates.
     # ------------------------------------------------------------------
 
-    def _apply_guards(self, reply: str, customer_name: str, outstanding_minor: int) -> str:
+    def _apply_guards(
+        self, reply: str, customer_name: str, outstanding_minor: int | None
+    ) -> str:
         cleaned = dedupe_name(reply, customer_name)
         cleaned = sanitize_reply(cleaned)
         cleaned = strip_trailing_sir(cleaned)
@@ -396,7 +442,7 @@ class DialogueResponseEngine:
                 "DialogueResponseEngine: scripted reply failed RegisterGuard (%s); falling back to anchor",
                 result.violation,
             )
-            return SCRIPT_TEMPLATES["anchor"].format(outstanding=format_rupees(outstanding_minor))
+            return self._anchor(outstanding_minor)
         return cleaned
 
 

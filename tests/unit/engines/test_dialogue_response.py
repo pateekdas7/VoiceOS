@@ -428,3 +428,86 @@ class TestInstallmentPlan:
 
         assert plan.kind == InstallmentPlanKind.LUMPSUM_PARTIAL
         assert plan.remaining_minor == 3_000_000
+
+
+class TestFixDNoRecordBranch:
+    """Fix D (Gate 3D): when no authoritative outstanding balance is
+    available on either CustomerContext or ResponsePlan.facts, the dialogue
+    must NEVER assert an amount. It routes to the clarify_no_record
+    template instead of rendering an anchor with a fabricated ₹0.
+
+    Regression guards for three specific defects fixed in Gate 3D:
+      D-2: ResponsePlan.facts key was mis-read as 'outstanding_balance'
+           while ResponsePlanningEngine writes 'outstanding_balance_minor'.
+      D-3: _resolve_outstanding_minor previously returned 0 as a sentinel
+           for 'unknown' — templates rendered '₹0 outstanding' as if
+           authoritative (RI-5 fabrication).
+      D-authoritative-zero: a customer who genuinely owes zero must still
+           see the amount rendered normally — 0 is only forbidden as a
+           substitute for None.
+    """
+
+    def _engine_and_session(self):
+        engine = DialogueResponseEngine()
+        session = _session()
+        session.set_dialogue_state_name("CONVERSATION")
+        return engine, session
+
+    def test_no_context_no_facts_routes_to_clarify_no_record(self) -> None:
+        engine, session = self._engine_and_session()
+        plan = _make_plan()  # facts is empty
+        out = engine.generate_reply(session, plan, context=None, user_text="hmm", lender_name=_LENDER)
+
+        # Never assert an amount when we don't have one.
+        assert "outstanding" not in out.reply_text.lower() or "detail" in out.reply_text.lower()
+        assert "₹" not in out.reply_text
+        assert "₹0" not in out.reply_text
+        assert "0 outstanding" not in out.reply_text
+        assert "loan account number" in out.reply_text or "account का detail" in out.reply_text
+
+    def test_facts_outstanding_balance_minor_key_is_read(self) -> None:
+        # Fix D-2: response_planning writes 'outstanding_balance_minor';
+        # this must be readable when context is None.
+        engine, session = self._engine_and_session()
+        plan = ResponsePlan(
+            plan_id=str(uuid.uuid4()),
+            version=1,
+            call_id="c1",
+            tenant_id="t1",
+            created_at=datetime.now(timezone.utc),
+            intents=(),
+            entities={},
+            facts={"outstanding_balance_minor": 250_000},
+        )
+        out = engine.generate_reply(session, plan, context=None, user_text="kitna hai", lender_name=_LENDER)
+
+        # Amount should render — this is the authoritative fact path.
+        assert "2,500" in out.reply_text or "detail" in out.reply_text.lower()
+        # If detail (clarify) rendered, the key read is broken.
+        assert "detail" not in out.reply_text.lower(), \
+            f"clarify template rendered despite facts having outstanding_balance_minor: {out.reply_text!r}"
+
+    def test_authoritative_zero_balance_still_renders_normally(self) -> None:
+        # Fix D preserves: 0 is legitimate when the customer actually owes 0.
+        # Zero must NOT be routed to clarify_no_record.
+        engine, session = self._engine_and_session()
+        context = _make_context(outstanding_minor=0)
+        plan = _make_plan()
+        out = engine.generate_reply(session, plan, context, user_text="hmm", lender_name=_LENDER)
+
+        # Amount rendered (as "0"), not the clarify template.
+        assert "detail" not in out.reply_text.lower(), \
+            f"clarify template must not fire for authoritative zero: {out.reply_text!r}"
+
+    def test_no_context_no_facts_never_fabricates_zero_rupees(self) -> None:
+        # Fix D-3 lock-in: the previous behavior rendered '₹0 outstanding'
+        # from the anchor template on the 0-sentinel — that must never
+        # reappear.
+        engine, session = self._engine_and_session()
+        plan = _make_plan()
+        out = engine.generate_reply(session, plan, context=None, user_text="kitna hai", lender_name=_LENDER)
+
+        forbidden = ("₹0", "₹ 0", "0 outstanding", "0 rupees", "rs. 0", "rs 0")
+        low = out.reply_text.lower()
+        for f in forbidden:
+            assert f.lower() not in low, f"fabricated-zero rendering leaked: {out.reply_text!r}"

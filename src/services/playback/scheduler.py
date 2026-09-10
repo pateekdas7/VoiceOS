@@ -48,6 +48,8 @@ class PlaybackScheduler:
         # resumes AFTER a barge-in + clear_barge_in() cannot inject stale
         # audio into gen N+1's queue.
         self._generation: int = 0
+        # Uninterruptible greeting protection API.
+        self._protected_generation: int | None = None
         # Sprint-016 (V3 Ch10 §10.17): expose RI-3 max_depth + live depth to
         # Prometheus so hot-path queue saturation is visible on dashboards.
         record_queue_max_size(_QUEUE_NAME, max_depth)
@@ -135,6 +137,25 @@ class PlaybackScheduler:
         Returns:
             List of clauses that were flushed.
         """
+        if (
+            self._protected_generation is not None
+            and self._generation == self._protected_generation
+        ):
+            logger.info(
+                "barge-in suppressed (greeting protection active) gen=%d",
+                self._generation,
+            )
+            return []
+        # Option-1 guard: if nothing is queued there is no agent audio to
+        # cancel. Skip the generation bump and barge_in_event.set() so a
+        # spurious speculative-fire (STT stable-suffix triggered while the
+        # agent was silent) doesn't sabotage the next reply.
+        if not self._queue:
+            logger.info(
+                'PlaybackScheduler: flush skipped — queue empty, gen unchanged=%d',
+                self._generation,
+            )
+            return []
         self._generation += 1
         flushed = list(self._queue)
         self._queue.clear()
@@ -152,6 +173,32 @@ class PlaybackScheduler:
     def clear_barge_in(self) -> None:
         """Reset the barge-in signal for the next turn."""
         self._barge_in_event.clear()
+
+    def set_protected(self, generation_id: int) -> None:
+        """Mark generation_id as uninterruptible; flush() is suppressed while active."""
+        self._protected_generation = generation_id
+
+    def clear_protection(self) -> None:
+        """Clear generation protection; restore normal barge-in behavior."""
+        self._protected_generation = None
+
+    def preempt_current_clause(self) -> list:
+        """Drop all pending queued clauses WITHOUT advancing the generation counter.
+
+        Used by the streaming-STT orchestrator when it cancels the LLM mid-generation
+        and the downstream TTS clauses queued from the cancelled turn must not play,
+        but the SAME generation ID is reused for the next (corrected) LLM run — so
+        we must not increment generation the way flush() does.
+        """
+        dropped = list(self._queue)
+        self._queue.clear()
+        record_queue_depth(_QUEUE_NAME, 0)
+        self._clause_available.clear()
+        logger.info(
+            'PlaybackScheduler: preempt_current_clause dropped %d pending clauses '
+            '(gen unchanged=%d)', len(dropped), self._generation,
+        )
+        return dropped
 
     @property
     def barge_in_event(self) -> asyncio.Event:
