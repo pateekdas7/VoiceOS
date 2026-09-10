@@ -696,6 +696,14 @@ class ConversationEngine:
         # conversation_state_tracker: same instance across every turn so
         # AdaptiveConversationEngine's dialogue-state machine persists across turns.
         # concession_round: how many COUNTER moves have already been made this call.
+        _prev_sales_state: dict | None = None
+        if self._working_memory_store is not None:
+            try:
+                _wm_for_sales = self._working_memory_store.get(turn.call_id)
+                _prev_sales_state = _wm_for_sales.sales_state
+            except Exception:
+                pass  # best-effort; missing sales_state treated as first turn
+
         response_plan, decision_envelope = self._cil.assemble(
             turn=turn,
             context=context,
@@ -705,6 +713,7 @@ class ConversationEngine:
             silence_duration_ms=silence_duration_ms,
             conversation_state_tracker=csi_tracker,
             concession_round=session.concession_round,
+            previous_sales_state=_prev_sales_state,
         )
 
         # Detect a COUNTER negotiation move (agent proposed a counter-offer but
@@ -781,6 +790,7 @@ class ConversationEngine:
                     negotiation_state=_neg_state,
                     last_strategy=_strategy_label,
                     customer_utterances=(*_existing_wm.customer_utterances, turn.transcript),
+                    sales_state=response_plan.sales_state,
                 )
                 self._working_memory_store.update(turn.call_id, _wm_delta)
             except Exception:

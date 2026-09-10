@@ -349,6 +349,7 @@ class ResponsePlanningEngine:
         silence_duration_ms: int = 0,
         conversation_state_tracker: ConversationStateIntelligence | None = None,
         concession_round: int = 0,
+        previous_sales_state: dict | None = None,
     ) -> tuple[ResponsePlan, DecisionEnvelope]:
         """Assemble a ResponsePlan and DecisionEnvelope for one turn.
 
@@ -551,15 +552,6 @@ class ResponsePlanningEngine:
             and self._question_selector is not None
             and self._sales_action_planner is not None
         ):
-            # Retrieve previous SalesState from working memory if available.
-            # Judgment call: the turn input doesn't carry working_memory directly,
-            # so we look for it on the context (passed through) or use None for
-            # first turn. The caller (app.py) is responsible for passing the
-            # previous sales_state via the turn's context or a dedicated parameter.
-            # For now we use None (fresh each turn) — the app.py wiring in the
-            # integration test passes it explicitly via working memory.
-            previous_sales_state = None
-
             updated_sales_state = self._sales_state_updater.update(
                 previous_state=previous_sales_state,
                 entities=entity_result,

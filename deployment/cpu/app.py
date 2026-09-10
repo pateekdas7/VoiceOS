@@ -351,7 +351,13 @@ def build_cil() -> object:
     from src.engines.negotiation.engine import NegotiationEngine
     from src.engines.response_planning.engine import ResponsePlanningEngine
     from src.engines.risk.engine import RiskEngine
+    from src.engines.sales.action_planner import SalesActionPlanner
+    from src.engines.sales.domains.real_estate import RealEstateDomainConfig
+    from src.engines.sales.question_selector import QuestionSelector
+    from src.engines.sales.state_updater import SalesStateUpdater
     from src.engines.strategy.engine import StrategyEngine
+
+    domain_cfg = RealEstateDomainConfig()
 
     return ResponsePlanningEngine(
         intent_engine=IntentEngine(IntentModel()),
@@ -364,6 +370,9 @@ def build_cil() -> object:
         negotiation_engine=NegotiationEngine(),
         empathy_planner=EmpathyPlanner(),
         adaptive_conv_engine=AdaptiveConversationEngine(),
+        sales_state_updater=SalesStateUpdater(domain_cfg),
+        question_selector=QuestionSelector(domain_cfg),
+        sales_action_planner=SalesActionPlanner(domain_cfg),
     )
 
 
