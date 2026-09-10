@@ -45,7 +45,8 @@ pkg install -y \
     build-essential clang make \
     libffi openssl \
     postgresql redis \
-    golang rust
+    golang rust \
+    python-numpy python-scipy
 ok "System packages installed"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -53,36 +54,36 @@ ok "System packages installed"
 #    and won't run on Android. Go on Termux builds PIE automatically.)
 # ─────────────────────────────────────────────────────────────────────────────
 log "--- [2/9] cloudflared (building from source — takes ~10 min) ---"
-if command -v cloudflared &>/dev/null; then
-    warn "cloudflared already installed: $(cloudflared version 2>&1 | head -1)"
-else
-    # Ensure ~/go/bin is on PATH for this session
-    export PATH="$PATH:$HOME/go/bin"
+export PATH="$PATH:$HOME/go/bin"
+grep -q 'go/bin' "$HOME/.bashrc" 2>/dev/null \
+    || echo 'export PATH=$PATH:$HOME/go/bin' >> "$HOME/.bashrc"
+
+# Remove broken non-PIE binary if present (e_type: 2 error)
+if [ -f "$PREFIX/bin/cloudflared" ]; then
+    cloudflared version &>/dev/null \
+        && warn "cloudflared already working: $(cloudflared version 2>&1 | head -1)" \
+        || { warn "Removing broken non-PIE cloudflared binary"; rm -f "$PREFIX/bin/cloudflared"; }
+fi
+
+if ! command -v cloudflared &>/dev/null && ! [ -f "$HOME/go/bin/cloudflared" ]; then
     go install github.com/cloudflare/cloudflared/cmd/cloudflared@latest \
-        && ok "cloudflared built and installed at ~/go/bin/cloudflared" \
-        || warn "cloudflared build failed — use 'ssh -R 80:localhost:8010 nokey@localhost.run' as tunnel instead"
-    # Persist PATH for future sessions
-    grep -q 'go/bin' "$HOME/.bashrc" 2>/dev/null \
-        || echo 'export PATH=$PATH:$HOME/go/bin' >> "$HOME/.bashrc"
+        && ok "cloudflared built at ~/go/bin/cloudflared" \
+        || warn "cloudflared build failed — will use localhost.run SSH tunnel instead"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. Python packages
 # ─────────────────────────────────────────────────────────────────────────────
 log "--- [3/9] Python packages ---"
-pip install --upgrade pip wheel 'setuptools>=72'
+pip install wheel 'setuptools>=72'
 
-# Core packages from pyproject.toml.
-# NOTE: psycopg2-binary (not psycopg2) — binary wheel confirmed working on Termux ARM64.
-# NOTE: onnxruntime — used for Silero VAD (CPU-only). If install fails, VAD falls back
-#       to energy-based endpointing; the call still works.
-# NOTE: uvicorn[standard] installs uvloop + httptools (C extensions). May fail on older
-#       Termux — if so, fall back to plain uvicorn at bottom of this section.
+# numpy and scipy installed via pkg above (no Fortran compiler needed).
+# psycopg2-binary: binary wheel confirmed working on Termux ARM64.
+# onnxruntime: optional (Silero VAD). Falls back to energy-based endpointing.
+# uvicorn[standard]: installs uvloop + httptools + websockets (C extensions).
 pip install \
     "pydantic>=2.7" \
     "prometheus-client>=0.20" \
-    "numpy>=1.26" \
-    "scipy>=1.13" \
     "httpx>=0.27" \
     "redis>=5.0" \
     "psycopg2-binary>=2.9" \
@@ -99,17 +100,16 @@ pip install \
     "reportlab>=4.2" \
     "pyyaml>=6.0"
 
-# onnxruntime: optional, best-effort
 log "  Installing onnxruntime (optional — VAD)..."
 pip install "onnxruntime>=1.18" 2>/dev/null \
     && ok "onnxruntime installed" \
-    || warn "onnxruntime install failed — VAD will use energy-based endpointing"
+    || warn "onnxruntime skipped — VAD will use energy-based endpointing"
 
-# uvicorn with WebSocket support (required for Twilio Media Streams)
 log "  Installing uvicorn[standard]..."
 pip install "uvicorn[standard]>=0.30" 2>/dev/null \
     && ok "uvicorn[standard] installed" \
-    || { warn "uvicorn[standard] failed — trying plain uvicorn + websockets"; pip install "uvicorn>=0.30" "websockets>=12.0"; }
+    || { warn "uvicorn[standard] failed — falling back to plain uvicorn + websockets"; \
+         pip install "uvicorn>=0.30" "websockets>=12.0"; }
 
 ok "Python packages installed"
 
