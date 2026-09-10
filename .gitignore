@@ -47,3 +47,9 @@ bff.err
 bff.out
 cookies.txt
 vc2.txt
+
+# Claude Code session data
+.claude/
+
+# Kaggle kernel output (model weights, large binaries — never commit)
+deployment/gpu/kaggle/kernels/*/output/
