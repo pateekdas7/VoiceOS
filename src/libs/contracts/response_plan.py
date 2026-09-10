@@ -429,3 +429,8 @@ class ResponsePlan(BaseModel):
 
     must_not_say: tuple[MustNotSayItem, ...] = ()
     """Prohibited phrases/topics injected by the Policy Engine (AR-7)."""
+
+    sales_state: dict | None = None
+    """Sales Intelligence Layer state for this turn (Phase 2, additive).
+    Serialized SalesState dict; None when sales layer is not wired.
+    Downstream: PromptBuilder injects this into the LLM prompt."""

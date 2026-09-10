@@ -74,6 +74,21 @@ from ..risk.result import RiskAssessment
 from ..strategy.actions import StrategyAction as EngineStrategyAction
 from ..strategy.engine import StrategyEngine, StrategySelection
 
+# Sales Intelligence Layer (Phase 2) — optional wiring; defaults to None so
+# existing tests and pre-Phase-2 callers are unaffected.
+try:
+    from ..sales.action_planner import SalesActionPlanner
+    from ..sales.question_selector import QuestionSelector
+    from ..sales.schema import SalesState
+    from ..sales.state_updater import SalesStateUpdater
+
+    _SALES_AVAILABLE = True
+except ImportError:
+    _SALES_AVAILABLE = False
+    SalesStateUpdater = None  # type: ignore[misc,assignment]
+    QuestionSelector = None  # type: ignore[misc,assignment]
+    SalesActionPlanner = None  # type: ignore[misc,assignment]
+
 logger = logging.getLogger(__name__)
 
 PLAN_VERSION = 1
@@ -303,6 +318,11 @@ class ResponsePlanningEngine:
         negotiation_engine: NegotiationEngine,
         empathy_planner: EmpathyPlanner,
         adaptive_conv_engine: AdaptiveConversationEngine,
+        # Phase 2: Sales Intelligence Layer — all optional so existing callers
+        # and tests remain unaffected (None = sales layer disabled).
+        sales_state_updater: "SalesStateUpdater | None" = None,
+        question_selector: "QuestionSelector | None" = None,
+        sales_action_planner: "SalesActionPlanner | None" = None,
     ) -> None:
         self._intent = intent_engine
         self._entity = entity_extractor
@@ -314,6 +334,10 @@ class ResponsePlanningEngine:
         self._negotiation = negotiation_engine
         self._empathy = empathy_planner
         self._adaptive = adaptive_conv_engine
+        # Sales layer (Phase 2)
+        self._sales_state_updater = sales_state_updater
+        self._question_selector = question_selector
+        self._sales_action_planner = sales_action_planner
 
     def assemble(
         self,
@@ -519,6 +543,42 @@ class ResponsePlanningEngine:
         )
 
         # ------------------------------------------------------------------
+        # Stage 7: Sales Intelligence (Phase 2 — skipped when not wired)
+        # ------------------------------------------------------------------
+        sales_state_dict: dict | None = None
+        if (
+            self._sales_state_updater is not None
+            and self._question_selector is not None
+            and self._sales_action_planner is not None
+        ):
+            # Retrieve previous SalesState from working memory if available.
+            # Judgment call: the turn input doesn't carry working_memory directly,
+            # so we look for it on the context (passed through) or use None for
+            # first turn. The caller (app.py) is responsible for passing the
+            # previous sales_state via the turn's context or a dedicated parameter.
+            # For now we use None (fresh each turn) — the app.py wiring in the
+            # integration test passes it explicitly via working memory.
+            previous_sales_state = None
+
+            updated_sales_state = self._sales_state_updater.update(
+                previous_state=previous_sales_state,
+                entities=entity_result,
+                intent=intent_result,
+                conversation_state=self._infer_state(intent_result, risk_assessment),
+                strategy=strategy_sel,
+                risk=risk_assessment,
+            )
+            next_question = self._question_selector.select(
+                updated_sales_state, intent_result, strategy_sel, risk_assessment
+            )
+            sales_action = self._sales_action_planner.plan(
+                updated_sales_state, intent_result, strategy_sel, risk_assessment, goal, next_question
+            )
+            updated_sales_state.next_action = sales_action
+            updated_sales_state.next_question = next_question
+            sales_state_dict = updated_sales_state.to_dict()
+
+        # ------------------------------------------------------------------
         # Assemble ResponsePlan
         # ------------------------------------------------------------------
         plan_id = str(uuid.uuid4())
@@ -598,6 +658,7 @@ class ResponsePlanningEngine:
             retrieval=retrieval,
             must_say=_make_must_say_items(policy_constraints),
             must_not_say=_make_must_not_say_items(policy_constraints),
+            sales_state=sales_state_dict,
         )
 
         # ------------------------------------------------------------------

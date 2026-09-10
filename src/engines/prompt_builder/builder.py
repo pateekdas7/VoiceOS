@@ -232,6 +232,16 @@ class PromptBuilder:
             snippets = "\n".join(f"  [{s.source}]: {s.content[:200]}" for s in response_plan.retrieval[:3])
             parts.append(f"\nKNOWLEDGE (evidence only — do not quote amounts from here):\n{snippets}")
 
+        # --- Intent context ------------------------------------------------
+        if response_plan.intents:
+            top = response_plan.intents[0]
+            parts.append(f"\nCUSTOMER INTENT: {top.label.value} (confidence {top.confidence:.2f})")
+
+        # --- Sales Intelligence block (Phase 2 — appended, never replaces) --
+        if response_plan.sales_state is not None:
+            sales_block = self._build_sales_block(response_plan.sales_state)
+            if sales_block:
+                parts.append(sales_block)
         prompt_text = "\n".join(parts)
         prompt_hash = hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()
 
@@ -339,6 +349,93 @@ class PromptBuilder:
                 "  → Start at ceiling. Bridge to floor if customer counters low. "
                 "After max concessions, hold firm."
             )
+        return "\n".join(lines)
+
+    def _build_sales_block(self, sales_state: dict) -> str:
+        """Build the SALES INTELLIGENCE block injected after existing strategy content.
+
+        ADDITIVE — never replaces existing strategy/empathy/risk sections.
+        Hides internal system names from the LLM; only actionable instructions exposed.
+        """
+        lines: list[str] = ["\nSALES INTELLIGENCE:"]
+
+        stage = sales_state.get("lead_stage", "")
+        objective = sales_state.get("current_objective", "")
+        if stage:
+            lines.append(f"Stage: {stage}")
+        if objective:
+            lines.append(f"Objective: {objective}")
+
+        known_lines: list[str] = []
+        confirmed = sales_state.get("confirmed_fields", [])
+        if "LOCATION" in confirmed and sales_state.get("location"):
+            known_lines.append(f"  - Location: {', '.join(sales_state['location'])}")
+        if "PROPERTY_TYPE" in confirmed and sales_state.get("property_type"):
+            known_lines.append(f"  - Property type: {', '.join(sales_state['property_type'])}")
+        if "BUDGET" in confirmed:
+            b_min = sales_state.get("budget_min")
+            b_max = sales_state.get("budget_max")
+            if b_min and b_max and b_min == b_max:
+                known_lines.append(f"  - Budget: ₹{b_max // 100000}L")
+            elif b_min and b_max:
+                known_lines.append(f"  - Budget: ₹{b_min // 100000}L–₹{b_max // 100000}L")
+        if "PURPOSE" in confirmed and sales_state.get("purpose"):
+            known_lines.append(f"  - Purpose: {sales_state['purpose']}")
+        if "TIMELINE" in confirmed and sales_state.get("timeline"):
+            known_lines.append(f"  - Timeline: {sales_state['timeline']}")
+        if "DECISION_MAKER" in confirmed and sales_state.get("decision_maker"):
+            known_lines.append(f"  - Decision maker: {sales_state['decision_maker']}")
+        if "FINANCING" in confirmed and sales_state.get("financing_status"):
+            known_lines.append(f"  - Financing: {sales_state['financing_status']}")
+
+        if known_lines:
+            lines.append("\nKnown requirements:")
+            lines.extend(known_lines)
+
+        next_q = sales_state.get("next_question")
+        next_action = sales_state.get("next_action", "")
+        lines.append(
+            f"\nMissing (ask this turn): {next_q if next_q else 'All key requirements known'}"
+        )
+        lines.append(f"NEXT ACTION: {next_action}")
+
+        if next_q:
+            field_labels = {
+                "PURPOSE": "their purpose (self-use or investment)",
+                "LOCATION": "which areas/locations they prefer",
+                "PROPERTY_TYPE": "what property type they are looking for (e.g. 2BHK, 3BHK)",
+                "BUDGET": "their budget range",
+                "TIMELINE": "when they are planning to buy",
+                "DECISION_MAKER": "who will be making the final decision",
+                "FINANCING": "how they plan to finance the purchase (cash or home loan)",
+                "PREFERRED_LOCALITY": "their preferred locality within the area",
+                "SITE_VISIT_INTEREST": "if they would like to schedule a site visit",
+                "COMPETITOR_CONSIDERATION": "if they are also looking at other projects",
+            }
+            label = field_labels.get(next_q, next_q.lower().replace("_", " "))
+            lines.append(
+                f"\nINSTRUCTION: Ask ONE natural conversational question to find out {label}. "
+                "Sound natural. Do NOT mention scores, stages, or system names."
+            )
+        elif next_action == "HANDLE_OBJECTION":
+            lines.append(
+                "\nINSTRUCTION: Address the customer's concern empathetically before "
+                "resuming qualification."
+            )
+        elif next_action == "HUMAN_HANDOFF":
+            lines.append(
+                "\nINSTRUCTION: Politely indicate you will connect them with a specialist "
+                "who can help them further."
+            )
+        elif next_action == "OFFER_SITE_VISIT":
+            lines.append(
+                "\nINSTRUCTION: Invite the customer for a site visit in a warm, natural way."
+            )
+        elif next_action == "CONFIRM_SITE_VISIT":
+            lines.append(
+                "\nINSTRUCTION: Confirm the site visit details and provide next steps."
+            )
+
         return "\n".join(lines)
 
     def _build_facts_section(
