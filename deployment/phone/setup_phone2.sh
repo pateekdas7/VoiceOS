@@ -43,7 +43,7 @@ pkg update -y && pkg upgrade -y
 pkg install -y \
     python git tmux curl wget \
     build-essential clang make \
-    libffi openssl libpq \
+    libffi openssl \
     postgresql redis \
     rust
 ok "System packages installed"
