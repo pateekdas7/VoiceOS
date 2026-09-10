@@ -57,6 +57,7 @@ EVENT_BUS_DLQ="${EVENT_BUS_DLQ:-dlq:voiceos-events}"
 EVENT_BUS_CONSUMER_GROUP="${EVENT_BUS_CONSUMER_GROUP:-main-group}"
 HEALTHCHECK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_ROOT="$(cd "${HEALTHCHECK_DIR}/../.." && pwd)"
+VENV_PYTHON="${APP_ROOT}/venv/bin/python"
 # Sprint-020 fix: this used to unconditionally rebuild REDIS_URL with no
 # password and no ${REDIS_URL:-...} fallback guard (unlike every other
 # REDIS_URL/POSTGRES_DSN construction in this script), clobbering any
@@ -71,7 +72,7 @@ if redis-cli -h "${REDIS_HOST:-redis}" -p "${REDIS_PORT:-6379}" -a "${REDIS_PASS
   ok "EventBus consumer group '${EVENT_BUS_CONSUMER_GROUP}' on stream '${EVENT_BUS_STREAM}'"
 else
   log "EventBus consumer group '${EVENT_BUS_CONSUMER_GROUP}' missing on '${EVENT_BUS_STREAM}' — self-healing..."
-  if python "${APP_ROOT}/scripts/eventbus_recovery.py" 2>&1 | while IFS= read -r line; do log "  ${line}"; done; then
+  if ${VENV_PYTHON} "${APP_ROOT}/scripts/eventbus_recovery.py" 2>&1 | while IFS= read -r line; do log "  ${line}"; done; then
     ok "EventBus consumer group '${EVENT_BUS_CONSUMER_GROUP}' — recovered automatically"
   else
     fail "EventBus — consumer group '${EVENT_BUS_CONSUMER_GROUP}' could not be recovered automatically"
@@ -88,10 +89,9 @@ else
 fi
 
 # PostgreSQL schema (Sprint-014 — Alembic migration version + table count;
-# head bumped to 0026 by Sprint-026's src/services/saas_ops/ migration --
-# found stale at "0025" during Sprint-027's own live healthcheck.sh run
-# (Sprint-027 itself adds no new migration); same recurring "stale
-# hardcoded migration-head" bug class as every prior sprint, see
+# head bumped to 0027 by Sprint-028's performance_baselines migration --
+# same recurring "stale hardcoded migration-head" bug class as every prior
+# sprint, fixed proactively this time instead of found stale, see
 # CHANGELOG.md)
 #
 # Sprint-016 fix: alembic.ini's env.py reads POSTGRES_DSN to build the
@@ -104,10 +104,10 @@ fi
 if command -v alembic &>/dev/null; then
   export POSTGRES_DSN="${POSTGRES_DSN:-postgresql://${POSTGRES_USER:-voiceos}:${POSTGRES_PASSWORD:-}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-voiceos}}"
   ALEMBIC_VERSION=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && alembic current 2>/dev/null | tail -1 || true)
-  if echo "${ALEMBIC_VERSION}" | grep -q "0026"; then
+  if echo "${ALEMBIC_VERSION}" | grep -q "0027"; then
     ok "Alembic migration version: ${ALEMBIC_VERSION}"
   else
-    fail "Alembic — expected head revision 0026, got: '${ALEMBIC_VERSION}'"
+    fail "Alembic — expected head revision 0027, got: '${ALEMBIC_VERSION}'"
   fi
 fi
 TABLE_COUNT=$(psql -h "${POSTGRES_HOST:-postgres}" -U "${POSTGRES_USER:-voiceos}" -d "${POSTGRES_DB:-voiceos}" -tAc \
@@ -143,7 +143,7 @@ done
 # the same CircuitBreakerRegistry the services will use and asserts the
 # library-level startup invariant directly.
 log "Checking circuit breaker initial state..."
-CB_CHECK=$(cd "${APP_ROOT}" && python3 -c "
+CB_CHECK=$(cd "${APP_ROOT}" && ${VENV_PYTHON} -c "
 from src.libs.circuit_breaker.breaker import CircuitBreakerRegistry, CircuitState
 registry = CircuitBreakerRegistry()
 services = ['stt', 'llm', 'tts', 'postgres', 'redis', 'mongo']
@@ -178,7 +178,7 @@ if [[ "${POLICY_CACHE_KEYS}" -lt 1 ]]; then
   log "Policy Engine — no 'policy:*' cache keys in Redis (expected — 30s TTL); warming via one live evaluation..."
   export POSTGRES_DSN="${POSTGRES_DSN:-postgresql://${POSTGRES_USER:-voiceos}:${POSTGRES_PASSWORD:-}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-voiceos}}"
   export REDIS_URL="${REDIS_URL:-redis://${REDIS_HOST:-redis}:${REDIS_PORT:-6379}/0}"
-  (cd "${APP_ROOT}" && python3 -c "
+  (cd "${APP_ROOT}" && ${VENV_PYTHON} -c "
 from src.libs.repositories.policy import PolicyRepository
 from src.services.policy_engine.engine import PolicyEngine
 from src.services.policy_engine.rule import PolicyRequest
@@ -222,7 +222,7 @@ fi
 # and evaluate cleanly against this node's Python/venv (no real IdP needed:
 # an in-process RSA key pair signs/validates a token, same pattern as
 # scripts/sprint018_infra_validation.py).
-AUTH_SMOKE=$(cd "${APP_ROOT}" && python3 -c "
+AUTH_SMOKE=$(cd "${APP_ROOT}" && ${VENV_PYTHON} -c "
 from cryptography.hazmat.primitives.asymmetric import rsa
 from src.services.auth.jwt_validator import JWTValidator, issue_test_token
 from src.services.authz.rbac_engine import RBACEngine
@@ -244,7 +244,7 @@ fi
 
 # law_of_authority_violations — must be 0 at steady state (only increments on
 # an actual detected violation, never as a baseline/background rate).
-LOA_VIOLATIONS=$(cd "${APP_ROOT}" && python3 -c "
+LOA_VIOLATIONS=$(cd "${APP_ROOT}" && ${VENV_PYTHON} -c "
 from src.services.ai_governance import metrics
 print(int(metrics.LAW_OF_AUTHORITY_VIOLATIONS._value.get()))
 " 2>/dev/null || echo "-1")
@@ -267,7 +267,7 @@ else
 fi
 
 if [[ -n "${VAULT_TOKEN:-}" ]]; then
-  SECRET_FETCH=$(cd "${APP_ROOT}" && python3 -c "
+  SECRET_FETCH=$(cd "${APP_ROOT}" && ${VENV_PYTHON} -c "
 from src.libs.secrets.providers.vault_provider import HVACVaultClient, VaultProvider
 from src.libs.secrets.manager import SecretsManager
 import os
@@ -285,7 +285,7 @@ else
 fi
 
 # check_secrets.py — must be clean on the deployed codebase (blocks CI merges).
-if (cd "${APP_ROOT}" && python3 scripts/check_secrets.py src/ tests/ scripts/ &>/dev/null); then
+if (cd "${APP_ROOT}" && ${VENV_PYTHON} scripts/check_secrets.py src/ tests/ scripts/ &>/dev/null); then
   ok "check_secrets.py — 0 hardcoded secrets found in deployed code"
 else
   fail "check_secrets.py — found hardcoded secrets in deployed code"
@@ -342,7 +342,7 @@ else
   fail "pii_tokens table missing (migration 0017 not applied?)"
 fi
 
-SPRINT020_SMOKE=$(cd "${APP_ROOT}" && python3 -c "
+SPRINT020_SMOKE=$(cd "${APP_ROOT}" && ${VENV_PYTHON} -c "
 from src.libs.pii.detector import PIIDetector
 from src.libs.pii.redactor import PIIRedactor
 from src.libs.ai_safety.content_moderator import ContentModerator
@@ -388,7 +388,7 @@ for t in invitations sso_config; do
   fi
 done
 
-SPRINT021_SMOKE=$(cd "${APP_ROOT}" && python3 -c "
+SPRINT021_SMOKE=$(cd "${APP_ROOT}" && ${VENV_PYTHON} -c "
 from src.services.tenant_management.lifecycle import TenantLifecycle
 from src.libs.contracts.models.tenant import TenantStatus
 from src.services.org_management.hierarchy import OrgHierarchy
@@ -417,7 +417,7 @@ else
   fail "settlements authorization columns — expected 2, found ${SETTLEMENT_AUTH_COLUMNS} (migration 0019 not applied?)"
 fi
 
-SPRINT022_SMOKE=$(cd "${APP_ROOT}" && python3 -c "
+SPRINT022_SMOKE=$(cd "${APP_ROOT}" && ${VENV_PYTHON} -c "
 from src.libs.invariants import assert_ri5_law_of_authority, InvariantViolationError
 from src.services.collections.emi_schedule import EMIScheduleService
 from src.services.collections.settlement import SettlementService
@@ -462,7 +462,7 @@ else
   fail "campaigns.status enum — still on the pre-Sprint-023 6-value set (migration 0020 not applied?)"
 fi
 
-SPRINT023_SMOKE=$(cd "${APP_ROOT}" && python3 -c "
+SPRINT023_SMOKE=$(cd "${APP_ROOT}" && ${VENV_PYTHON} -c "
 from src.services.campaign_management.lifecycle import CampaignLifecycle, CampaignLifecycleError
 from src.libs.contracts.models.campaign import CampaignStatus
 raised = False
@@ -518,7 +518,7 @@ else
   fail "invoices.line_items column missing (migration 0021 not applied?)"
 fi
 
-SPRINT024_SMOKE=$(cd "${APP_ROOT}" && python3 -c "
+SPRINT024_SMOKE=$(cd "${APP_ROOT}" && ${VENV_PYTHON} -c "
 from src.services.billing.rate_card import DEFAULT_RATE_CARD, TIER_USAGE_LIMITS
 from src.services.metering.collector import UsageCollector
 from src.services.analytics.aggregation import DailyAggregationJob
@@ -564,7 +564,7 @@ else
   fail "Sprint-025 Part-3 tables/view — expected 4 tables + 1 view, found ${SPRINT025_PART3_TABLE_COUNT} tables/${SPRINT025_PART3_VIEW_COUNT} view (migration 0025 not applied?)"
 fi
 
-SPRINT025_SMOKE=$(cd "${APP_ROOT}" && python3 -c "
+SPRINT025_SMOKE=$(cd "${APP_ROOT}" && ${VENV_PYTHON} -c "
 from src.services.ai_config.prompt_versioning import PromptVersioningService
 from src.services.ai_config.model_config import GLOBAL_DEFAULT_MODEL_CONFIG
 from src.services.integration_platform.signature import WebhookSigner
@@ -584,7 +584,7 @@ else
   fail "Sprint-025 libraries — smoke test failed: ${SPRINT025_SMOKE}"
 fi
 
-SPRINT025_PART3_SMOKE=$(cd "${APP_ROOT}" && python3 -c "
+SPRINT025_PART3_SMOKE=$(cd "${APP_ROOT}" && ${VENV_PYTHON} -c "
 from src.services.api_platform.api_key_lifecycle import APIKeyLifecycleService
 from src.services.api_platform.rate_limits import burst_for_tier, BURST_WINDOW_SECONDS
 from src.services.campaign_management.service import CampaignService, CampaignPromptNotPinnedError
@@ -652,7 +652,7 @@ fi
 # Optimization / Operational Analytics services (src/services/cost_optimizer,
 # src/services/ops_analytics) — all library classes, no standalone HTTP
 # listener yet (same §8.1 precedent as every service above).
-SPRINT027_SMOKE=$(cd "${APP_ROOT}" && python3 -c "
+SPRINT027_SMOKE=$(cd "${APP_ROOT}" && ${VENV_PYTHON} -c "
 from monitoring.gpu_fleet.fleet_health import GPUFleetHealthMonitor, GPUNodeSnapshot
 from monitoring.gpu_fleet.warmup import ModelWarmupOrchestrator
 from monitoring.gpu_fleet.vram_budget import FleetVRAMBudget

@@ -5,6 +5,7 @@ Architecture: V1 Ch13; V7 Ch6.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
@@ -53,6 +54,7 @@ class LLMService:
         prompt: str,
         response_plan: ResponsePlan,
         max_tokens: int = 0,
+        cancel_event: asyncio.Event | None = None,
     ) -> AsyncIterator[TokenChunk]:
         """Generate tokens, delegating to the adapter.
 
@@ -60,12 +62,18 @@ class LLMService:
             prompt:        Pre-built prompt string.
             response_plan: Sealed ResponsePlan for this turn.
             max_tokens:    Token limit; uses config default if 0.
+            cancel_event:  Optional asyncio.Event threaded through to the
+                           adapter — when set mid-stream the SSE loop
+                           exits at the next yield boundary (stable-suffix
+                           orchestrator cancel-and-refire).
 
         Yields:
             TokenChunk objects from the adapter.
         """
         tokens = max_tokens or self._config.default_max_tokens
-        return await self._adapter.generate_stream(prompt, response_plan, tokens)
+        return await self._adapter.generate_stream(
+            prompt, response_plan, tokens, cancel_event=cancel_event
+        )
 
     @property
     def adapter(self) -> LLMAdapter:

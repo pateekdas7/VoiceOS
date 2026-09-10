@@ -8,6 +8,7 @@ Architecture: V1 Ch13 (LLM Runtime); DocSuite-02 (Interface Contracts).
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from typing import Protocol, runtime_checkable
 
@@ -36,6 +37,7 @@ class LLMAdapter(Protocol):
         prompt: str,
         response_plan: ResponsePlan,
         max_tokens: int,
+        cancel_event: asyncio.Event | None = None,
     ) -> AsyncIterator[TokenChunk]:
         """Generate a response, streaming tokens as they are produced.
 
@@ -44,6 +46,13 @@ class LLMAdapter(Protocol):
             response_plan: The sealed ResponsePlan for this turn (for context
                            and RI-7 plan_id binding).
             max_tokens:    Maximum tokens to generate.
+            cancel_event:  Optional asyncio.Event. When set by the caller
+                           (stable-suffix orchestrator, on cancel-and-refire)
+                           the adapter MUST stop iterating the upstream
+                           token stream at the next yield boundary and
+                           tear down any HTTP connection cleanly. When
+                           None (default) the stream runs to completion
+                           or exception, preserving pre-existing behavior.
 
         Yields:
             TokenChunk for each token.  The final chunk has ``finish_reason``

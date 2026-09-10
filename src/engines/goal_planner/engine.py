@@ -116,7 +116,7 @@ class GoalPlanner:
             return Goal.DE_ESCALATE
 
         # Priority 4: Identity verification gate
-        if not identity_verified and conversation_state in ("GREETING", "VERIFICATION"):
+        if not identity_verified and conversation_state in ("GREETING", "IDENTITY_VERIFICATION"):
             return Goal.VERIFY_IDENTITY
 
         # Priority 5: Dispute handling

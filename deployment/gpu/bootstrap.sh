@@ -31,10 +31,12 @@ apt-get update -qq
 apt-get install -y \
   curl wget git unzip jq \
   build-essential pkg-config \
+  ninja-build \
   ca-certificates gnupg lsb-release \
   net-tools htop iotop \
   software-properties-common \
-  pciutils
+  pciutils \
+  ffmpeg
 
 # ── 2. NVIDIA Driver (pre-installed on most GPU cloud VMs) ───────────────────
 log "Checking NVIDIA driver..."
@@ -128,12 +130,14 @@ log "Creating GPU Python virtual environment (as ${DEPLOY_USER})..."
 sudo -u "${DEPLOY_USER}" python${PYTHON_VERSION} -m venv "${VOICEOS_GPU_HOME}/venv"
 sudo -u "${DEPLOY_USER}" "${VOICEOS_GPU_HOME}/venv/bin/pip" install --quiet --upgrade pip wheel setuptools
 
-# ── 8. PyTorch (CUDA-compatible) ─────────────────────────────────────────────
+# ── 8. PyTorch (CUDA 12.8 build) ─────────────────────────────────────────────
 log "Installing PyTorch..."
-# Note: GPU node may have CUDA 12.x or 13.x. The 'torch' PyPI default wheel
-# includes CUDA support and auto-selects the compatible version.
-# If a specific CUDA build is needed: --index-url https://download.pytorch.org/whl/cu121
+# Pin to cu128 (CUDA 12.8 build). The NVIDIA L4 driver reports max CUDA 13.0
+# compatibility, but PyTorch has not published cu130 wheels. The cu128 build
+# runs correctly on any CUDA 12.8-compatible driver (driver ≥ 520 supports cu128).
+# torch.version.cuda will report "12.8"; driver CUDA compatibility is separate.
 sudo -u "${DEPLOY_USER}" "${VOICEOS_GPU_HOME}/venv/bin/pip" install --quiet \
+  --index-url https://download.pytorch.org/whl/cu128 \
   torch torchvision torchaudio
 log "PyTorch installed: $("${VOICEOS_GPU_HOME}/venv/bin/python" -c 'import torch; print(torch.__version__, "| CUDA:", torch.cuda.is_available())')"
 
@@ -150,7 +154,9 @@ sudo -u "${DEPLOY_USER}" "${VOICEOS_GPU_HOME}/venv/bin/pip" install --quiet \
   fastapi uvicorn \
   prometheus-client \
   opentelemetry-sdk opentelemetry-exporter-otlp \
-  huggingface_hub
+  huggingface_hub \
+  snac \
+  accelerate
 
 log ""
 log "=== GPU Bootstrap complete ==="

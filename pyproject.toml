@@ -111,7 +111,27 @@ dependencies = [
     # Benefits: Minimal, standard ASGI server; no framework beyond Starlette.
     # Risks: New runtime surface, but self-contained (one entrypoint).
     # Maintenance: Active (Encode); BSD-3-Clause.
-    "uvicorn>=0.30",
+    # Path-A consolidation Phase 4 (src/services/media_gateway/twilio_ws_entrypoint.py):
+    # bare uvicorn has NO WebSocket protocol implementation -- Twilio Media
+    # Streams' WS upgrade request gets "Unsupported upgrade request" / a 404
+    # instead of a real connection, and the call has no audio path at all
+    # (found via a live Call-002 trial: the call connected for 6s then
+    # disconnected with the customer hearing nothing, since Twilio's
+    # <Connect><Stream> could never attach). No test in this repo catches
+    # this gap -- every WS integration test drives Starlette's in-process
+    # TestClient, which doesn't require a real network WebSocket stack.
+    # Purpose: uvicorn's own documented "standard" extras (websockets,
+    #          httptools, uvloop, python-dotenv, watchfiles) -- the
+    #          conventional production install, not just the bare minimum
+    #          websockets package, so this doesn't drift from upstream's
+    #          own recommended production configuration.
+    # Benefits: A real WS protocol handler is required, not optional --
+    #           this WS entrypoint IS the Twilio Media Streams transport.
+    # Risks: A handful of additional transitive C-extension dependencies
+    #        (uvloop, httptools); all already widely used, actively
+    #        maintained packages uvicorn itself recommends.
+    # Maintenance: Active (Encode); BSD-3-Clause / MIT (websockets).
+    "uvicorn[standard]>=0.30",
     # Sprint-016: Distributed tracing (src/libs/observability/tracer.py).
     # Purpose: opentelemetry-api/-sdk provide TracerProvider, spans, and W3C
     #          Trace Context propagation; opentelemetry-exporter-otlp-proto-http
@@ -206,11 +226,25 @@ dev = [
     # promoted to core dependencies in Sprint-014 (see above) since it is now
     # imported by production repository code, not just test fixtures.
     "pymongo>=4.7",
+    # Sprint-028: Load Testing (tests/load/locustfile.py) -- Sprint-028.md's
+    # own literal "Tool: Locust or k6" choice.
+    # Purpose: drives the 500-concurrent-simulated-call load test against
+    #          the GPU node's real STT/LLM/TTS HTTP inference endpoints
+    #          (deployment/gpu/services/), reporting p95/error-rate against
+    #          the sprint's own AC gates.
+    # Benefits: pure-Python load generator (no separate Go/JS toolchain
+    #          required, unlike k6); first-class Python `User`/`HttpUser`
+    #          classes let the load script model a call turn (STT -> LLM ->
+    #          TTS) directly, not just a single flat HTTP request.
+    # Risks: test-only dependency (never imported by src/), no production
+    #          runtime surface; adds ~5 MB + gevent to the dev install.
+    # Maintenance: Active (Locust core team); MIT license.
+    "locust>=2.29",
 ]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["src*"]
+include = ["src*", "monitoring*"]
 
 # ---------------------------------------------------------------------------
 # Ruff — lint + format (see ruff.toml for full config)
@@ -352,4 +386,8 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["yaml", "yaml.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["locust", "locust.*"]
 ignore_missing_imports = true

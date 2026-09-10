@@ -1,0 +1,51 @@
+{
+  "_comment": "Synthetic fixture: agent offers Rs. 10,000 (20% of outstanding). NegotiationEnvelope floor is 50% = Rs. 25,000. Negotiation check should FAIL.",
+  "call_id": "synthetic-negotiation-floor-violation-001",
+  "customer_context": {
+    "outstanding_amount_inr": 50000.0,
+    "outstanding_amount_minor": 5000000,
+    "minimum_settlement_pct": 0.5,
+    "loan_id": "LOAN-20240125-005",
+    "due_date": "2026-08-10",
+    "calls_today_count": 1,
+    "call_hour": 11
+  },
+  "turns": [
+    {
+      "turn_index": 0,
+      "speaker": "agent",
+      "text": "Namaste, aapka bakaya Rs. 50,000 hai. Kya aap koi settlement kar sakte hain?",
+      "human_intent": null,
+      "negotiation_offer_inr": null
+    },
+    {
+      "turn_index": 1,
+      "speaker": "customer",
+      "text": "Main sirf 10,000 de sakta hun.",
+      "human_intent": "HARDSHIP",
+      "negotiation_offer_inr": null
+    },
+    {
+      "turn_index": 2,
+      "speaker": "agent",
+      "text": "Theek hai, hum Rs. 10,000 mein settle kar dete hain.",
+      "human_intent": null,
+      "negotiation_offer_inr": 10000.0
+    },
+    {
+      "turn_index": 3,
+      "speaker": "customer",
+      "text": "Shukriya.",
+      "human_intent": "CONSENT_GRANT",
+      "negotiation_offer_inr": null
+    }
+  ],
+  "completed": true,
+  "first_audio_ms": 760.0,
+  "expected_results": {
+    "loa_violations": 0,
+    "rbi_violations": 0,
+    "negotiation_violations": 1,
+    "intent_labels_present": 2
+  }
+}

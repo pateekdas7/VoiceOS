@@ -143,6 +143,20 @@ class UserRepository(BaseRepository):
         )
         return self._hydrate_role(row) if row is not None else None
 
+    def get_role(self, tenant_id: TenantId, role_id: str) -> Role | None:
+        """Fetch a role by its id -- resolves a RoleAssignment.role_id to its permissions
+        (ADR-005 Sec 4.1: the Web BFF session must carry the actual DB-authoritative
+        permission set, not a hardcoded mirror -- Law of Authority)."""
+        row = self._tenant_select_one(
+            _ROLES_TABLE, _ROLE_COLUMNS, tenant_id, extra_where="role_id = %s", extra_params=(role_id,)
+        )
+        return self._hydrate_role(row) if row is not None else None
+
+    def list_roles(self, tenant_id: TenantId) -> tuple[Role, ...]:
+        """Every role defined for a tenant (ADR-005 Sec 6.8 -- Team Members invite picker)."""
+        rows = self._tenant_select(_ROLES_TABLE, _ROLE_COLUMNS, tenant_id, order_by="name")
+        return tuple(self._hydrate_role(row) for row in rows)
+
     # ------------------------------------------------------------------
     # Role assignments
     # ------------------------------------------------------------------

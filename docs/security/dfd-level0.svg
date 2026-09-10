@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 600" width="900" height="600" role="img" aria-labelledby="title desc">
+  <title id="title">VoiceOS v2 — Level 0 Data Flow Diagram</title>
+  <desc id="desc">VoiceOS v2 shown as a single process, with five external entities and their data flows into and out of the system.</desc>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#374151"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="900" height="600" fill="#f8fafc"/>
+
+  <!-- Legend -->
+  <g font-family="Segoe UI, Arial, sans-serif" font-size="12" fill="#4b5563">
+    <rect x="16" y="566" width="14" height="14" fill="#ffffff" stroke="#1f2937" stroke-width="1.5"/>
+    <text x="36" y="577">External Entity</text>
+    <circle cx="185" cy="573" r="8" fill="#1e293b"/>
+    <text x="200" y="577">VoiceOS Process (Level 0)</text>
+  </g>
+
+  <!-- Title -->
+  <text x="450" y="26" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="bold" fill="#111827">VoiceOS v2 — System Context (DFD Level 0)</text>
+
+  <!-- Central process -->
+  <circle cx="450" cy="300" r="110" fill="#1e293b" stroke="#0f172a" stroke-width="2"/>
+  <text x="450" y="292" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="bold" fill="#ffffff">VoiceOS v2</text>
+  <text x="450" y="314" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="12" fill="#cbd5e1">AI Voice Operating System</text>
+  <text x="450" y="331" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="12" fill="#cbd5e1">(collections &amp; customer engagement)</text>
+
+  <!-- Entity: Customer (top-left) -->
+  <rect x="20" y="30" width="200" height="70" fill="#ffffff" stroke="#1f2937" stroke-width="1.5"/>
+  <text x="120" y="58" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="bold" fill="#111827">Customer</text>
+  <text x="120" y="76" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="11" fill="#4b5563">(phone caller,</text>
+  <text x="120" y="90" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="11" fill="#4b5563">PSTN / SIP / Twilio)</text>
+
+  <!-- Entity: Collections Agent / Supervisor (top-right) -->
+  <rect x="680" y="30" width="200" height="70" fill="#ffffff" stroke="#1f2937" stroke-width="1.5"/>
+  <text x="780" y="52" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="bold" fill="#111827">Collections Agent /</text>
+  <text x="780" y="68" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="bold" fill="#111827">Supervisor</text>
+  <text x="780" y="86" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="11" fill="#4b5563">(via Admin Portal)</text>
+
+  <!-- Entity: Tenant Admin (right-middle) -->
+  <rect x="680" y="265" width="200" height="70" fill="#ffffff" stroke="#1f2937" stroke-width="1.5"/>
+  <text x="780" y="293" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="bold" fill="#111827">Tenant Admin</text>
+  <text x="780" y="311" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="11" fill="#4b5563">(via Admin Portal /</text>
+  <text x="780" y="325" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="11" fill="#4b5563">Public API)</text>
+
+  <!-- Entity: Regulator / Auditor (bottom-right) -->
+  <rect x="680" y="500" width="200" height="70" fill="#ffffff" stroke="#1f2937" stroke-width="1.5"/>
+  <text x="780" y="524" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="bold" fill="#111827">Regulator / Auditor</text>
+  <text x="780" y="542" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="11" fill="#4b5563">(read-only audit</text>
+  <text x="780" y="556" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="11" fill="#4b5563">access)</text>
+
+  <!-- Entity: External Webhook Consumer (bottom-left) -->
+  <rect x="20" y="500" width="200" height="70" fill="#ffffff" stroke="#1f2937" stroke-width="1.5"/>
+  <text x="120" y="524" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="bold" fill="#111827">External Webhook</text>
+  <text x="120" y="540" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="bold" fill="#111827">Consumer</text>
+  <text x="120" y="558" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="11" fill="#4b5563">(tenant's CRM/systems)</text>
+
+  <!-- Flows -->
+  <!-- Customer <-> VoiceOS -->
+  <line x1="185" y1="105" x2="380" y2="235" stroke="#374151" stroke-width="1.75" marker-end="url(#arrow)"/>
+  <text x="180" y="165" font-family="Segoe UI, Arial, sans-serif" font-size="11.5" fill="#1f2937">Voice call audio (SIP/RTP),</text>
+  <text x="180" y="180" font-family="Segoe UI, Arial, sans-serif" font-size="11.5" fill="#1f2937">DTMF, consent responses</text>
+  <text x="180" y="198" font-family="Segoe UI, Arial, sans-serif" font-size="11.5" fill="#1f2937">↔ TTS audio, disclosures</text>
+
+  <!-- Collections Agent <-> VoiceOS -->
+  <line x1="715" y1="105" x2="520" y2="235" stroke="#374151" stroke-width="1.75" marker-end="url(#arrow)"/>
+  <text x="560" y="165" font-family="Segoe UI, Arial, sans-serif" font-size="11.5" fill="#1f2937">Live monitor, barge-in,</text>
+  <text x="560" y="180" font-family="Segoe UI, Arial, sans-serif" font-size="11.5" fill="#1f2937">override, HITL review</text>
+
+  <!-- Tenant Admin <-> VoiceOS -->
+  <line x1="680" y1="300" x2="560" y2="300" stroke="#374151" stroke-width="1.75" marker-end="url(#arrow)"/>
+  <text x="562" y="290" text-anchor="end" font-family="Segoe UI, Arial, sans-serif" font-size="11.5" fill="#1f2937">Tenant config, campaigns,</text>
+  <text x="562" y="326" text-anchor="end" font-family="Segoe UI, Arial, sans-serif" font-size="11.5" fill="#1f2937">billing, API keys</text>
+
+  <!-- Regulator <- VoiceOS -->
+  <line x1="715" y1="500" x2="520" y2="365" stroke="#374151" stroke-width="1.75" marker-end="url(#arrow)"/>
+  <text x="565" y="420" font-family="Segoe UI, Arial, sans-serif" font-size="11.5" fill="#1f2937">Read-only audit trail</text>
+  <text x="565" y="435" font-family="Segoe UI, Arial, sans-serif" font-size="11.5" fill="#1f2937">export (compliance review)</text>
+
+  <!-- Webhook Consumer <- VoiceOS -->
+  <line x1="185" y1="500" x2="380" y2="365" stroke="#374151" stroke-width="1.75" marker-end="url(#arrow)"/>
+  <text x="185" y="420" font-family="Segoe UI, Arial, sans-serif" font-size="11.5" fill="#1f2937">Webhook events</text>
+  <text x="185" y="435" font-family="Segoe UI, Arial, sans-serif" font-size="11.5" fill="#1f2937">(HMAC-signed, call/campaign</text>
+  <text x="185" y="450" font-family="Segoe UI, Arial, sans-serif" font-size="11.5" fill="#1f2937">disposition events)</text>
+</svg>

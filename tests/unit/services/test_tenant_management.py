@@ -82,6 +82,9 @@ class _FakeTenantRepository:
     def get_by_slug(self, slug: str) -> Tenant | None:
         return next((t for t in self._by_id.values() if t.slug == slug), None)
 
+    def list_all(self) -> tuple[Tenant, ...]:
+        return tuple(sorted(self._by_id.values(), key=lambda t: t.created_at))
+
     def update_status(
         self,
         tenant_id: str,
@@ -297,6 +300,17 @@ class TestTenantService:
         service = TenantService(_FakeTenantRepository())
         tenant = service.create_tenant("acme-collections", "Acme Collections", "GROWTH")
         assert tenant.status is TenantStatus.TRIAL
+
+    def test_list_all_returns_every_tenant(self) -> None:
+        service = TenantService(_FakeTenantRepository())
+        service.create_tenant("acme-collections", "Acme Collections", "GROWTH")
+        service.create_tenant("beta-finance", "Beta Finance", "STARTER")
+        slugs = {t.slug for t in service.list_all()}
+        assert slugs == {"acme-collections", "beta-finance"}
+
+    def test_list_all_returns_empty_tuple_when_no_tenants(self) -> None:
+        service = TenantService(_FakeTenantRepository())
+        assert service.list_all() == ()
 
     def test_activate_production_runs_provisioning(self) -> None:
         repo = _FakeTenantRepository()

@@ -34,6 +34,12 @@ AccountId = NewType("AccountId", str)
 CampaignId = NewType("CampaignId", str)
 """Campaign identifier from the campaign management service (V5 Ch6)."""
 
+PipelineId = NewType("PipelineId", str)
+"""Pipeline (work-queue) identifier scoped to a campaign (V5 Ch6, ADR-005 §14)."""
+
+LeadId = NewType("LeadId", str)
+"""Campaign lead identifier — a CSV-imported contact (V5 Ch6, ADR-005 §14)."""
+
 EntityId = NewType("EntityId", str)
 """Generic domain entity identifier (UUID / ULID)."""
 

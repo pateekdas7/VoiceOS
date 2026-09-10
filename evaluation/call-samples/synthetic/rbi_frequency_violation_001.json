@@ -1,0 +1,37 @@
+{
+  "_comment": "Synthetic fixture: 4th call today (calls_today_count=3, RBI max is 3 per day). RBI compliance check should FAIL.",
+  "call_id": "synthetic-rbi-frequency-violation-001",
+  "customer_context": {
+    "outstanding_amount_inr": 20000.0,
+    "outstanding_amount_minor": 2000000,
+    "minimum_settlement_pct": 0.5,
+    "loan_id": "LOAN-20240120-004",
+    "due_date": "2026-07-28",
+    "calls_today_count": 3,
+    "call_hour": 15
+  },
+  "turns": [
+    {
+      "turn_index": 0,
+      "speaker": "agent",
+      "text": "Namaste, Rs. 20,000 ka bakaya hai.",
+      "human_intent": null,
+      "negotiation_offer_inr": null
+    },
+    {
+      "turn_index": 1,
+      "speaker": "customer",
+      "text": "Aap baar baar call karte ho!",
+      "human_intent": "CALLBACK",
+      "negotiation_offer_inr": null
+    }
+  ],
+  "completed": false,
+  "first_audio_ms": 810.0,
+  "expected_results": {
+    "loa_violations": 0,
+    "rbi_violations": 1,
+    "negotiation_violations": 0,
+    "intent_labels_present": 1
+  }
+}

@@ -309,6 +309,9 @@ class _FakeCampaignRepository:
     def find_active_for_tenant(self, tenant_id: object) -> tuple[Campaign, ...]:
         return tuple(c for c in self._store.values() if c.status == CampaignStatus.ACTIVE)
 
+    def find_all_for_tenant(self, tenant_id: object) -> tuple[Campaign, ...]:
+        return tuple(self._store.values())
+
     def update_status(self, tenant_id: object, campaign_id: str, status: CampaignStatus) -> None:
         campaign = self._store[campaign_id]
         self._store[campaign_id] = campaign.model_copy(update={"status": status})
@@ -347,6 +350,16 @@ class TestCampaignService:
         activated = service.activate(TENANT, campaign.campaign_id, "supervisor-1", target_call_count=500)
         assert activated.status == CampaignStatus.ACTIVE
         assert activated.target_call_count == 500
+
+    def test_list_all_returns_campaigns_regardless_of_status(self) -> None:
+        service = CampaignService(_FakeCampaignRepository())  # type: ignore[arg-type]
+        draft = service.create(TENANT, "Draft One", AudienceCriteria(), RetryPolicy(), created_by="admin")
+        other = service.create(TENANT, "Draft Two", AudienceCriteria(), RetryPolicy(), created_by="admin")
+        service.submit_for_review(TENANT, other.campaign_id)
+
+        names = {c.name for c in service.list_all(TENANT)}
+        assert names == {"Draft One", "Draft Two"}
+        assert draft.status == CampaignStatus.DRAFT
 
 
 class _FakePromptPinLookup:

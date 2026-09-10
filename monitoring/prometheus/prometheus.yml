@@ -38,6 +38,7 @@ rule_files:
   - "alert_rules/infrastructure.yml"
   - "alert_rules/application.yml"
   - "alert_rules/business.yml"
+  - "alert_rules/ai_services.yml"
 
 alerting:
   alertmanagers:
@@ -130,9 +131,9 @@ scrape_configs:
   - job_name: gpu-node
     static_configs:
       - targets:
-          - "217.18.55.96:8100" # stt
-          - "217.18.55.96:8000" # llm-runtime (vLLM)
-          - "217.18.55.96:8200" # tts
+          - "185.216.21.242:8100" # stt   (GPU_NODE_STATE: A6000, provisioned 2026-07-19)
+          - "185.216.21.242:8000" # llm-runtime (vLLM)
+          - "185.216.21.242:8200" # tts
         labels:
           node_pool: gpu
           cluster_member: "false"

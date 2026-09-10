@@ -1,0 +1,449 @@
+"""DialogueResponseEngine — deterministic scripted-response FSM for the
+golden path (Path-A Phase 6f).
+
+Ported from evaluation/founder-validation/conv_server.py's v3.12-v3.14
+state machine (_run_state_machine/_classify_bucket/SCRIPT_TEMPLATES), which
+drove Call-001. Redesigned (per the approved consolidation plan) to consume
+real engine outputs instead of conv_server.py's own parallel parser:
+
+  - Intent routing reads ResponsePlan.intents (IntentEngine, real).
+  - Date/amount facts read ResponsePlan.entities (EntityExtractor, real,
+    enriched in Phase 6a specifically for this consumer).
+  - Negotiation bounds/finalized-commitment status come from
+    ResponsePlan.negotiation_envelope (NegotiationEngine, real, Phase 1/5).
+  - Per-call FSM state and the commitment ledger live on
+    ConversationSessionState (Phase 6b) — this engine is the only writer of
+    that ledger; it is never populated by a second regex parser.
+  - Register/name/tone cleanup runs through RegisterGuard (Phase 6c).
+  - The acknowledgment/prosody layer runs through EmpathyDirectiveComposer
+    (Phase 6d).
+  - Greeting/hangup/persona text comes from kavya_persona (Phase 6e).
+
+This engine does NOT persist commitments — Phase 5's
+ConversationEngine._persist_finalized_commitment() already does that from
+ResponsePlan.negotiation_envelope.is_finalized_commitment, driven by the
+real NegotiationEngine's decision, not by this engine's bucket routing.
+This engine only decides what Kavya says.
+
+Architecture: V2 Ch13 (dialogue state); V1 Ch12 (prompt/response assembly);
+RI-5 (Law of Authority — every fact spoken comes from CustomerContext/
+ResponsePlan.facts, never a literal).
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+
+from src.engines.dialogue_response.buckets import Bucket, classify_bucket, is_repeat_request
+from src.engines.dialogue_response.installment import InstallmentPlan, InstallmentPlanKind, compute_installment_plan
+from src.engines.dialogue_response.session_protocol import DialogueSessionState
+from src.engines.dialogue_response.templates import SCRIPT_TEMPLATES, date_is_already_terminated, format_rupees
+from src.engines.empathy_directive.directive import EmpathyDirective
+from src.engines.empathy_directive.engine import EmpathyDirectiveComposer
+from src.engines.prompt_builder.kavya_persona import (
+    AGENT_NAME,
+    HANGUP_TEXT,
+    build_greeting_text,
+    build_short_identity_repeat_text,
+)
+from src.libs.ai_safety.register_guard import RegisterGuard, dedupe_name, sanitize_reply, strip_trailing_sir
+from src.libs.contracts.context import CustomerContext
+from src.libs.contracts.response_plan import ResponsePlan
+
+logger = logging.getLogger(__name__)
+
+_ELSE_FALLBACK_THRESHOLD = 2
+"""Two consecutive turns the scripted golden path can't classify (Bucket.ELSE)
+triggers a real LLM fallback for that turn, instead of a third consecutive
+deterministic "anchor" re-ask. This is the live trigger condition for the
+approved consolidation plan's "LLM as fallback" design intent (Phase 6 of
+Path-A Runtime Consolidation) — the initial Phase 6g wiring made
+DialogueResponseEngine always produce a scripted reply with no fallback
+signal at all, which technically satisfied "never crashes" but never
+actually let the LLM participate in a live call. Two, not one: a single
+unclassified turn is routine (garbled STT, an ambiguous phrase) and the
+deterministic anchor re-ask handles it fine; two in a row is a stronger
+signal the customer has said something genuinely off-script that a fixed
+template can't serve, where the LLM's flexibility earns its cost/latency
+and reduced determinism."""
+
+_IDENTITY_YES_TOKENS = (
+    "हाँ", "हां", "haan", "yes", "बोल रहा", "bol raha", "speaking",
+    "हां जी", "haan ji", "jee", "जी", "जी हाँ", "ji haan",
+    "बोलिए", "boliye", "haan boliye", "हाँ बोलिए", "yes speaking", "yeah speaking",
+)  # fmt: skip
+_IDENTITY_NO_TOKENS = (
+    "wrong number", "गलत नंबर", "galat number", "नहीं", "nahi", "nahin",
+    "no", "not me", "मैं नहीं", "main nahi", "wrong person",
+)  # fmt: skip
+
+_MONTHLY_CUE = ("महीने का", "प्रति महीना", "monthly", "per month", "हर महीने", "हर month", "एक महीने में")
+_LUMPSUM_CUE = ("एक बार में", "एक साथ", "एक शॉट में", "one shot", "one-shot", "पूरा", "फुल", "full")
+
+_ENGLISH_MONTHS = (
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+)
+
+
+def _classify_identity_response(text: str) -> str:
+    """Return 'confirm' / 'deny' / 'ambiguous' for the AWAIT_IDENTITY turn."""
+    if not text:
+        return "ambiguous"
+    lower = text.lower()
+    if any(tok in text or tok.lower() in lower for tok in _IDENTITY_NO_TOKENS):
+        return "deny"
+    if any(tok in text or tok.lower() in lower for tok in _IDENTITY_YES_TOKENS):
+        return "confirm"
+    return "ambiguous"
+
+
+def _detect_cadence(user_text: str) -> str | None:
+    lower = user_text.lower()
+    if any(cue in user_text or cue in lower for cue in _MONTHLY_CUE):
+        return "monthly"
+    if any(cue in user_text or cue in lower for cue in _LUMPSUM_CUE):
+        return "one-shot"
+    return None
+
+
+def _format_date_for_speech(iso_date: str) -> str:
+    """Render a resolved ISO date (YYYY-MM-DD) as spoken Hinglish ('9 August').
+
+    Speaking the resolved date rather than echoing the customer's raw phrase
+    verbatim avoids parroting back a garbled ASR transcript — the date has
+    already been resolved to a real calendar date by EntityExtractor.
+    """
+    try:
+        year, month, day = (int(p) for p in iso_date.split("-"))
+        return f"{day} {_ENGLISH_MONTHS[month - 1]}"
+    except (ValueError, IndexError):
+        return iso_date
+
+
+def _resolve_outstanding_minor(
+    context: CustomerContext | None, response_plan: ResponsePlan
+) -> int | None:
+    """Return the authoritative outstanding balance in minor units, or None.
+
+    ``None`` means the amount is UNRESOLVED — no CustomerContext with a
+    primary_loan was assembled AND no authoritative fact reached the
+    ResponsePlan. Callers MUST route to the ``clarify_no_record`` template
+    branch rather than substituting 0, which would render "₹0 outstanding"
+    as if authoritative (a Law-of-Authority / RI-5 fabrication).
+
+    Zero is a legitimate return value only when the customer genuinely
+    owes zero (primary_loan.outstanding_balance.amount_minor == 0), never
+    as a sentinel for "unknown".
+    """
+    if context is not None and context.primary_loan is not None:
+        return context.primary_loan.outstanding_balance.amount_minor
+    # NB: ResponsePlanningEngine writes "outstanding_balance_minor" (see
+    # engines/response_planning/engine.py — the fact key was previously
+    # mis-read here as "outstanding_balance", so this fallback path was
+    # silently dead even when the fact was present).
+    fact = response_plan.facts.get("outstanding_balance_minor")
+    if isinstance(fact, int):
+        return fact
+    logger.warning(
+        "DialogueResponseEngine: no authoritative outstanding balance available "
+        "on context or ResponsePlan.facts — routing to clarify_no_record template"
+    )
+    return None
+
+
+@dataclass(frozen=True)
+class DialogueTurnOutput:
+    """What Kavya says this turn, plus the routing/empathy metadata behind it."""
+
+    reply_text: str
+    bucket: Bucket | None
+    dialogue_state_name: str
+    empathy_directive: EmpathyDirective
+    needs_llm_fallback: bool = False
+    """True when the scripted golden path has failed to classify the
+    customer's utterance for _ELSE_FALLBACK_THRESHOLD consecutive turns.
+    reply_text is still populated (a guaranteed deterministic backstop) —
+    callers that want the real LLM/TTS streaming path to serve this turn
+    instead should check this flag rather than relying on reply_text alone."""
+
+
+class DialogueResponseEngine:
+    """Deterministic scripted-response FSM: AWAIT_IDENTITY -> CONVERSATION -> CLOSE.
+
+    Stateless itself — all per-call state lives on the ConversationSessionState
+    passed into generate_reply(), consistent with every other engine in the
+    CIL pipeline (engines are pure functions of their inputs; state is the
+    caller's responsibility).
+    """
+
+    def __init__(self) -> None:
+        self._empathy = EmpathyDirectiveComposer()
+        self._register_guard = RegisterGuard()
+
+    def generate_reply(
+        self,
+        session: DialogueSessionState,
+        response_plan: ResponsePlan,
+        context: CustomerContext | None,
+        user_text: str,
+        lender_name: str,
+    ) -> DialogueTurnOutput:
+        outstanding_minor = _resolve_outstanding_minor(context, response_plan)
+        customer_name = context.primary_party.name if context is not None else ""
+
+        state = session.dialogue_state_name
+        if state == "AWAIT_IDENTITY":
+            reply, bucket = self._handle_await_identity(
+                session, user_text, customer_name, outstanding_minor, lender_name
+            )
+        elif state == "CLOSE":
+            reply, bucket = SCRIPT_TEMPLATES["close_farewell"], None
+        else:
+            reply, bucket = self._handle_conversation(session, user_text, response_plan, outstanding_minor, lender_name)
+
+        needs_llm_fallback = False
+        if bucket == Bucket.ELSE:
+            needs_llm_fallback = session.bump_consecutive_else_count() >= _ELSE_FALLBACK_THRESHOLD
+        elif bucket is not None:
+            session.reset_consecutive_else_count()
+
+        directive = self._empathy.compose(user_text, bucket.value if bucket is not None else "")
+        reply = self._empathy.apply_to_reply(reply, directive)
+        # Rule 6 (never address by name) only applies once identity has been
+        # established — the AWAIT_IDENTITY gate must be able to say the
+        # customer's name (identity_reask) to confirm it's speaking to the
+        # right person in the first place.
+        scrub_name = "" if state == "AWAIT_IDENTITY" else customer_name
+        reply = self._apply_guards(reply, scrub_name, outstanding_minor)
+
+        session.record_assistant_reply(reply)
+        session.set_last_empathy_state(directive.state.value)
+
+        return DialogueTurnOutput(
+            reply_text=reply,
+            bucket=bucket,
+            dialogue_state_name=session.dialogue_state_name,
+            empathy_directive=directive,
+            needs_llm_fallback=needs_llm_fallback,
+        )
+
+    def build_greeting(self, context: CustomerContext | None, lender_name: str) -> str:
+        """The call-open identity-verification greeting (spoken once, before
+        any customer turn — not part of the AWAIT_IDENTITY/CONVERSATION/CLOSE
+        state machine above, which only runs from the customer's first reply
+        onward)."""
+        customer_name = context.primary_party.name if context is not None else ""
+        return build_greeting_text(customer_name=customer_name, lender_name=lender_name)
+
+    def build_hangup_reply(self) -> str:
+        return HANGUP_TEXT
+
+    # ------------------------------------------------------------------
+    # AWAIT_IDENTITY
+    # ------------------------------------------------------------------
+
+    def _handle_await_identity(
+        self,
+        session: DialogueSessionState,
+        user_text: str,
+        customer_name: str,
+        outstanding_minor: int | None,
+        lender_name: str,
+    ) -> tuple[str, Bucket | None]:
+        if is_repeat_request(user_text):
+            # A repeat request is not an identity response at all -- must not
+            # consume the one-shot identity_reprompted flag (that flag exists
+            # to stop an AMBIGUOUS identity answer from re-asking forever;
+            # an explicit "repeat" request is allowed every single time) and
+            # must not replay the full ~20-word call-open greeting a second
+            # time -- see build_short_identity_repeat_text's docstring.
+            return build_short_identity_repeat_text(customer_name, lender_name), Bucket.REPEAT
+        verdict = _classify_identity_response(user_text)
+        if verdict == "confirm":
+            session.set_identity_verified(True)
+            session.set_dialogue_state_name("CONVERSATION")
+            session.set_last_ask("when_pay")
+            if outstanding_minor is None:
+                return SCRIPT_TEMPLATES["clarify_no_record"], None
+            return SCRIPT_TEMPLATES["identity_confirm"].format(outstanding=format_rupees(outstanding_minor)), None
+        if verdict == "deny":
+            session.set_dialogue_state_name("CLOSE")
+            session.set_farewell_requested(True)
+            return SCRIPT_TEMPLATES["identity_deny"], None
+        if not session.identity_reprompted:
+            session.set_identity_reprompted(True)
+            return SCRIPT_TEMPLATES["identity_reask"].format(customer_name=customer_name), None
+        # Ambiguous a second time — proceed rather than loop the customer
+        # through an identity gate indefinitely.
+        session.set_dialogue_state_name("CONVERSATION")
+        session.set_last_ask("when_pay")
+        if outstanding_minor is None:
+            return SCRIPT_TEMPLATES["clarify_no_record"], None
+        return SCRIPT_TEMPLATES["identity_confirm"].format(outstanding=format_rupees(outstanding_minor)), None
+
+    # ------------------------------------------------------------------
+    # CONVERSATION
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _anchor(outstanding_minor: int | None) -> str:
+        """Render the anchor template, or clarify_no_record when balance is
+        unresolved. Used everywhere the scripted path would otherwise assert
+        an amount without an authoritative source (RI-5)."""
+        if outstanding_minor is None:
+            return SCRIPT_TEMPLATES["clarify_no_record"]
+        return SCRIPT_TEMPLATES["anchor"].format(outstanding=format_rupees(outstanding_minor))
+
+    def _handle_conversation(
+        self,
+        session: DialogueSessionState,
+        user_text: str,
+        response_plan: ResponsePlan,
+        outstanding_minor: int | None,
+        lender_name: str,
+    ) -> tuple[str, Bucket]:
+        entities = response_plan.entities
+        new_date_this_turn = "PROMISE_DATE" in entities or "DATE" in entities
+        new_amount_this_turn = "AMOUNT" in entities or "PARTIAL_AMOUNT" in entities
+        self._update_ledger_from_entities(session, response_plan, user_text)
+
+        bucket = classify_bucket(
+            user_text,
+            response_plan,
+            last_ask=session.last_ask,
+            new_date_this_turn=new_date_this_turn,
+            new_amount_this_turn=new_amount_this_turn,
+        )
+
+        if bucket == Bucket.FAREWELL:
+            session.set_dialogue_state_name("CLOSE")
+            return SCRIPT_TEMPLATES["close_farewell"], bucket
+
+        if bucket == Bucket.LOAN_DENIAL:
+            session.set_dialogue_state_name("CLOSE")
+            return SCRIPT_TEMPLATES["close_callback"], bucket
+
+        if bucket == Bucket.REPEAT:
+            # Replay Kavya's own last line verbatim -- every scripted template
+            # is already one short sentence, so there is no "shorter" version
+            # to fall back to here (unlike the AWAIT_IDENTITY greeting, which
+            # build_short_identity_repeat_text() shortens instead of
+            # replaying in full). Idempotent: no last_ask/ledger mutation, so
+            # asking to repeat never advances or disturbs the conversation
+            # state -- the customer can ask as many times as needed.
+            previous = session.assistant_replies
+            if previous:
+                return previous[-1], bucket
+            return self._anchor(outstanding_minor), bucket
+
+        if bucket == Bucket.ASK_WHO:
+            session.set_last_ask("when_pay")
+            return SCRIPT_TEMPLATES["ask_who"].format(agent_name=AGENT_NAME, lender_name=lender_name), bucket
+
+        if bucket == Bucket.ASK_AMOUNT:
+            session.set_last_ask("when_pay")
+            if outstanding_minor is None:
+                return SCRIPT_TEMPLATES["clarify_no_record"], bucket
+            return SCRIPT_TEMPLATES["ask_amount"].format(outstanding=format_rupees(outstanding_minor)), bucket
+
+        if bucket == Bucket.HARDSHIP:
+            session.set_last_ask("part_payment")
+            return SCRIPT_TEMPLATES["hardship"], bucket
+
+        if bucket == Bucket.GIVES_DATE:
+            session.set_last_ask("confirm_date")
+            date_text = str(session.commitment.get("date") or "")
+            tpl_key = "gives_date_confirm_relative" if date_is_already_terminated(date_text) else "gives_date_confirm"
+            return SCRIPT_TEMPLATES[tpl_key].format(date=date_text), bucket
+
+        if bucket == Bucket.GIVES_AMOUNT:
+            return self._handle_gives_amount(session, user_text, outstanding_minor), bucket
+
+        if bucket == Bucket.ACK:
+            last = session.last_ask
+            if last in ("confirm_date", "confirm_plan"):
+                session.set_dialogue_state_name("CLOSE")
+                return SCRIPT_TEMPLATES["close_soft"], bucket
+            session.set_last_ask("when_pay")
+            return self._anchor(outstanding_minor), bucket
+
+        session.set_last_ask("when_pay")
+        return self._anchor(outstanding_minor), bucket
+
+    def _handle_gives_amount(
+        self, session: DialogueSessionState, user_text: str, outstanding_minor: int | None
+    ) -> str:
+        amount_minor = session.commitment.get("amount_minor")
+        if not amount_minor:
+            session.set_last_ask("when_pay")
+            return self._anchor(outstanding_minor)
+        if outstanding_minor is None:
+            # compute_installment_plan requires an authoritative balance to
+            # divide by; without one we cannot honestly say "X months to
+            # clear ₹Y". Ask for verification instead.
+            session.set_last_ask("when_pay")
+            return SCRIPT_TEMPLATES["clarify_no_record"]
+        cadence = _detect_cadence(user_text)
+        plan = compute_installment_plan(outstanding_minor, int(amount_minor), cadence)
+        session.update_commitment(cadence=cadence)
+        session.set_last_ask("confirm_plan")
+        return self._render_plan(plan)
+
+    def _render_plan(self, plan: InstallmentPlan) -> str:
+        if plan.kind == InstallmentPlanKind.MONTHLY:
+            return SCRIPT_TEMPLATES["plan_computed"].format(
+                amount=format_rupees(plan.amount_minor), months=plan.months
+            )
+        if plan.kind == InstallmentPlanKind.LUMPSUM_FULL:
+            return SCRIPT_TEMPLATES["plan_lumpsum_full"].format(amount=format_rupees(plan.amount_minor))
+        return SCRIPT_TEMPLATES["plan_lumpsum_partial"].format(
+            amount=format_rupees(plan.amount_minor),
+            remaining=format_rupees(plan.remaining_minor or 0),
+        )
+
+    def _update_ledger_from_entities(
+        self,
+        session: DialogueSessionState,
+        response_plan: ResponsePlan,
+        user_text: str,
+    ) -> None:
+        entities = response_plan.entities
+        amount_minor: int | None = None
+        if "AMOUNT" in entities:
+            amount_minor = int(entities["AMOUNT"]) * 100
+        elif "PARTIAL_AMOUNT" in entities:
+            amount_minor = int(entities["PARTIAL_AMOUNT"]) * 100
+
+        date_text: str | None = None
+        iso_date = entities.get("PROMISE_DATE") or entities.get("DATE")
+        if iso_date:
+            date_text = _format_date_for_speech(str(iso_date))
+
+        cadence = _detect_cadence(user_text) if amount_minor is not None else None
+
+        if amount_minor is not None or date_text is not None or cadence is not None:
+            session.update_commitment(amount_minor=amount_minor, date_text=date_text, cadence=cadence)
+
+    # ------------------------------------------------------------------
+    # Register/name/tone cleanup — defense-in-depth on our own templates.
+    # ------------------------------------------------------------------
+
+    def _apply_guards(
+        self, reply: str, customer_name: str, outstanding_minor: int | None
+    ) -> str:
+        cleaned = dedupe_name(reply, customer_name)
+        cleaned = sanitize_reply(cleaned)
+        cleaned = strip_trailing_sir(cleaned)
+        result = self._register_guard.check(cleaned)
+        if not result.clean:
+            logger.warning(
+                "DialogueResponseEngine: scripted reply failed RegisterGuard (%s); falling back to anchor",
+                result.violation,
+            )
+            return self._anchor(outstanding_minor)
+        return cleaned
+
+
+__all__ = ["DialogueResponseEngine", "DialogueTurnOutput"]

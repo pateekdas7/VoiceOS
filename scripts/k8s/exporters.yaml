@@ -1,0 +1,178 @@
+# --- node-exporter DaemonSet ---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-exporter
+  namespace: voiceos-ops
+  labels:
+    app.kubernetes.io/name: node-exporter
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: node-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: node-exporter
+    spec:
+      hostNetwork: true
+      hostPID: true
+      containers:
+        - name: node-exporter
+          image: prom/node-exporter:v1.8.1
+          args:
+            - --path.procfs=/host/proc
+            - --path.sysfs=/host/sys
+            - --path.rootfs=/host/root
+            - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+          ports:
+            - containerPort: 9100
+              hostPort: 9100
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: proc
+              mountPath: /host/proc
+              readOnly: true
+            - name: sys
+              mountPath: /host/sys
+              readOnly: true
+            - name: root
+              mountPath: /host/root
+              readOnly: true
+              mountPropagation: HostToContainer
+      volumes:
+        - name: proc
+          hostPath:
+            path: /proc
+        - name: sys
+          hostPath:
+            path: /sys
+        - name: root
+          hostPath:
+            path: /
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: node-exporter
+  namespace: voiceos-ops
+  labels:
+    app.kubernetes.io/name: node-exporter
+spec:
+  ports:
+    - name: metrics
+      port: 9100
+      targetPort: 9100
+  selector:
+    app.kubernetes.io/name: node-exporter
+  clusterIP: None
+---
+# --- postgres-exporter Deployment ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-exporter
+  namespace: voiceos-ops
+  labels:
+    app.kubernetes.io/name: postgres-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres-exporter
+    spec:
+      containers:
+        - name: postgres-exporter
+          image: prometheuscommunity/postgres-exporter:v0.15.0
+          env:
+            - name: DATA_SOURCE_NAME
+              value: "postgresql://voiceos:voiceos_pw@10.0.2.2:5432/voiceos?sslmode=disable"
+          ports:
+            - containerPort: 9187
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-exporter
+  namespace: voiceos-ops
+  labels:
+    app.kubernetes.io/name: postgres-exporter
+spec:
+  ports:
+    - name: metrics
+      port: 9187
+      targetPort: 9187
+  selector:
+    app.kubernetes.io/name: postgres-exporter
+---
+# --- redis-exporter Deployment ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-exporter
+  namespace: voiceos-ops
+  labels:
+    app.kubernetes.io/name: redis-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis-exporter
+    spec:
+      containers:
+        - name: redis-exporter
+          image: oliver006/redis_exporter:v1.62.0
+          env:
+            - name: REDIS_ADDR
+              value: "redis://10.0.2.2:6379"
+            - name: REDIS_PASSWORD
+              value: "0e539e25b3e5ea96e7434dad38c6029557a9fb3b92f0869e"
+          ports:
+            - containerPort: 9121
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-exporter
+  namespace: voiceos-ops
+  labels:
+    app.kubernetes.io/name: redis-exporter
+spec:
+  ports:
+    - name: metrics
+      port: 9121
+      targetPort: 9121
+  selector:
+    app.kubernetes.io/name: redis-exporter

@@ -47,6 +47,31 @@ BYTES_RECEIVED: Counter = Counter(
 )
 """Counter: cumulative bytes received, labelled by adapter type."""
 
+CALLS_BLOCKED_CONSENT_REVOKED: Counter = Counter(
+    "voiceos_media_gateway_calls_blocked_consent_revoked_total",
+    "Total call-open admissions rejected because the customer's consent is revoked.",
+    labelnames=["tenant_id"],
+)
+"""Counter: connections closed at the WebSocket-open boundary because
+the customer's consent has been revoked. Defense-in-depth against
+schedule-time races (revocation lands after the scheduler cleared the
+call but before the WebSocket actually connected) and inbound calls
+that never went through the scheduler at all. A rising rate here means
+the upstream consent surface (CRM/self-service) is producing revocations
+faster than the scheduler notices — normal for the first minute after a
+bulk import, alertable if it stays elevated."""
+
+GREETING_OUTCOMES: Counter = Counter(
+    "voiceos_media_gateway_greeting_outcomes_total",
+    "Terminal outcome of the call-open greeting (per call).",
+    labelnames=["outcome"],
+)
+"""Counter: greeting outcomes — ``ok`` (spoke and returned), ``timeout``
+(hit greeting_timeout_s — GPU TTS unreachable/slow), ``error`` (exception).
+A rising timeout rate is the earliest signal of GPU/TTS regression: without
+this metric, a hung greeting only surfaces in per-call logs long after
+callers have already heard 30–60s of dead air."""
+
 
 # ---------------------------------------------------------------------------
 # Convenience wrappers (thin, no coupling to specific adapter internals)
@@ -71,3 +96,8 @@ def record_admission_rejection(reason: str, adapter_type: str) -> None:
 def record_bytes_received(byte_count: int, adapter_type: str) -> None:
     """Add ``byte_count`` to the bytes_received counter for ``adapter_type``."""
     BYTES_RECEIVED.labels(adapter_type=adapter_type).inc(byte_count)
+
+
+def record_call_blocked_consent_revoked(tenant_id: str) -> None:
+    """Increment the consent-revoked block counter for ``tenant_id``."""
+    CALLS_BLOCKED_CONSENT_REVOKED.labels(tenant_id=tenant_id).inc()
