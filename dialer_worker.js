@@ -52,6 +52,11 @@ const RETRY_DELAY_S        = [60, 300, 900]; // 1 min, 5 min, 15 min backoff
 const CALLBACK_POLL_MS     = 30_000;
 const IDLE_LOG_INTERVAL_MS = 60_000;
 
+// Phase 3: Crash reconciliation thresholds
+const RECONCILE_INITIATED_THRESHOLD_S   = 60;   // INITIATED+no callSid older than 60s → worker crashed before Twilio responded
+const RECONCILE_IN_PROGRESS_THRESHOLD_S = 240;  // IN_PROGRESS older than 240s → call ended but worker crashed post-call
+const RECONCILE_FORCE_THRESHOLD_S       = 360;  // Force-fail anything older than 6 min regardless of Twilio status
+
 // SIM call outcome distribution (must sum to 100)
 const SIM_OUTCOMES = [
   { disposition: 'COMPLETED',  weight: 55 },
@@ -70,6 +75,7 @@ const K = {
   pipelineCompleted: (pid) => `voiceos:pipeline:completed:${pid}`,
   callLock:        (sid)  => `voiceos:call:lock:${sid}`,
   workerHeartbeat: (wid)  => `voiceos:worker:${wid}:alive`,
+  reconcileLock:   (aid)  => `voiceos:reconcile:${aid}`,
 };
 
 // ─── DB / Redis clients ──────────────────────────────────────────────────────
@@ -383,6 +389,293 @@ class TwilioDialer {
 
     log.info(`[TWILIO] Call initiated sid=${call.sid} to=${lead.phone} pipeline=${lead.pipeline_id}`);
     return call.sid;
+  }
+}
+
+// ─── Phase 3: Crash Reconciler ──────────────────────────────────────────────
+// On every worker startup, scans for call_attempts left INITIATED or IN_PROGRESS
+// by workers that have since died (heartbeat key gone). For each stale attempt:
+//   1. Claims it with Redis NX + atomic DB UPDATE to RECONCILING (multi-worker safe)
+//   2. In production, checks Twilio for the real call outcome before deciding disposition
+//   3. Repairs lead queue_status and schedules a retry if retries remain
+//   4. Resets the pipeline to IDLE and removes the active_calls row
+//   5. Writes a recovery_log entry for observability
+
+class CrashReconciler {
+  constructor(dbPool, redisClient) {
+    this._pool  = dbPool;
+    this._redis = redisClient;
+    // Twilio client for production status checks — null in simulation mode
+    this._twilio = null;
+    if (DIALER_MODE === 'production' && process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) {
+      try {
+        const Twilio = require('twilio');
+        this._twilio = new Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+      } catch (e) {
+        log.warn('[Reconciler] Twilio client unavailable — will skip Twilio status checks:', e.message);
+      }
+    }
+  }
+
+  async reconcile() {
+    log.info(`[Reconciler:${WORKER_ID}] Starting crash reconciliation scan`);
+    const scanStart = Date.now();
+    let reconciled = 0;
+    let skipped    = 0;
+    let errors     = 0;
+
+    try {
+      const stale = await this._findStaleAttempts();
+      log.info(`[Reconciler:${WORKER_ID}] Found ${stale.length} stale attempt(s) to evaluate`);
+
+      for (const attempt of stale) {
+        try {
+          const result = await this._reconcileAttempt(attempt);
+          if (result === 'reconciled') reconciled++;
+          else skipped++;
+        } catch (e) {
+          errors++;
+          log.error(`[Reconciler:${WORKER_ID}] Failed to reconcile attempt=${attempt.attempt_id}:`, e.message);
+        }
+      }
+    } catch (e) {
+      log.error(`[Reconciler:${WORKER_ID}] Scan failed:`, e.message);
+    }
+
+    const durationMs = Date.now() - scanStart;
+    log.info(`[Reconciler:${WORKER_ID}] Done — reconciled=${reconciled} skipped=${skipped} errors=${errors} duration=${durationMs}ms`);
+  }
+
+  // Find call_attempts that are stale and whose originating worker appears dead.
+  async _findStaleAttempts() {
+    const { rows } = await this._pool.query(`
+      SELECT attempt_id, tenant_id, campaign_id, lead_id, pipeline_id,
+             call_sid, worker_id, status, initiated_at
+      FROM call_attempts
+      WHERE status IN ('INITIATED', 'IN_PROGRESS')
+        AND worker_id != $1
+        AND (
+          (status = 'INITIATED'   AND call_sid IS NULL
+           AND initiated_at < NOW() - ($2 || ' seconds')::INTERVAL)
+          OR
+          (status = 'IN_PROGRESS'
+           AND initiated_at < NOW() - ($3 || ' seconds')::INTERVAL)
+        )
+      ORDER BY initiated_at ASC
+      LIMIT 50
+    `, [WORKER_ID, RECONCILE_INITIATED_THRESHOLD_S, RECONCILE_IN_PROGRESS_THRESHOLD_S]);
+
+    // Filter out attempts from workers whose heartbeat is still alive.
+    // Cache per-worker result so Redis is only queried once per worker per scan.
+    const workerAlive = new Map();
+    const filtered = [];
+    for (const row of rows) {
+      if (!workerAlive.has(row.worker_id)) {
+        const exists = await this._redis.exists(K.workerHeartbeat(row.worker_id));
+        workerAlive.set(row.worker_id, exists === 1);
+      }
+      if (!workerAlive.get(row.worker_id)) filtered.push(row);
+    }
+    return filtered;
+  }
+
+  async _reconcileAttempt(attempt) {
+    // Multi-worker safety: Redis NX lock first, then atomic DB UPDATE.
+    // Both are required: Redis prevents the thundering herd, DB prevents
+    // the race if two workers claim the Redis lock at the same millisecond.
+    const claimKey = K.reconcileLock(attempt.attempt_id);
+    const claimed  = await this._redis.set(claimKey, WORKER_ID, 'EX', 120, 'NX');
+    if (!claimed) return 'skipped';
+
+    const { rows: claimedRows } = await this._pool.query(
+      `UPDATE call_attempts SET status='RECONCILING'
+       WHERE attempt_id=$1 AND status IN ('INITIATED','IN_PROGRESS')
+       RETURNING *`,
+      [attempt.attempt_id]
+    );
+    if (!claimedRows.length) {
+      await this._redis.del(claimKey);
+      return 'skipped';
+    }
+
+    const originalStatus = attempt.status;
+    const startedAt  = new Date().toISOString();
+    const startMs    = Date.now();
+    const failureClass = (!attempt.call_sid || attempt.status === 'INITIATED')
+      ? 'CRASH_INITIATED' : 'CRASH_IN_PROGRESS';
+
+    try {
+      let disposition = 'FAILED';
+
+      if (attempt.call_sid && this._twilio) {
+        const ageS = (Date.now() - new Date(attempt.initiated_at).getTime()) / 1000;
+        let twilioDisposition;
+        let twilioCheckFailed = false;
+
+        try {
+          twilioDisposition = await this._checkTwilioStatus(attempt.call_sid);
+        } catch (e) {
+          twilioCheckFailed = true;
+          log.warn(`[Reconciler] Twilio status check failed for sid=${attempt.call_sid}:`, e.message);
+        }
+
+        if (twilioCheckFailed) {
+          if (ageS < RECONCILE_FORCE_THRESHOLD_S) {
+            // Cannot confirm outcome — conservative skip rather than risk killing a live call
+            await this._pool.query(
+              `UPDATE call_attempts SET status='IN_PROGRESS' WHERE attempt_id=$1`,
+              [attempt.attempt_id]
+            );
+            await this._redis.del(claimKey);
+            log.warn(`[Reconciler] Cannot confirm Twilio status for sid=${attempt.call_sid}, age=${Math.round(ageS)}s — skipping`);
+            return 'skipped';
+          }
+          log.warn(`[Reconciler] Force-failing attempt=${attempt.attempt_id} past ${RECONCILE_FORCE_THRESHOLD_S}s threshold`);
+        } else if (twilioDisposition === 'active') {
+          // Call is still live on Twilio — revert claim and leave it running
+          await this._pool.query(
+            `UPDATE call_attempts SET status='IN_PROGRESS' WHERE attempt_id=$1`,
+            [attempt.attempt_id]
+          );
+          await this._redis.del(claimKey);
+          log.info(`[Reconciler] attempt=${attempt.attempt_id} sid=${attempt.call_sid} is still active on Twilio — skipping`);
+          return 'skipped';
+        } else {
+          disposition = twilioDisposition;
+        }
+      }
+
+      await this._repairLeadState(attempt, disposition);
+
+      if (attempt.pipeline_id) {
+        await this._pool.query(
+          `UPDATE pipelines
+           SET status='IDLE', current_lead_id=NULL, current_call_sid=NULL, updated_at=now()
+           WHERE pipeline_id=$1 AND (current_call_sid=$2 OR status='BUSY')`,
+          [attempt.pipeline_id, attempt.call_sid || '']
+        );
+      }
+
+      if (attempt.call_sid) {
+        await this._pool.query(
+          `DELETE FROM active_calls WHERE call_sid=$1`,
+          [attempt.call_sid]
+        ).catch(e => log.warn('[Reconciler] active_calls delete failed:', e.message));
+        await this._redis.hdel(K.activeCalls(attempt.tenant_id), attempt.call_sid)
+          .catch(e => log.warn('[Reconciler] Redis activeCalls hdel failed:', e.message));
+      }
+
+      await this._pool.query(
+        `UPDATE call_attempts
+         SET status=$1, disposition=$2, ended_at=NOW(), error_message='worker_crash_reconciled'
+         WHERE attempt_id=$3`,
+        [disposition, disposition, attempt.attempt_id]
+      );
+
+      const durationMs = Date.now() - startMs;
+      await this._pool.query(
+        `INSERT INTO recovery_log
+           (call_id, failure_class, strategy_name, outcome, detail, started_at, completed_at, duration_ms)
+         VALUES ($1,$2,'crash_reconciliation','success',$3::jsonb,$4,NOW(),$5)`,
+        [
+          attempt.call_sid || attempt.attempt_id,
+          failureClass,
+          JSON.stringify({
+            attempt_id:           attempt.attempt_id,
+            original_status:      originalStatus,
+            crashed_worker_id:    attempt.worker_id,
+            reconciler_worker_id: WORKER_ID,
+            disposition,
+            lead_id:              attempt.lead_id,
+            tenant_id:            attempt.tenant_id,
+          }),
+          startedAt,
+          durationMs,
+        ]
+      ).catch(e => log.warn('[Reconciler] recovery_log write failed:', e.message));
+
+      log.info(`[Reconciler:${WORKER_ID}] Reconciled attempt=${attempt.attempt_id} disposition=${disposition} failureClass=${failureClass}`);
+      return 'reconciled';
+
+    } catch (e) {
+      // Restore original status so the next scan can retry reconciliation
+      await this._pool.query(
+        `UPDATE call_attempts SET status=$1 WHERE attempt_id=$2`,
+        [originalStatus, attempt.attempt_id]
+      ).catch(() => {});
+      await this._redis.del(claimKey);
+      throw e;
+    }
+  }
+
+  // Returns 'active' if the call is still live, a terminal disposition string if ended.
+  // Throws on API errors that are not 404 (caller decides how to handle conservatively).
+  async _checkTwilioStatus(callSid) {
+    const TWILIO_ACTIVE   = new Set(['queued', 'ringing', 'in-progress']);
+    const TWILIO_TERMINAL = {
+      completed:  'COMPLETED',
+      busy:       'BUSY',
+      failed:     'FAILED',
+      'no-answer': 'NO_ANSWER',
+      canceled:   'FAILED',
+    };
+    try {
+      const call = await this._twilio.calls(callSid).fetch();
+      if (TWILIO_ACTIVE.has(call.status)) return 'active';
+      return TWILIO_TERMINAL[call.status] || 'FAILED';
+    } catch (e) {
+      if (e.status === 404 || e.code === 20404) return 'FAILED'; // call not found = definitively over
+      throw e;
+    }
+  }
+
+  async _repairLeadState(attempt, disposition) {
+    const { rows } = await this._pool.query(
+      `SELECT COUNT(*)::int AS cnt FROM call_attempts
+       WHERE lead_id=$1 AND tenant_id=$2`,
+      [attempt.lead_id, attempt.tenant_id]
+    );
+    const totalAttempts = rows[0].cnt;
+
+    // Always update leads to reflect the call ended (mirroring _handleCallEnd behaviour)
+    await this._pool.query(
+      `UPDATE leads SET queue_status='FAILED', status='CALLED', updated_at=now()
+       WHERE lead_id=$1`,
+      [attempt.lead_id]
+    );
+
+    if (totalAttempts > MAX_RETRY_ATTEMPTS) {
+      log.info(`[Reconciler] Lead ${attempt.lead_id} exhausted retries (${totalAttempts}/${MAX_RETRY_ATTEMPTS}) → FAILED`);
+      return;
+    }
+
+    // Retries remain — reconstruct lead payload and push to retry sorted set
+    const { rows: leadRows } = await this._pool.query(
+      `SELECT lead_id, phone, name, language FROM leads WHERE lead_id=$1 LIMIT 1`,
+      [attempt.lead_id]
+    );
+
+    if (leadRows.length) {
+      const delaySec = RETRY_DELAY_S[Math.min(totalAttempts - 1, RETRY_DELAY_S.length - 1)];
+      const retryAt  = Date.now() + delaySec * 1000;
+      const retryPayload = {
+        lead_id:           attempt.lead_id,
+        phone:             leadRows[0].phone,
+        name:              leadRows[0].name,
+        language:          leadRows[0].language,
+        tenant_id:         attempt.tenant_id,
+        campaign_id:       attempt.campaign_id,
+        pipeline_id:       attempt.pipeline_id,
+        _retry_count:      totalAttempts,
+        _retry_after:      retryAt,
+        _last_disposition: disposition,
+        _reconciled:       true,
+      };
+      await this._redis.zadd(K.retryQueue(attempt.tenant_id), retryAt, JSON.stringify(retryPayload));
+      log.info(`[Reconciler] Lead ${attempt.lead_id} queued for retry in ${delaySec}s (attempt #${totalAttempts})`);
+    } else {
+      log.warn(`[Reconciler] Lead ${attempt.lead_id} not found in DB — cannot schedule retry`);
+    }
   }
 }
 
@@ -706,6 +999,7 @@ class DialerWorker {
     this._heartbeatTimer = null;
     this._retryTimer     = null;
     this._callbackTimer  = null;
+    this._reconciler     = new CrashReconciler(pool, redis);
   }
 
   async start() {
@@ -724,6 +1018,9 @@ class DialerWorker {
 
     // Start callback consumer
     this._callbackTimer = setInterval(() => this._drainCallbackQueues(), CALLBACK_POLL_MS);
+
+    // Phase 3: Crash reconciliation — runs once on startup before accepting new leads
+    await this._reconciler.reconcile();
 
     // Start main consumer loop
     log.info(`[Worker:${WORKER_ID}] Consumer loop started — monitoring ${this._tenantQueues.length} queue(s)`);
