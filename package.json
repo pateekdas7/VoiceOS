@@ -1,4 +1,10 @@
 {
+  "name": "voiceos",
+  "version": "2.0.0",
+  "scripts": {
+    "test": "jest",
+    "test:coverage": "jest --coverage"
+  },
   "dependencies": {
     "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",
@@ -8,5 +14,9 @@
     "jsonwebtoken": "^9.0.3",
     "pg": "^8.22.0",
     "twilio": "^6.1.0"
+  },
+  "devDependencies": {
+    "jest": "^30.5.1",
+    "supertest": "^7.2.2"
   }
 }

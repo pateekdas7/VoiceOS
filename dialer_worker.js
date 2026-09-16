@@ -1290,8 +1290,12 @@ process.on('unhandledRejection', (reason) => {
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 
-log.info(`VoiceOS Dialer Worker ${WORKER_ID} — mode=${DIALER_MODE}`);
-worker.start().catch(e => {
-  log.error('[Worker] Fatal startup error:', e.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  log.info(`VoiceOS Dialer Worker ${WORKER_ID} — mode=${DIALER_MODE}`);
+  worker.start().catch(e => {
+    log.error('[Worker] Fatal startup error:', e.message);
+    process.exit(1);
+  });
+}
+
+module.exports = { ScheduleVerifier, PipelineRegistry, ActiveCallTracker, CrashReconciler, Pipeline, DialerWorker };

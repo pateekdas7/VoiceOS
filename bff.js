@@ -698,6 +698,17 @@ app.put('/campaigns/:id', requireAuth, async (req, res) => {
   } catch (e) { console.error('PUT /campaigns error:', e.message); res.status(500).json({ error: 'server_error', detail: e.message }); }
 });
 
+app.delete('/campaigns/:id', requireAuth, async (req, res) => {
+  try {
+    const r = await pool.query(
+      'DELETE FROM campaigns WHERE campaign_id=$1 AND tenant_id=$2 RETURNING *',
+      [req.params.id, req.user.tenant_id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'not_found' });
+    res.json(r.rows[0]);
+  } catch (e) { console.error('DELETE /campaigns error:', e.message); res.status(500).json({ error: 'server_error' }); }
+});
+
 const LIFECYCLE_TRANSITIONS = {
   'submit-for-review': { from: 'DRAFT',    to: 'REVIEW'    },
   'approve':           { from: 'REVIEW',   to: 'APPROVED'  },
@@ -781,6 +792,11 @@ app.delete('/campaigns/:id/distribution-rules/:ruleId', requireAuth, async (req,
 // ═════════════════════════════════════════════════════════════════════════════
 app.get('/campaigns/:id/pipelines', requireAuth, async (req, res) => {
   try {
+    const cam = await pool.query(
+      'SELECT campaign_id FROM campaigns WHERE campaign_id=$1 AND tenant_id=$2',
+      [req.params.id, req.user.tenant_id]
+    );
+    if (!cam.rows.length) return res.status(404).json({ error: 'campaign_not_found' });
     const r = await pool.query(
       `SELECT pipeline_id, campaign_id, tenant_id, name, status, created_at, updated_at, created_by
          FROM pipelines
@@ -1757,8 +1773,12 @@ app.post('/campaigns/:id/leads/:leadId/schedule-callback', requireAuth, async (r
 });
 
 // ─── Catch-all ────────────────────────────────────────────────────────────────
-app.all('/{*path}', (req, res) => { res.json([]); });
+app.all('/{*path}', (req, res) => { res.status(404).json({ error: 'not_found' }); });
 
-app.listen(PORT, () => {
-  console.log(`VoiceOS BFF running on http://localhost:${PORT}`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`VoiceOS BFF running on http://localhost:${PORT}`);
+  });
+}
+
+module.exports = { app, pool, redis };
