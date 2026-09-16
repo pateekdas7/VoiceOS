@@ -6,18 +6,16 @@ const bcrypt       = require('bcryptjs');
 const cookieParser = require('cookie-parser');
 const cors         = require('cors');
 const Redis        = require('ioredis');
+const twilio       = require('twilio');
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const app          = express();
 const PORT         = 8000;
-const JWT_SECRET = process.env.JWT_SECRET || (() => {
-  if (process.env.NODE_ENV === 'production') {
-    console.error('[FATAL] JWT_SECRET must be set in production. Exiting.');
-    process.exit(1);
-  }
-  console.warn('[WARN] JWT_SECRET not set — using insecure default. Set JWT_SECRET before production deployment.');
-  return 'voiceos-local-dev-secret-key-2024';
-})();
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error('[FATAL] JWT_SECRET environment variable is not set. Exiting.');
+  process.exit(1);
+}
 const SESSION_COOKIE  = 'voiceos_session';
 const ACTOR_KIND_COOKIE = 'voiceos_actor_kind';
 
@@ -57,9 +55,10 @@ function makeToken(payload) {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
 }
 function setCookies(res, token, actorKind) {
-  const opts = { httpOnly: true, sameSite: 'lax', path: '/', maxAge: 7 * 24 * 3600 * 1000 };
+  const secure = process.env.NODE_ENV === 'production';
+  const opts = { httpOnly: true, sameSite: 'lax', path: '/', maxAge: 7 * 24 * 3600 * 1000, secure };
   res.cookie(SESSION_COOKIE, token, opts);
-  res.cookie(ACTOR_KIND_COOKIE, actorKind, { ...opts, httpOnly: false });
+  res.cookie(ACTOR_KIND_COOKIE, actorKind, opts);
 }
 function requireAuth(req, res, next) {
   const token = req.cookies[SESSION_COOKIE];
@@ -143,11 +142,11 @@ function checkCompliance(campaign, lead) {
 //   - QUALIFY rules: if ANY matching rule has action=QUALIFY, lead is qualified.
 //   - If only QUALIFY rules exist and none match, the lead is rejected (failed allowlist gate).
 //   - If no rules exist at all, default is qualified (open campaign).
-async function qualifyLead(campaignId, lead, dbClient) {
+async function qualifyLead(campaignId, tenantId, lead, dbClient) {
   const { rows } = await dbClient.query(
     `SELECT field, operator, value, action FROM campaign_qualification_rules
-     WHERE campaign_id=$1 AND is_active=TRUE ORDER BY priority DESC`,
-    [campaignId]
+     WHERE campaign_id=$1 AND tenant_id=$2 AND is_active=TRUE ORDER BY priority DESC`,
+    [campaignId, tenantId]
   );
   if (!rows.length) return { qualified: true, reason: 'no_rules' };
 
@@ -585,14 +584,14 @@ app.put('/campaigns/:id', requireAuth, async (req, res) => {
         max_attempts=COALESCE($11,max_attempts),
         retry_interval_hours=COALESCE($12,retry_interval_hours),
         updated_at=now()
-       WHERE campaign_id=$13 RETURNING *`,
+       WHERE campaign_id=$13 AND tenant_id=$14 RETURNING *`,
       [
         name, description, target_call_count,
         daily_start_hour, daily_end_hour, timezone,
         scheduled_start || null, scheduled_end || null,
         weekdays, excl,
         max_attempts, retry_interval_hours,
-        req.params.id,
+        req.params.id, req.user.tenant_id,
       ]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'not_found' });
@@ -753,13 +752,15 @@ app.post('/campaigns/:id/:action', requireAuth, async (req, res) => {
   try {
     const transition = LIFECYCLE_TRANSITIONS[req.params.action];
     if (!transition) return res.status(400).json({ error: 'unknown_action' });
-    const vals = [req.params.id];
+    const vals = [req.params.id, req.user.tenant_id];
     const setClauses = [`status='${transition.to}'`, 'updated_at=now()'];
     if (req.params.action === 'start' && req.body?.target_call_count) {
       vals.push(req.body.target_call_count);
       setClauses.push(`target_call_count=$${vals.length}`);
     }
-    const where = transition.from ? `campaign_id=$1 AND status='${transition.from}'` : 'campaign_id=$1';
+    const where = transition.from
+      ? `campaign_id=$1 AND tenant_id=$2 AND status='${transition.from}'`
+      : `campaign_id=$1 AND tenant_id=$2`;
     const r = await pool.query(`UPDATE campaigns SET ${setClauses.join(',')} WHERE ${where} RETURNING *`, vals);
     if (!r.rows.length) return res.status(409).json({ error: 'invalid_transition' });
     res.json(r.rows[0]);
@@ -870,7 +871,7 @@ app.post('/campaigns/:id/leads/upload', requireAuth, async (req, res) => {
       }
 
       // 5. Qualify
-      const qualResult = await qualifyLead(campaignId, { score, language, ...mapped }, client);
+      const qualResult = await qualifyLead(campaignId, tenantId, { score, language, ...mapped }, client);
 
       // 6. Distribute to pipeline
       const pipelineId = qualResult.qualified
@@ -1213,10 +1214,10 @@ app.get('/users/me', requireAuth, async (req, res) => {
   try {
     if (req.user.actor_kind === 'platform') {
       const r = await pool.query('SELECT platform_user_id as id, email, name, platform_role as role FROM platform_users WHERE platform_user_id=$1', [req.user.sub]);
-      return res.json(r.rows[0] || {});
+      return res.json({ ...(r.rows[0] || {}), actor_kind: req.user.actor_kind });
     }
     const r = await pool.query('SELECT user_id as id, email, name, tenant_id FROM users WHERE user_id=$1', [req.user.sub]);
-    res.json(r.rows[0] || {});
+    res.json({ ...(r.rows[0] || {}), actor_kind: req.user.actor_kind });
   } catch (e) { res.status(500).json({ error: 'server_error' }); }
 });
 
@@ -1450,6 +1451,20 @@ app.post('/dialer/twiml', async (req, res) => {
 // Forwards completion signal to the waiting Pipeline loop via Redis
 app.post('/dialer/callback', async (req, res) => {
   try {
+    const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN;
+    if (twilioAuthToken) {
+      const signature = req.headers['x-twilio-signature'] || '';
+      const proto = req.headers['x-forwarded-proto'] || 'https';
+      const host  = req.headers['x-forwarded-host'] || req.headers.host;
+      const fullUrl = `${proto}://${host}${req.originalUrl}`;
+      if (!twilio.validateRequest(twilioAuthToken, signature, fullUrl, req.body)) {
+        console.warn('[dialer/callback] invalid Twilio signature from', req.ip);
+        return res.sendStatus(403);
+      }
+    } else {
+      console.warn('[dialer/callback] TWILIO_AUTH_TOKEN not set — signature validation disabled');
+    }
+
     const { CallSid, CallStatus, Duration, AnsweredBy } = req.body;
     const pipelineId = req.query.pipeline_id;
     const leadId     = req.query.lead_id;

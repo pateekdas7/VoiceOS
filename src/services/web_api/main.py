@@ -175,6 +175,15 @@ def _load_or_generate_keypair() -> tuple[rsa.RSAPrivateKey, rsa.RSAPublicKey]:
         return private_key, public_key
 
     import logging
+    import sys
+
+    if os.environ.get("VOICEOS_ENVIRONMENT") == "production":
+        logging.getLogger(__name__).critical(
+            "WEB_API_PRIVATE_KEY_PATH and WEB_API_PUBLIC_KEY_PATH must be set in production. "
+            "Ephemeral session keypairs are not allowed. Provision persistent PEM files and set "
+            "these environment variables before starting."
+        )
+        sys.exit(1)
 
     logging.getLogger(__name__).warning(
         "WEB_API_PRIVATE_KEY_PATH/WEB_API_PUBLIC_KEY_PATH not configured -- generating an ephemeral "
