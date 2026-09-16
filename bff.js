@@ -1484,6 +1484,24 @@ app.post('/dialer/callback', async (req, res) => {
 
     // Only signal completion on terminal states
     if (['COMPLETED','NO_ANSWER','BUSY','FAILED'].includes(disposition)) {
+      // Idempotency guard: Twilio sometimes delivers the same terminal event twice.
+      // Use the existing idempotency_keys table (migration 005) to deduplicate.
+      const idempKey = `twilio_callback:${CallSid}:${CallStatus}`;
+      const existing = await pool.query(
+        'SELECT key FROM idempotency_keys WHERE key=$1',
+        [idempKey]
+      );
+      if (existing.rows.length) {
+        console.log(`[dialer/callback] duplicate event suppressed sid=${CallSid} status=${CallStatus}`);
+        return res.sendStatus(200);
+      }
+      await pool.query(
+        `INSERT INTO idempotency_keys (key, tenant_id, resource_type, expires_at)
+         VALUES ($1, $2::uuid, 'twilio_callback', NOW() + INTERVAL '24 hours')
+         ON CONFLICT (key) DO NOTHING`,
+        [idempKey, tenantId || '00000000-0000-0000-0000-000000000000']
+      );
+
       const payload = JSON.stringify({
         callSid:     CallSid,
         disposition,

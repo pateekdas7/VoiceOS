@@ -469,30 +469,57 @@ class Pipeline extends EventEmitter {
     this.emit('status', 'BUSY');
 
     let callSid;
+    let attemptId;
     const callStart = Date.now();
     try {
+      // ── 2e. Insert call_attempt record BEFORE Twilio call ─────────────
+      // Provides a durable trace even if the worker crashes after initiation.
+      const ar = await pool.query(
+        `INSERT INTO call_attempts
+           (tenant_id, campaign_id, lead_id, pipeline_id, worker_id, status)
+         VALUES ($1,$2,$3,$4,$5,'INITIATED') RETURNING attempt_id`,
+        [lead.tenant_id, lead.campaign_id, lead.lead_id, lead.pipeline_id, WORKER_ID]
+      );
+      attemptId = ar.rows[0].attempt_id;
+
       // ── 4. Initiate call ───────────────────────────────────────────────
       callSid = await this._dialer.initiate(lead);
 
-      // ── 5. Record call open (non-blocking background) ──────────────────
-      setImmediate(() => this._openCallRecords(callSid, lead));
+      // ── 2e. Back-fill call_sid now that Twilio has accepted the call ───
+      await pool.query(
+        `UPDATE call_attempts SET call_sid=$1, status='IN_PROGRESS' WHERE attempt_id=$2`,
+        [callSid, attemptId]
+      );
 
-      // ── 6. Wait for call completion ────────────────────────────────────
+      // ── 5. Record call open (synchronous — must complete before next call)
+      await this._openCallRecords(callSid, lead);
+
+      // ── 6. Wait for call completion (with callSid validation) ──────────
       const result = await this._waitForCompletion(callSid, lead);
 
       const durationS = Math.round((Date.now() - callStart) / 1000);
       log.info(`[Pipeline:${this.name}] Call done sid=${callSid} disposition=${result.disposition} duration=${durationS}s`);
 
-      // ── 7. Async background bookkeeping — never blocks next call ────────
-      setImmediate(() => this._handleCallEnd(callSid, lead, result, durationS));
+      // ── 7. Synchronous post-call bookkeeping — lock held until complete ─
+      await this._handleCallEnd(callSid, lead, result, durationS, attemptId);
 
     } catch (e) {
       log.error(`[Pipeline:${this.name}] Call error lead=${lead.lead_id}:`, e.message);
       if (callSid) {
-        setImmediate(() => this._handleCallError(callSid, lead, e));
+        try {
+          await this._handleCallError(callSid, lead, e, attemptId);
+        } catch (cleanupErr) {
+          log.error(`[Pipeline:${this.name}] Cleanup also failed:`, cleanupErr.message);
+        }
+      } else if (attemptId) {
+        // Twilio initiation failed before callSid was returned
+        await pool.query(
+          `UPDATE call_attempts SET status='FAILED', ended_at=NOW(), error_message=$1 WHERE attempt_id=$2`,
+          [e.message, attemptId]
+        ).catch(dbErr => log.warn('[call_attempts] failed to mark FAILED:', dbErr.message));
       }
     } finally {
-      // ── 8. Release pipeline immediately for next lead ───────────────────
+      // ── 8. Release lock after all synchronous work is complete ─────────
       this.status = 'IDLE';
       this.emit('status', 'IDLE');
       await redis.del(lockKey);
@@ -510,7 +537,17 @@ class Pipeline extends EventEmitter {
     while (Date.now() < deadline) {
       try {
         const raw = await redis.rpop(completedKey);
-        if (raw) return JSON.parse(raw);
+        if (raw) {
+          const payload = JSON.parse(raw);
+          if (payload.callSid !== callSid) {
+            // Event belongs to a different call on this pipeline — put it back and keep polling.
+            // This prevents a stale/delayed callback from resolving the wrong call.
+            await redis.lpush(completedKey, raw);
+            await sleep(200);
+            continue;
+          }
+          return payload;
+        }
       } catch (e) {
         log.warn(`[Pipeline:${this.name}] rpop error:`, e.message);
       }
@@ -536,81 +573,90 @@ class Pipeline extends EventEmitter {
     }
   }
 
-  // ── Background: handle call completion bookkeeping ────────────────────────
-  async _handleCallEnd(callSid, lead, result, durationS) {
-    try {
-      const endedAt    = result.endedAt    || new Date().toISOString();
-      const finalDurS  = result.durationS  || durationS;
-      const disposition = result.disposition;
-      await this._tracker.update(callSid, lead.tenant_id, {
-        status:      disposition === 'COMPLETED' ? 'COMPLETED' : disposition,
-        answeredAt:  result.answeredAt || null,
-        endedAt,
-        durationS:   finalDurS,
-        disposition,
-      });
-      await this._tracker.close(callSid, lead.tenant_id);
+  // ── Synchronous post-call bookkeeping — awaited before lock is released ──
+  async _handleCallEnd(callSid, lead, result, durationS, attemptId) {
+    const endedAt    = result.endedAt    || new Date().toISOString();
+    const finalDurS  = result.durationS  || durationS;
+    const disposition = result.disposition;
 
-      // Write analytics record — unblocks RealtimeAnalytics and the analytics dashboard
-      await pool.query(`
-        INSERT INTO call_dispositions
-          (call_sid, lead_id, campaign_id, tenant_id, disposition,
-           duration_seconds, started_at, ended_at, metadata)
-        VALUES ($1,$2,$3,$4,$5,$6,
-                (SELECT started_at FROM active_calls WHERE call_sid=$1),
-                $7, $8)
-        ON CONFLICT (call_sid) DO UPDATE SET
-          disposition      = EXCLUDED.disposition,
-          duration_seconds = EXCLUDED.duration_seconds,
-          ended_at         = EXCLUDED.ended_at,
-          metadata         = EXCLUDED.metadata
-      `, [
-        callSid, lead.lead_id, lead.campaign_id, lead.tenant_id,
-        disposition, finalDurS, endedAt,
-        JSON.stringify({ pipeline_id: this.id, retry_count: lead._retry_count || 0 }),
-      ]).catch(e => log.warn(`[Pipeline:${this.name}] call_dispositions write failed:`, e.message));
+    // Update call_attempts to final status (critical — used by Phase 3 reconciliation)
+    if (attemptId) {
+      await pool.query(
+        `UPDATE call_attempts
+         SET status=$1, disposition=$2, duration_s=$3, ended_at=$4
+         WHERE attempt_id=$5`,
+        [disposition, disposition, finalDurS, endedAt, attemptId]
+      );
+    }
 
-      await this._registry.setIdle(this.id);
-      await this._registry.incrementStats(this.id, disposition, finalDurS);
-      await this._scheduler.markLeadDone(lead.lead_id, disposition);
+    await this._tracker.update(callSid, lead.tenant_id, {
+      status:      disposition === 'COMPLETED' ? 'COMPLETED' : disposition,
+      answeredAt:  result.answeredAt || null,
+      endedAt,
+      durationS:   finalDurS,
+      disposition,
+    });
+    await this._tracker.close(callSid, lead.tenant_id);
 
-      await this._logger.log({
-        leadId: lead.lead_id, campaignId: lead.campaign_id,
-        pipelineId: this.id, tenantId: lead.tenant_id,
-        eventType: 'CALL_COMPLETED',
-        status: disposition === 'COMPLETED' ? 'SUCCESS' : 'FAILURE',
-        message: `Call ended disposition=${disposition} duration=${finalDurS}s`,
-        metadata: { call_sid: callSid, disposition, duration_s: finalDurS },
-      });
+    // Analytics write — best-effort (failure must not block lead status or retry)
+    await pool.query(`
+      INSERT INTO call_dispositions
+        (call_sid, lead_id, campaign_id, tenant_id, disposition,
+         duration_seconds, started_at, ended_at, metadata)
+      VALUES ($1,$2,$3,$4,$5,$6,
+              (SELECT started_at FROM active_calls WHERE call_sid=$1),
+              $7, $8)
+      ON CONFLICT (call_sid) DO UPDATE SET
+        disposition      = EXCLUDED.disposition,
+        duration_seconds = EXCLUDED.duration_seconds,
+        ended_at         = EXCLUDED.ended_at,
+        metadata         = EXCLUDED.metadata
+    `, [
+      callSid, lead.lead_id, lead.campaign_id, lead.tenant_id,
+      disposition, finalDurS, endedAt,
+      JSON.stringify({ pipeline_id: this.id, retry_count: lead._retry_count || 0 }),
+    ]).catch(e => log.warn(`[Pipeline:${this.name}] call_dispositions write failed:`, e.message));
 
-      // Schedule retry if disposition warrants it
-      if (['NO_ANSWER', 'BUSY', 'FAILED'].includes(disposition)) {
-        await this._scheduleRetry(lead, disposition);
-      }
-    } catch (e) {
-      log.warn(`[Pipeline:${this.name}] handleCallEnd error:`, e.message);
+    await this._registry.setIdle(this.id);
+    await this._registry.incrementStats(this.id, disposition, finalDurS);
+    await this._scheduler.markLeadDone(lead.lead_id, disposition);
+
+    await this._logger.log({
+      leadId: lead.lead_id, campaignId: lead.campaign_id,
+      pipelineId: this.id, tenantId: lead.tenant_id,
+      eventType: 'CALL_COMPLETED',
+      status: disposition === 'COMPLETED' ? 'SUCCESS' : 'FAILURE',
+      message: `Call ended disposition=${disposition} duration=${finalDurS}s`,
+      metadata: { call_sid: callSid, disposition, duration_s: finalDurS },
+    });
+
+    // Schedule retry if disposition warrants it
+    if (['NO_ANSWER', 'BUSY', 'FAILED'].includes(disposition)) {
+      await this._scheduleRetry(lead, disposition);
     }
   }
 
-  async _handleCallError(callSid, lead, err) {
-    try {
-      await this._tracker.update(callSid, lead.tenant_id, {
-        status: 'FAILED', endedAt: new Date().toISOString(), disposition: 'FAILED',
-      });
-      await this._tracker.close(callSid, lead.tenant_id);
-      await this._registry.setIdle(this.id);
-      await this._scheduler.markLeadDone(lead.lead_id, 'FAILED');
-      await this._logger.log({
-        leadId: lead.lead_id, campaignId: lead.campaign_id,
-        pipelineId: this.id, tenantId: lead.tenant_id,
-        eventType: 'CALL_ERROR', status: 'FAILURE',
-        message: err.message,
-        metadata: { call_sid: callSid, error: err.message },
-      });
-      await this._scheduleRetry(lead, 'FAILED');
-    } catch (e) {
-      log.warn(`[Pipeline:${this.name}] handleCallError cleanup error:`, e.message);
+  async _handleCallError(callSid, lead, err, attemptId) {
+    if (attemptId) {
+      await pool.query(
+        `UPDATE call_attempts SET status='FAILED', ended_at=NOW(), error_message=$1 WHERE attempt_id=$2`,
+        [err.message, attemptId]
+      ).catch(dbErr => log.warn('[call_attempts] failed to mark FAILED:', dbErr.message));
     }
+    await this._tracker.update(callSid, lead.tenant_id, {
+      status: 'FAILED', endedAt: new Date().toISOString(), disposition: 'FAILED',
+    });
+    await this._tracker.close(callSid, lead.tenant_id);
+    await this._registry.setIdle(this.id);
+    await this._scheduler.markLeadDone(lead.lead_id, 'FAILED');
+    await this._logger.log({
+      leadId: lead.lead_id, campaignId: lead.campaign_id,
+      pipelineId: this.id, tenantId: lead.tenant_id,
+      eventType: 'CALL_ERROR', status: 'FAILURE',
+      message: err.message,
+      metadata: { call_sid: callSid, error: err.message },
+    });
+    await this._scheduleRetry(lead, 'FAILED');
   }
 
   async _scheduleRetry(lead, disposition) {
