@@ -1461,8 +1461,11 @@ app.post('/dialer/callback', async (req, res) => {
         console.warn('[dialer/callback] invalid Twilio signature from', req.ip);
         return res.sendStatus(403);
       }
+    } else if (process.env.NODE_ENV === 'production') {
+      console.error('[dialer/callback] TWILIO_AUTH_TOKEN not set in production — rejecting request');
+      return res.sendStatus(503);
     } else {
-      console.warn('[dialer/callback] TWILIO_AUTH_TOKEN not set — signature validation disabled');
+      console.warn('[dialer/callback] TWILIO_AUTH_TOKEN not set — signature validation disabled (dev only)');
     }
 
     const { CallSid, CallStatus, Duration, AnsweredBy } = req.body;
