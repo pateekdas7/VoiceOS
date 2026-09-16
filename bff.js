@@ -403,6 +403,105 @@ function suggestMapping(columns) {
   return mapping;
 }
 
+// ── 11. Import row processor — shared between upload and resume ───────────────
+// Validates, normalizes, scores, enriches, qualifies, distributes, and inserts
+// a single lead row. Returns an outcome descriptor; never throws.
+async function processOneRow(client, {
+  rowIndex, rawRow, columnMapping, campaignId, tenantId, importId,
+  campaign, filename, pipelineIds,
+}) {
+  const mapped = {};
+  for (const [csvCol, val] of Object.entries(rawRow)) {
+    const stdField = columnMapping[csvCol] || csvCol.toLowerCase().replace(/\s+/g, '_');
+    mapped[stdField] = val;
+  }
+
+  const phone = normalizePhone(mapped.phone || mapped.mobile || mapped.contact);
+  const name  = normalizeName(mapped.name || mapped.full_name || mapped.customer_name || '');
+
+  if (!phone) return { outcome: 'invalid', reason: 'INVALID_PHONE', raw: rawRow };
+
+  const score        = scoreLead(mapped);
+  const language     = detectLanguage(mapped);
+  const enrichResult = await enrichLead({ phone, name, tenant_id: tenantId, ...mapped }, campaign, client);
+  const metadata     = { ...mapped, ...(enrichResult.fields || {}) };
+  delete metadata.phone; delete metadata.name; delete metadata.email;
+
+  const compResult = checkCompliance(null, { is_blacklisted: false });
+  if (!compResult.allowed) return { outcome: 'rejected', reason: compResult.reason, phone };
+
+  const qualResult = await qualifyLead(campaignId, tenantId, { score, language, ...mapped }, client);
+  const pipelineId = qualResult.qualified
+    ? await distributeLeadToPipeline(campaignId, score, language, tenantId, pipelineIds, client)
+    : null;
+
+  const leadStatus = qualResult.qualified ? (pipelineId ? 'ASSIGNED' : 'VALIDATED') : 'REJECTED';
+  const rejReason  = qualResult.qualified ? null : qualResult.reason;
+
+  try {
+    const lr = await client.query(
+      `INSERT INTO leads
+       (campaign_id,pipeline_id,tenant_id,import_id,name,phone,email,language,score,qualified,status,queue_status,rejection_reason,metadata)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'PENDING',$12,$13::jsonb)
+       ON CONFLICT (campaign_id,phone) DO NOTHING RETURNING *`,
+      [campaignId, pipelineId, tenantId, importId, name, phone,
+       mapped.email || null, language, score, qualResult.qualified,
+       leadStatus, rejReason, JSON.stringify(metadata)]
+    );
+    if (!lr.rows.length) return { outcome: 'duplicate', phone };
+
+    const lead = lr.rows[0];
+    await logEvent(client, { leadId: lead.lead_id, campaignId, pipelineId, tenantId, eventType: 'IMPORT', message: `Imported from ${filename}` });
+    await logEvent(client, { leadId: lead.lead_id, campaignId, pipelineId, tenantId, eventType: 'SCORED', message: `Score: ${score}, Language: ${language}`, metadata: { score, language } });
+    if (!qualResult.qualified) {
+      await logEvent(client, { leadId: lead.lead_id, campaignId, pipelineId, tenantId, eventType: 'REJECTED', status: 'FAILURE', message: rejReason });
+    } else if (pipelineId) {
+      await logEvent(client, { leadId: lead.lead_id, campaignId, pipelineId, tenantId, eventType: 'DISTRIBUTED', message: `Assigned to pipeline ${pipelineId}` });
+      const queued = await pushToRedisQueue(lead);
+      if (queued) {
+        await client.query(`UPDATE leads SET queue_status='QUEUED', updated_at=now() WHERE lead_id=$1`, [lead.lead_id]);
+        await logEvent(client, { leadId: lead.lead_id, campaignId, pipelineId, tenantId, eventType: 'QUEUED', message: 'Pushed to Redis queue' });
+      }
+    }
+    return {
+      outcome:     qualResult.qualified ? 'valid' : 'rejected',
+      phone, name, score, language, pipeline_id: pipelineId, status: leadStatus,
+    };
+  } catch (e) {
+    return { outcome: 'error', reason: 'DB_ERROR', error: e.message, phone };
+  }
+}
+
+// ── 12. CRM phone matcher ─────────────────────────────────────────────────────
+// Batch-checks a phone list against customer_contacts.
+// Returns Map<phone, 'MATCHED'|'UNMATCHED'|'AMBIGUOUS'>.
+//   MATCHED:   exactly 1 active, non-erased customer owns this phone
+//   AMBIGUOUS: 2+ customers share this phone (data quality issue in CRM)
+//   UNMATCHED: no CRM record found
+async function crmMatchPhones(dbClient, phones, tenantId) {
+  if (!phones.length) return new Map();
+  const { rows } = await dbClient.query(
+    `SELECT cc.value AS phone, COUNT(DISTINCT cc.customer_id)::int AS customer_count
+     FROM customer_contacts cc
+     JOIN customers c ON c.customer_id = cc.customer_id
+     WHERE cc.tenant_id = $1
+       AND cc.contact_type IN ('MOBILE','HOME','OFFICE','WHATSAPP')
+       AND cc.value = ANY($2::text[])
+       AND c.is_active = TRUE
+       AND c.data_erasure_requested = FALSE
+     GROUP BY cc.value`,
+    [tenantId, phones]
+  );
+  const matchMap = new Map();
+  for (const row of rows) {
+    matchMap.set(row.phone, row.customer_count === 1 ? 'MATCHED' : 'AMBIGUOUS');
+  }
+  for (const phone of phones) {
+    if (!matchMap.has(phone)) matchMap.set(phone, 'UNMATCHED');
+  }
+  return matchMap;
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // AUTH ROUTES
 // ═════════════════════════════════════════════════════════════════════════════
@@ -827,118 +926,76 @@ app.post('/campaigns/:id/leads/upload', requireAuth, async (req, res) => {
     }
 
     let valid = 0, invalid = 0, duplicates = 0, rejected = 0;
-    const processed = [], failedRows = [];
+    const processed = [], failedRows = [], insertedPhones = [];
 
     for (let i = startRow; i < rows.length; i++) {
-      const rawRow = rows[i];
+      const result = await processOneRow(client, {
+        rowIndex: i, rawRow: rows[i], columnMapping: column_mapping,
+        campaignId, tenantId, importId, campaign, filename, pipelineIds: pipeline_ids,
+      });
 
-      // Apply column mapping
-      const mapped = {};
-      for (const [csvCol, val] of Object.entries(rawRow)) {
-        const stdField = column_mapping[csvCol] || csvCol.toLowerCase().replace(/\s+/g, '_');
-        mapped[stdField] = val;
-      }
-
-      // 1. Normalize
-      const phone = normalizePhone(mapped.phone || mapped.mobile || mapped.contact);
-      const name  = normalizeName(mapped.name || mapped.full_name || mapped.customer_name || '');
-
-      // 2. Validate phone
-      if (!phone) {
-        invalid++;
-        failedRows.push({ row: i, reason: 'INVALID_PHONE', raw: rawRow });
-        processed.push({ ok: false, reason: 'invalid_phone', row: i });
-        await client.query(`UPDATE lead_imports SET last_processed_row=$1, updated_at=now() WHERE import_id=$2`, [i + 1, importId]);
-        continue;
-      }
-
-      // 3. Score + language + enrichment
-      const score       = scoreLead(mapped);
-      const language    = detectLanguage(mapped);
-      const enrichResult = await enrichLead({ phone, name, tenant_id: tenantId, ...mapped }, campaign, client);
-      const enrichedFields = enrichResult.fields || {};
-      const metadata    = { ...mapped, ...enrichedFields };
-      delete metadata.phone; delete metadata.name; delete metadata.email;
-
-      // 4. Compliance — only blacklist check at import; calling window is checked at dispatch
-      const compResult = checkCompliance(null, { is_blacklisted: false });
-      if (!compResult.allowed) {
-        rejected++;
-        failedRows.push({ row: i, reason: compResult.reason, phone });
-        processed.push({ ok: false, reason: compResult.reason, phone });
-        await client.query(`UPDATE lead_imports SET last_processed_row=$1, updated_at=now() WHERE import_id=$2`, [i + 1, importId]);
-        continue;
-      }
-
-      // 5. Qualify
-      const qualResult = await qualifyLead(campaignId, tenantId, { score, language, ...mapped }, client);
-
-      // 6. Distribute to pipeline
-      const pipelineId = qualResult.qualified
-        ? await distributeLeadToPipeline(campaignId, score, language, tenantId, pipeline_ids, client)
-        : null;
-
-      const leadStatus = qualResult.qualified ? (pipelineId ? 'ASSIGNED' : 'VALIDATED') : 'REJECTED';
-      const rejReason  = qualResult.qualified ? null : qualResult.reason;
-
-      // 7. Insert lead
-      try {
-        const lr = await client.query(
-          `INSERT INTO leads
-           (campaign_id,pipeline_id,tenant_id,import_id,name,phone,email,language,score,qualified,status,queue_status,rejection_reason,metadata)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'PENDING',$12,$13::jsonb)
-           ON CONFLICT (campaign_id,phone) DO NOTHING RETURNING *`,
-          [campaignId, pipelineId, tenantId, importId, name, phone,
-           mapped.email || null, language, score, qualResult.qualified,
-           leadStatus, rejReason, JSON.stringify(metadata)]
-        );
-
-        if (!lr.rows.length) {
+      switch (result.outcome) {
+        case 'valid':
+          valid++;
+          insertedPhones.push(result.phone);
+          processed.push({ ok: true, phone: result.phone, name: result.name, score: result.score, language: result.language, pipeline_id: result.pipeline_id, status: result.status });
+          break;
+        case 'rejected':
+          rejected++;
+          failedRows.push({ row: i, reason: result.reason, phone: result.phone });
+          processed.push({ ok: false, reason: result.reason || 'rejected', phone: result.phone });
+          if (result.status) insertedPhones.push(result.phone); // lead was inserted with status=REJECTED
+          break;
+        case 'duplicate':
           duplicates++;
-          processed.push({ ok: false, reason: 'duplicate', phone });
-        } else {
-          const lead = lr.rows[0];
-          if (qualResult.qualified) {
-            valid++;
-          } else {
-            rejected++;
-          }
-          processed.push({ ok: qualResult.qualified, phone, name, score, language, pipeline_id: pipelineId, status: leadStatus });
-
-          // Log execution events
-          await logEvent(client, { leadId: lead.lead_id, campaignId, pipelineId, tenantId, eventType: 'IMPORT', message: `Imported from ${filename}` });
-          await logEvent(client, { leadId: lead.lead_id, campaignId, pipelineId, tenantId, eventType: 'SCORED', message: `Score: ${score}, Language: ${language}`, metadata: { score, language } });
-          if (!qualResult.qualified) {
-            await logEvent(client, { leadId: lead.lead_id, campaignId, pipelineId, tenantId, eventType: 'REJECTED', status: 'FAILURE', message: rejReason });
-          } else if (pipelineId) {
-            await logEvent(client, { leadId: lead.lead_id, campaignId, pipelineId, tenantId, eventType: 'DISTRIBUTED', message: `Assigned to pipeline ${pipelineId}` });
-            // 8. Push to Redis queue
-            const queued = await pushToRedisQueue(lead);
-            if (queued) {
-              await client.query(`UPDATE leads SET queue_status='QUEUED', updated_at=now() WHERE lead_id=$1`, [lead.lead_id]);
-              await logEvent(client, { leadId: lead.lead_id, campaignId, pipelineId, tenantId, eventType: 'QUEUED', message: 'Pushed to Redis queue' });
-            }
-          }
-        }
-      } catch (e) {
-        invalid++;
-        failedRows.push({ row: i, reason: 'DB_ERROR', error: e.message, phone });
-        processed.push({ ok: false, reason: 'db_error', row: i });
+          processed.push({ ok: false, reason: 'duplicate', phone: result.phone });
+          break;
+        case 'invalid':
+          invalid++;
+          failedRows.push({ row: i, reason: result.reason || 'INVALID_PHONE', raw: result.raw });
+          processed.push({ ok: false, reason: 'invalid_phone', row: i });
+          break;
+        case 'error':
+          invalid++;
+          failedRows.push({ row: i, reason: result.reason, error: result.error, phone: result.phone });
+          processed.push({ ok: false, reason: 'db_error', row: i });
+          break;
       }
 
-      // Update progress after each row (enables resume)
       await client.query(`UPDATE lead_imports SET last_processed_row=$1, updated_at=now() WHERE import_id=$2`, [i + 1, importId]);
+    }
+
+    // CRM match — batch-check all inserted phones against customer_contacts in one query per status
+    let crm_matched = 0, crm_unmatched = 0, crm_ambiguous = 0;
+    if (insertedPhones.length) {
+      const crmMap   = await crmMatchPhones(client, insertedPhones, tenantId);
+      const byStatus = { MATCHED: [], UNMATCHED: [], AMBIGUOUS: [] };
+      for (const [phone, status] of crmMap) {
+        byStatus[status].push(phone);
+        if (status === 'MATCHED')        crm_matched++;
+        else if (status === 'AMBIGUOUS') crm_ambiguous++;
+        else                             crm_unmatched++;
+      }
+      for (const [status, phones] of Object.entries(byStatus)) {
+        if (phones.length) {
+          await client.query(
+            `UPDATE leads SET metadata = metadata || $1::jsonb, updated_at=now()
+             WHERE campaign_id=$2 AND tenant_id=$3 AND phone = ANY($4::text[])`,
+            [JSON.stringify({ crm_match_status: status }), campaignId, tenantId, phones]
+          );
+        }
+      }
     }
 
     // Finalize import
     await client.query(
-      `UPDATE lead_imports SET status='DONE', valid_rows=$1, invalid_rows=$2, duplicate_rows=$3, failed_rows=$4::jsonb, last_processed_row=$5, updated_at=now()
+      `UPDATE lead_imports SET status='DONE', valid_rows=$1, invalid_rows=$2, duplicate_rows=$3, failed_rows=$4::jsonb, last_processed_row=$5, completed_at=NOW(), updated_at=now()
        WHERE import_id=$6`,
       [valid, invalid + rejected, duplicates, JSON.stringify(failedRows), rows.length, importId]
     );
 
     await client.query('COMMIT');
-    res.json({ import_id: importId, total: rows.length, valid, invalid, duplicates, rejected, processed });
+    res.json({ import_id: importId, total: rows.length, valid, invalid, duplicates, rejected, processed, crm_matched, crm_unmatched, crm_ambiguous });
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
     console.error('lead upload error:', e);
@@ -946,38 +1003,168 @@ app.post('/campaigns/:id/leads/upload', requireAuth, async (req, res) => {
   } finally { client.release(); }
 });
 
-// Resume a failed import
+// Resume a failed or interrupted import — processes remaining rows in crash-safe batches
 app.post('/campaigns/:id/leads/imports/:importId/resume', requireAuth, async (req, res) => {
+  const campaignId = req.params.id;
+  const tenantId   = req.user.tenant_id;
+  const importId   = req.params.importId;
   try {
-    const imp = await pool.query(
+    // 1. Fetch import record with campaign + tenant isolation
+    const impResult = await pool.query(
       'SELECT * FROM lead_imports WHERE import_id=$1 AND campaign_id=$2 AND tenant_id=$3',
-      [req.params.importId, req.params.id, req.user.tenant_id]
+      [importId, campaignId, tenantId]
     );
-    if (!imp.rows.length) return res.status(404).json({ error: 'not_found' });
-    const importRecord = imp.rows[0];
-    if (importRecord.status === 'DONE') return res.json({ message: 'already_complete', import_id: req.params.importId });
+    if (!impResult.rows.length) return res.status(404).json({ error: 'not_found' });
+    const importRecord = impResult.rows[0];
 
-    // Re-invoke upload with stored rows from last processed point
-    req.body = {
-      filename:        importRecord.filename,
-      columns:         importRecord.original_columns,
-      column_mapping:  importRecord.column_mapping,
-      rows:            importRecord.rows_data || [],
-      pipeline_ids:    req.body.pipeline_ids || [],
-      resume_import_id: req.params.importId,
-    };
-    // Forward to upload handler internally
-    const fakeRes = {
-      _status: 200, _body: null,
-      status(code) { this._status = code; return this; },
-      json(body) { this._body = body; res.status(this._status).json(body); },
-    };
-    // Call the upload logic by re-mounting the request
-    await pool.query(`UPDATE lead_imports SET status='PROCESSING', updated_at=now() WHERE import_id=$1`, [req.params.importId]);
-    res.json({ message: 'resume_started', import_id: req.params.importId, from_row: importRecord.last_processed_row });
+    // 2. Reject resume of an already-complete import
+    if (importRecord.status === 'DONE') {
+      return res.status(400).json({ error: 'import_already_complete', import_id: importId });
+    }
+
+    // 3. rows_data must be present — upload handler stores it for exactly this case
+    const rows = importRecord.rows_data || [];
+    if (!rows.length) {
+      return res.status(400).json({ error: 'no_rows_data', detail: 'Import has no stored rows to resume.' });
+    }
+
+    const startRow = importRecord.last_processed_row || 0;
+
+    // 4. Edge case: all rows were processed but finalization crashed — just finalize
+    if (startRow >= rows.length) {
+      await pool.query(
+        `UPDATE lead_imports SET status='DONE', completed_at=NOW(), updated_at=now() WHERE import_id=$1`,
+        [importId]
+      );
+      return res.json({ import_id: importId, message: 'already_processed', total: rows.length });
+    }
+
+    // 5. Fetch campaign record (required by processOneRow for enrichment config)
+    const camResult = await pool.query(
+      'SELECT * FROM campaigns WHERE campaign_id=$1 AND tenant_id=$2',
+      [campaignId, tenantId]
+    );
+    if (!camResult.rows.length) return res.status(404).json({ error: 'campaign_not_found' });
+    const campaign      = camResult.rows[0];
+    const pipeline_ids  = req.body?.pipeline_ids || [];
+    const columnMapping = importRecord.column_mapping || {};
+
+    // 6. Mark PROCESSING so concurrent callers can see state
+    await pool.query(
+      `UPDATE lead_imports SET status='PROCESSING', updated_at=now() WHERE import_id=$1`,
+      [importId]
+    );
+
+    // 7. Process remaining rows in batches of 100.
+    //    Each batch runs in its own transaction and commits last_processed_row on success.
+    //    A crash mid-batch rolls back that batch; the next resume restarts from the last
+    //    committed row — no lead is silently lost, and ON CONFLICT DO NOTHING in
+    //    processOneRow provides idempotency for any rows re-processed after a retry.
+    const BATCH_SIZE = 100;
+    let valid = 0, invalid = 0, duplicates = 0, rejected = 0;
+    const insertedPhones = [];
+    const failedRows = Array.isArray(importRecord.failed_rows) ? [...importRecord.failed_rows] : [];
+
+    for (let batchStart = startRow; batchStart < rows.length; batchStart += BATCH_SIZE) {
+      const batchEnd    = Math.min(batchStart + BATCH_SIZE, rows.length);
+      const batchClient = await pool.connect();
+      try {
+        await batchClient.query('BEGIN');
+        for (let i = batchStart; i < batchEnd; i++) {
+          const result = await processOneRow(batchClient, {
+            rowIndex: i, rawRow: rows[i], columnMapping,
+            campaignId, tenantId, importId, campaign,
+            filename: importRecord.filename, pipelineIds: pipeline_ids,
+          });
+          switch (result.outcome) {
+            case 'valid':
+              valid++;
+              insertedPhones.push(result.phone);
+              break;
+            case 'rejected':
+              rejected++;
+              failedRows.push({ row: i, reason: result.reason, phone: result.phone });
+              if (result.status) insertedPhones.push(result.phone); // lead was inserted with status=REJECTED
+              break;
+            case 'duplicate': duplicates++; break;
+            case 'invalid':
+              invalid++;
+              failedRows.push({ row: i, reason: result.reason || 'INVALID_PHONE', raw: result.raw });
+              break;
+            case 'error':
+              invalid++;
+              failedRows.push({ row: i, reason: result.reason, error: result.error, phone: result.phone });
+              break;
+          }
+        }
+        await batchClient.query(
+          `UPDATE lead_imports SET last_processed_row=$1, updated_at=now() WHERE import_id=$2`,
+          [batchEnd, importId]
+        );
+        await batchClient.query('COMMIT');
+      } catch (batchErr) {
+        await batchClient.query('ROLLBACK').catch(() => {});
+        await pool.query(
+          `UPDATE lead_imports SET status='FAILED', failed_rows=$1::jsonb, updated_at=now() WHERE import_id=$2`,
+          [JSON.stringify(failedRows), importId]
+        );
+        console.error(`[resume] batch ${batchStart}-${batchEnd} failed:`, batchErr);
+        return res.status(500).json({ error: 'batch_failed', detail: batchErr.message, last_processed_row: batchStart });
+      } finally {
+        batchClient.release();
+      }
+    }
+
+    // 8. CRM match + finalize in a single closing transaction
+    let crm_matched = 0, crm_unmatched = 0, crm_ambiguous = 0;
+    const finalClient = await pool.connect();
+    try {
+      await finalClient.query('BEGIN');
+      if (insertedPhones.length) {
+        const crmMap   = await crmMatchPhones(finalClient, insertedPhones, tenantId);
+        const byStatus = { MATCHED: [], UNMATCHED: [], AMBIGUOUS: [] };
+        for (const [phone, status] of crmMap) {
+          byStatus[status].push(phone);
+          if (status === 'MATCHED')        crm_matched++;
+          else if (status === 'AMBIGUOUS') crm_ambiguous++;
+          else                             crm_unmatched++;
+        }
+        for (const [status, phones] of Object.entries(byStatus)) {
+          if (phones.length) {
+            await finalClient.query(
+              `UPDATE leads SET metadata = metadata || $1::jsonb, updated_at=now()
+               WHERE campaign_id=$2 AND tenant_id=$3 AND phone = ANY($4::text[])`,
+              [JSON.stringify({ crm_match_status: status }), campaignId, tenantId, phones]
+            );
+          }
+        }
+      }
+      await finalClient.query(
+        `UPDATE lead_imports SET status='DONE', valid_rows=$1, invalid_rows=$2, duplicate_rows=$3,
+         failed_rows=$4::jsonb, completed_at=NOW(), updated_at=now() WHERE import_id=$5`,
+        [valid, invalid + rejected, duplicates, JSON.stringify(failedRows), importId]
+      );
+      await finalClient.query('COMMIT');
+    } catch (finalErr) {
+      await finalClient.query('ROLLBACK').catch(() => {});
+      await pool.query(
+        `UPDATE lead_imports SET status='FAILED', updated_at=now() WHERE import_id=$1`,
+        [importId]
+      );
+      console.error('[resume] finalization failed:', finalErr);
+      return res.status(500).json({ error: 'finalization_failed', detail: finalErr.message });
+    } finally {
+      finalClient.release();
+    }
+
+    res.json({
+      import_id: importId, total: rows.length, from_row: startRow,
+      valid, invalid, duplicates, rejected,
+      crm_matched, crm_unmatched, crm_ambiguous,
+    });
   } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: 'server_error' });
+    console.error('[resume] error:', e);
+    res.status(500).json({ error: 'server_error', detail: e.message });
   }
 });
 
