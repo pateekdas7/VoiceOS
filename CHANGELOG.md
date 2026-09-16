@@ -5,6 +5,60 @@ Format: `## [version] — Sprint-NNN — Title (YYYY-MM-DD)`
 
 ---
 
+## [Unreleased] — BFF Phase 5 — Node.js Jest Test Suite (2026-09-16)
+
+> 114 tests / 0 failures across 10 test suites covering bff.js routes and dialer_worker.js classes.
+> Line coverage 43.67% — exceeds 35% threshold. 3 real bff.js bugs discovered and fixed.
+
+### Test Suites Added
+
+- `tests/jest/bff/auth.test.js` — login, logout, requireAuth middleware (8 tests)
+- `tests/jest/bff/campaigns.test.js` — CRUD, lifecycle transitions, pipelines (18 tests)
+- `tests/jest/bff/leads.test.js` — upload, resume, imports, stats (18 tests)
+- `tests/jest/bff/dialer.test.js` — HMAC validation, simulation mode, idempotency (5 tests)
+- `tests/jest/bff/tenant_isolation.test.js` — cross-tenant access blocked at query level (7 tests)
+- `tests/jest/bff/misc_routes.test.js` — team, users, enrichment, analytics, qual/dist rules, pipelines (27 tests)
+- `tests/jest/dialer_worker/schedule_verifier.test.js` — all 8 blocking conditions (11 tests)
+- `tests/jest/dialer_worker/pipeline_registry.test.js` — upsert, setBusy, setIdle, incrementStats (8 tests)
+- `tests/jest/dialer_worker/active_call_tracker.test.js` — open, update, close (7 tests)
+- `tests/jest/dialer_worker/wait_for_completion.test.js` — match, mismatch re-push, timeout (3 tests)
+
+### Infrastructure Added
+
+- `jest.config.js` — coverage thresholds 35%/30%/33%/33% with documented rationale
+- `tests/jest/setup.js` — env vars for test isolation
+- `tests/jest/helpers.js` — makeToken, adminCookie, tenantBCookie helpers
+- `package.json` — added `test` and `test:coverage` scripts
+
+### Bugs Fixed in bff.js
+
+1. **Missing DELETE /campaigns/:id route** — catch-all intercepted DELETE requests, causing mock state pollution in lifecycle tests and a real functional gap
+2. **Catch-all returning HTTP 200** — `app.all('/{*path}')` returned 200 for unknown routes; fixed to 404
+3. **GET /campaigns/:id/pipelines missing ownership check** — returned pipelines for campaigns belonging to other tenants; fixed with pre-query ownership verification
+
+### Testability Modifications
+
+- `bff.js` — added `if (require.main === module)` guard + `module.exports = { app, pool, redis }`
+- `dialer_worker.js` — added `if (require.main === module)` guard + `module.exports` of all classes
+
+### GPU/Twilio/live-DB Deferred Tests
+
+- All routes requiring GPU endpoints (STT/LLM/TTS via WireGuard), live Twilio credentials,
+  or real Postgres/Redis are documented in `GPU_DEPLOYMENT_CHECKLIST.md` for execution
+  after Phase 16 when hardware access is available.
+
+### Coverage
+
+```
+bff.js:           42.45% lines | 39.97% statements
+dialer_worker.js: 25.92% lines | 24.51% statements
+Overall:          43.67% lines | 42.06% statements | 40.05% branches | 43.28% functions
+Threshold:        35% lines    | 33% statements    | 33% branches    | 30% functions
+                  ✓ PASS       ✓ PASS             ✓ PASS           ✓ PASS
+```
+
+---
+
 ## [Unreleased] — Engine Integration Completion — All CIL Engines Active Per Turn (2026-07-30)
 
 > Architecture audit found 4 integration gaps where engines were constructed but not

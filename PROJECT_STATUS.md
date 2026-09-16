@@ -52,15 +52,15 @@ reboot (TT-028); (2) a real pre-existing RI-3 crash risk — `PlaybackScheduler`
 
 ## Repository Status
 
-**Repository Version:** v2.0.29 (Sprint-029 Phase 3 Sales — 2026-09-10)
+**Repository Version:** v2.0.29 (BFF Phase 5 — Node.js Jest Test Suite — 2026-09-16)
 **Current Branch:** claude/ssh-gpu-cpu-servers-y99fib
-**Last Commit:** `896f7a2` — chore: commit all pending GPU/CPU/phone deployment work (2026-09-10).
+**Last Commit:** `e12a7bc` — feat(phase-5): Jest test suite — 114 tests, 43.67% coverage, 3 bff.js bugs fixed (2026-09-16).
 Recent commit history:
+- `e12a7bc` (2026-09-16) — feat(phase-5): Jest test suite — 114 tests, 43.67% coverage, 3 bff.js bugs fixed
+- `8e0b330` (2026-09-16) — feat(phase-4): import resume fix — batch-commit progress, CRM match, shared row processor
+- `673bf62` (2026-09-16) — feat(phase-3): crash reconciliation — repair stale INITIATED/IN_PROGRESS attempts on worker startup
+- `e158fe4` (2026-09-16) — feat(phase-2): durable post-call — call_attempts table, synchronous writes, callSid validation, idempotent callback
 - `896f7a2` (2026-09-10) — GPU kernel metadata + t4_veena_bench kernel + .gitignore fixes
-- `7b3bf43` (2026-09-10) — fix(phone): build cloudflared from Go source (non-PIE binary fix)
-- `47d81e9` (2026-09-10) — fix(phone): remove libpq from pkg install
-- `862bd81` (2026-09-10) — feat(phone): add Termux phone-2 one-shot setup script
-- `5d94842` (2026-09-10) — feat(sales): Phase 3 Production Action Layer complete
 **Last Successful Build (CPU node, Phase 1 performance library):** 2026-07-11 (38 tests pass, 100% module coverage on `src/libs/performance_engineering/`)
 **Phase 2 (GPU node 217.18.55.122, NVIDIA L4 24GB):** Run F (definitive, clean server, 100 calls, 2026-07-12): STT p50=204ms p95=222ms **PASS**; LLM TTFT p50=74ms p95=98ms **PASS** (budget 500ms); TTS p50=695ms p95=701ms **PASS** (ADR-004 750ms); first_audio p50=970ms p95=995ms **PASS** (gate 1500ms, 505ms headroom). GPU at sustained 1680MHz power-cap throughout — flat, no spikes. Sprint-028 AC-1 verdict: **PASS**. Run E (old server 217.18.55.120) p95=1553ms FAIL superseded — Root cause: vLLM CUDA-graph state corruption from multiple service restarts during that session, not a structural 0.45 util constraint. Security: PEN-005/006/007/009 FIXED. Compliance: 15/15 enforcement PASS. AC-8 BenchmarkSuite: PASS (ADR-004). Load test FAIL (single L4). Canary NOT EXECUTED. GPU util confirmed: 0.45 (valid production setting). Alembic head: 0027. Postgres tables: 59. Full detail in CHANGELOG.md and `evaluation/production-alpha-report.md`.
 
@@ -71,6 +71,23 @@ Recent commit history:
 **Total Epics:** 5 / 10 Completed (E1 closed 2026-06-30; E2 closed 2026-06-30 — Milestone M-2 reached; E3 substantially complete with Sprint-012 walking skeleton; E4 closed 2026-07-04 — Milestone M-4 reached; E5 closed 2026-07-05 — Milestone M-5 reached; E6 closed 2026-07-06 — Milestone M-6 reached; E7 opened 2026-07-07 with Sprint-026, Sprint-027 complete 2026-07-08, Sprint-028 executed 2026-07-11 / NO-GO)
 **Total Sprints:** 27 / 34 Completed (Sprint-028 in progress / blocked — does not count as complete until latency gate passes)
 **Overall Progress:** ~79% complete (27/34 done); Sprint-028 gates blocked on GPU fleet availability
+
+---
+
+## BFF / Node.js SaaS Layer Status
+
+**Track:** Independent from Python sprint numbering (Phases 1–16 are BFF-specific)
+
+| Phase | Description | Status | Commit |
+|-------|-------------|--------|--------|
+| Phase 1 | Security fixes — Twilio HMAC, JWT enforcement, tenant isolation | ✅ DONE | f4d300b / 00bca29 |
+| Phase 2 | Durable post-call — call_attempts table, idempotent callback | ✅ DONE | e158fe4 |
+| Phase 3 | Crash reconciliation — CrashReconciler on worker startup | ✅ DONE | 673bf62 |
+| Phase 4 | Import resume — batch-commit progress, CRM match, finalize | ✅ DONE | 8e0b330 |
+| Phase 5 | Node.js Jest test suite — 114 tests, 43.67% coverage, 3 bugs fixed | ✅ DONE | e12a7bc |
+| Phases 6–16 | TBD — pending user direction | ⏳ NOT STARTED | — |
+
+**GPU/Twilio/live-DB deferred tests:** documented in `GPU_DEPLOYMENT_CHECKLIST.md`
 
 ---
 
@@ -86,6 +103,8 @@ Recent commit history:
 **Sprint-029 Phase 2:** Founder validation with real call transcripts (pending live calls)
 
 **Sprint-030:** Pilot deployment
+
+**BFF Phases 6–16:** Pending user direction — see GPU_DEPLOYMENT_CHECKLIST.md for deferred tests
 
 **Phase 3 Sales (done 2026-09-10):**
 - ✅ PipelineTransitionEngine (FSM validation)
