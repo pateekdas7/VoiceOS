@@ -5,6 +5,36 @@ Format: `## [version] — Sprint-NNN — Title (YYYY-MM-DD)`
 
 ---
 
+## [v2.0.39] — Phase 12 — Auth Hardening (2026-09-17)
+
+> Login rate limiting, Vault credential loading, JWT JTI revocation, secure cookie flags, and cookie domain scoping are fully implemented and tested.
+
+### 12a — Login Rate Limiting (verified existing)
+- `bff.js` `checkLoginRateLimit` already present from Phase 9b: 5 failures per 900s window, Redis-backed, applied to `/auth/password/login`
+- 4 verification tests added
+
+### 12b — Move Credentials to Vault
+- `src/services/web_api/main.py` — `_load_vault_secret_or_env(vault_path, env_name)`: tries `SecretsManager(VaultProvider(...))` when `VAULT_ADDR`+`VAULT_TOKEN` are set; falls back to `_require_env` on Vault unavailable
+- `create_app()` loads `GOOGLE_CLIENT_SECRET` via `_load_vault_secret_or_env("voiceos/web-api/google-client-secret", ...)`
+- 5 tests added
+
+### 12c — Session Revocation List (JTI)
+- `bff.js` — `makeToken` now includes `jti: randomUUID()` in every JWT payload
+- JWT middleware is now `async`; checks `redis.exists('voiceos:revoked_jti:{jti}')` before accepting token
+- `_revokeSession(req)` helper writes `redis.set(key, '1', 'EX', ttl)` with TTL = remaining JWT lifetime
+- Both `POST /auth/logout` and `GET /auth/logout` call `_revokeSession` before clearing cookies
+- 8 tests added
+
+### 12d — Secure Cookie Flag (verified existing)
+- `setCookies` already sets `secure: process.env.NODE_ENV === 'production'` and `httpOnly: true` from Phase 1
+- 2 verification tests added
+
+### 12e — Cookie Domain Scoping
+- `setCookies` now reads `process.env.COOKIE_DOMAIN`; adds `domain` to cookie opts when set
+- 2 tests added
+
+---
+
 ## [v2.0.38] — Phase 11 — Database Backup and Disaster Recovery (2026-09-17)
 
 > Every database has a tested restore procedure. RTO/RPO targets are documented. Scripts are ready to execute when hardware is available.

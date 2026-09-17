@@ -165,6 +165,29 @@ def _require_env(name: str) -> str:
     return value
 
 
+def _load_vault_secret_or_env(vault_path: str, env_name: str) -> str:
+    """Phase 12b: try Vault KV first; fall back to env var when Vault unavailable.
+
+    Production: VAULT_ADDR + VAULT_TOKEN must be set so secrets come from Vault.
+    Dev/CI: env var fallback keeps existing behaviour when Vault is not running.
+    """
+    vault_addr = os.environ.get("VAULT_ADDR")
+    vault_token = os.environ.get("VAULT_TOKEN")
+    if vault_addr and vault_token:
+        import logging
+        try:
+            from src.libs.secrets.manager import SecretsManager
+            from src.libs.secrets.providers.vault_provider import HVACVaultClient, VaultProvider
+            sm = SecretsManager(VaultProvider(HVACVaultClient(vault_addr, vault_token)))
+            return sm.get_secret(vault_path)
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "Vault secret fetch failed for %s (%s) — falling back to env var %s",
+                vault_path, exc, env_name
+            )
+    return _require_env(env_name)
+
+
 def _load_or_generate_keypair() -> tuple[rsa.RSAPrivateKey, rsa.RSAPublicKey]:
     private_path = os.environ.get("WEB_API_PRIVATE_KEY_PATH")
     public_path = os.environ.get("WEB_API_PUBLIC_KEY_PATH")
@@ -236,7 +259,10 @@ def create_app() -> Starlette:
 
     dsn = _require_env("POSTGRES_DSN")
     google_client_id = _require_env("GOOGLE_CLIENT_ID")
-    google_client_secret = _require_env("GOOGLE_CLIENT_SECRET")
+    # Phase 12b: load sensitive credentials from Vault when available
+    google_client_secret = _load_vault_secret_or_env(
+        "voiceos/web-api/google-client-secret", "GOOGLE_CLIENT_SECRET"
+    )
     frontend_base_url = _require_env("FRONTEND_BASE_URL")
     bff_public_url = _require_env("BFF_PUBLIC_URL")
 

@@ -7,6 +7,7 @@ const cookieParser = require('cookie-parser');
 const cors         = require('cors');
 const Redis        = require('ioredis');
 const twilio       = require('twilio');
+const { randomUUID } = require('crypto');
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const app          = express();
@@ -127,11 +128,20 @@ app.use((_req, res, next) => {
   next();
 });
 
-// ─── Phase 9 soft JWT parse — enables RBAC + per-tenant rate-limiting globally
-app.use((req, _res, next) => {
+// ─── Phase 9 / 12c: soft JWT parse + JTI revocation check ────────────────────
+app.use(async (req, _res, next) => {
   const token = req.cookies?.[SESSION_COOKIE];
   if (token) {
-    try { req.user = jwt.verify(token, JWT_SECRET); } catch {}
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      // Phase 12c: reject sessions whose JTI was revoked on logout
+      if (decoded.jti) {
+        const revoked = await redis.exists(`voiceos:revoked_jti:${decoded.jti}`).catch(() => 0);
+        if (!revoked) req.user = decoded;
+      } else {
+        req.user = decoded;
+      }
+    } catch {}
   }
   next();
 });
@@ -180,11 +190,14 @@ app.use(async (req, res, next) => {
 
 // ─── Auth helpers ─────────────────────────────────────────────────────────────
 function makeToken(payload) {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
+  // Phase 12c: include jti so individual sessions can be revoked on logout
+  return jwt.sign({ ...payload, jti: randomUUID() }, JWT_SECRET, { expiresIn: '7d' });
 }
 function setCookies(res, token, actorKind) {
   const secure = process.env.NODE_ENV === 'production';
-  const opts = { httpOnly: true, sameSite: 'lax', path: '/', maxAge: 7 * 24 * 3600 * 1000, secure };
+  // Phase 12e: explicit domain scoping (prevents subdomain cookie theft)
+  const domain = process.env.COOKIE_DOMAIN || undefined;
+  const opts = { httpOnly: true, sameSite: 'lax', path: '/', maxAge: 7 * 24 * 3600 * 1000, secure, ...(domain ? { domain } : {}) };
   res.cookie(SESSION_COOKIE, token, opts);
   res.cookie(ACTOR_KIND_COOKIE, actorKind, opts);
 }
@@ -817,13 +830,24 @@ app.post('/auth/refresh', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+async function _revokeSession(req) {
+  // Phase 12c: add the session JTI to the Redis revocation set so the cookie
+  // cannot be replayed after logout, even before the JWT naturally expires.
+  if (req.user?.jti && req.user?.exp) {
+    const ttl = Math.max(1, req.user.exp - Math.floor(Date.now() / 1000));
+    await redis.set(`voiceos:revoked_jti:${req.user.jti}`, '1', 'EX', ttl).catch(() => {});
+  }
+}
+
 app.post('/auth/logout', async (req, res) => {
+  await _revokeSession(req);
   await bffAudit(pool, { req, action: 'auth.logout', resourceType: 'user', resourceId: req.user?.sub || 'anonymous' });
   log.info('auth.logout', { trace_id: req.traceId });
   res.clearCookie(SESSION_COOKIE); res.clearCookie(ACTOR_KIND_COOKIE);
   res.json({ ok: true });
 });
 app.get('/auth/logout', async (req, res) => {
+  await _revokeSession(req);
   await bffAudit(pool, { req, action: 'auth.logout', resourceType: 'user', resourceId: req.user?.sub || 'anonymous' });
   log.info('auth.logout', { trace_id: req.traceId });
   res.clearCookie(SESSION_COOKIE); res.clearCookie(ACTOR_KIND_COOKIE);
