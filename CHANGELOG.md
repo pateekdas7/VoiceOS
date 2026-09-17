@@ -5,6 +5,32 @@ Format: `## [version] — Sprint-NNN — Title (YYYY-MM-DD)`
 
 ---
 
+## [v2.0.42] — Phase 15 — Staging Validation (2026-09-17)
+
+> Staging environment setup scripts, 6 end-to-end scenario tests, BFF load test (50 concurrent), security scan script, and source verification. Real execution deferred to post-Phase-16 (real staging environment required).
+
+### 15a — Staging Environment Scripts
+- `scripts/staging/setup_staging.sh` — creates `voiceos_staging` PostgreSQL DB, applies Alembic migrations, starts staging bff.js on port 8100 and web_api on port 8101, separate Redis on port 6479
+- `scripts/staging/teardown_staging.sh` — stops all staging services; `--drop-db` option drops the staging database
+
+### 15b — End-to-End Scenarios
+- `tests/e2e/test_phase15_staging.py` — 6 scenarios: full happy path, post-call durability, HITL escalation, import resume (100 rows), crash recovery (reconciliation), billing invoice
+- All scenarios accept `--scenario N` for individual execution
+
+### 15c — Load Test
+- `tests/load/locustfile_bff.py` — BFF API load test targeting 50 concurrent users hitting campaigns, HITL, and analytics endpoints
+- Gate assertions: error rate < 1%, p95 < 2000ms (via Locust `quitting` event hook)
+
+### 15d — Security Scan
+- `tests/security/phase15_security_scan.sh` — orchestrates gitleaks, trufflehog, OWASP ZAP (via Docker), and PII log check
+- Reports written to `reports/security/phase15/`
+
+### Tests
+- `tests/unit/bff/test_phase15_source.js` — 22/22 passing (source-inspection readiness checks)
+- `docs/runbooks/phase15-staging-validation-runbook.md` — step-by-step execution guide
+
+---
+
 ## [v2.0.41] — Phase 14 — Chaos and Failure Testing (2026-09-17)
 
 > Source verification for all 10 chaos scenarios, deferred hardware test catalogue, executable chaos scripts, and runbooks for post-Phase-16 VM execution.
