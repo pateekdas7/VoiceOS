@@ -5,6 +5,45 @@ Format: `## [version] — Sprint-NNN — Title (YYYY-MM-DD)`
 
 ---
 
+## [v2.0.36] — Phase 9 — Voice Runtime Hardening (2026-09-17)
+
+> GPU services are authenticated. STT and TTS failures are handled gracefully. Circuit breakers are verified wired. A blue-green deployment runbook exists.
+
+### 9a — GPU Service Authentication
+- `WhisperHTTPAdapter` accepts `gpu_secret` param; sends `X-GPU-Secret` header on every `_post` call
+- `vLLMAdapter` accepts `gpu_secret` param; sends `X-GPU-Secret` header on every `_open_stream` call
+- `VeenaAdapter` accepts `gpu_secret` param; sends `X-GPU-Secret` header on every `_open_stream` call
+- `deployment/cpu/app.py` reads `GPU_SHARED_SECRET` env var; passes `gpu_secret=` to all three adapter constructors
+- `deployment/cpu/.env.example` documents `GPU_SHARED_SECRET=CHANGE_ME`
+
+### 9b — Voice Latency Baseline
+- SKIPPED — requires 50 live test calls with OTel tracing; deferred until GPU/CPU hardware provided
+
+### 9c — STT Failure Handling
+- `STTRetryExhaustedError` defined in `whisper_http_adapter.py`
+- Retry loop (`for attempt in range(max_retries+1)`) wraps `_call_transcribe`; sleeps `retry_backoff_s` between attempts
+- `CallOrchestrator._run_turns()` imports and catches `STTRetryExhaustedError`; increments `_consecutive_stt_failures`
+- After 3 consecutive failures: speaks `_CLARIFY_ASK_REPEAT` (7 languages) then sets `_closing=True` → graceful hangup
+- `_consecutive_stt_failures` reset to 0 on every successful turn
+
+### 9d — TTS Failure Handling
+- `TTSFailureError` defined in `veena_adapter.py`
+- `_stream_clause` retries connection once after `tts_retry_wait_s` (default 2.0 s); raises `TTSFailureError` on second failure
+- `CallOrchestrator._run_turns()` catches `TTSFailureError`; sets `_closing=True` → graceful hangup
+
+### 9e — Circuit Breaker Verification
+- Circuit breaker registry already wired in `app.py` (confirmed via tests): `get_or_create("llm")`, `get_or_create("tts")`, `get_or_create("stt")`; all three adapters receive `breaker=breaker`
+
+### 9f — Blue-Green Model Deployment Runbook
+- Created `docs/runbooks/blue-green-model-deployment.md`: warm-up → health-check → env-var swap → restart → monitor → decommission → rollback
+- VRAM budget table (STT 6 GB, LLM 16 GB, TTS 8 GB, total 30 GB on 49 GB A6000)
+- Rollback completes in < 60 s
+
+### Tests
+- `tests/unit/voice/test_phase9_voice_hardening.py` — 47 tests, all passing; pure source inspection
+
+---
+
 ## [Unreleased] — BFF Phase 11 — Query Safety & API Hygiene (2026-09-17)
 
 > Every list is bounded. Every UUID is validated before it hits the database. Mutations are idempotent. CORS is multi-origin. Admin queries expose only safe columns.

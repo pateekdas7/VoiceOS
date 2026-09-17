@@ -39,6 +39,7 @@ Architecture: V1 Ch15-17 (Speech Rendering / TTS); V7 Ch6 (GPU fleet); ADR-001.
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import AsyncIterator, Mapping
 from typing import TYPE_CHECKING
@@ -50,6 +51,16 @@ from src.services.gpu_scheduler.scheduler import GPUScheduler
 
 if TYPE_CHECKING:
     import httpx
+
+logger = logging.getLogger(__name__)
+
+
+class TTSFailureError(RuntimeError):
+    """Raised when TTS connection fails after the retry attempt (Phase 9d).
+
+    Caught by CallOrchestrator._run_turns() to initiate a graceful hangup —
+    the call cannot continue without audio synthesis capability.
+    """
 
 _VEENA_MODEL_NAME = "veena"
 _VEENA_VRAM_MB = 7974  # measured: Veena 3B BF16 + SNAC 24kHz = 7,974 MB actual footprint
@@ -72,6 +83,8 @@ class VeenaAdapter:
         model_name: str = _VEENA_MODEL_NAME,
         timeout: float = 60.0,
         breaker: CircuitBreaker | None = None,
+        gpu_secret: str | None = None,
+        tts_retry_wait_s: float = 2.0,
     ) -> None:
         self._gpu_scheduler = gpu_scheduler
         self._base_url = base_url.rstrip("/")
@@ -82,6 +95,10 @@ class VeenaAdapter:
         # Optional CircuitBreaker guarding the Veena HTTP connection (Sprint-016,
         # V3 Ch14 §14.2). None (default) preserves pre-Sprint-016 behavior.
         self._breaker = breaker
+        # Shared GPU-node secret sent as X-GPU-Secret header (Phase 9a).
+        self._gpu_secret = gpu_secret
+        # Seconds to wait between first failure and retry (Phase 9d).
+        self._tts_retry_wait_s = tts_retry_wait_s
 
     async def synthesize_stream(
         self,
@@ -206,15 +223,39 @@ class VeenaAdapter:
 
         pending: bytes | None = None
         url = f"{self._base_url}/synthesize"
+        _gpu_headers: dict[str, str] | None = {"X-GPU-Secret": self._gpu_secret} if self._gpu_secret else None
 
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             # See vLLMAdapter._open_stream: the breaker guards only connection
             # establishment, never the streaming body (preserves true
             # chunk-by-chunk playback, V1 Ch15-17).
-            if self._breaker is not None:
-                resp = await self._breaker.call(self._open_stream, client, url, payload)
-            else:
-                resp = await self._open_stream(client, url, payload)
+            # Phase 9d: one retry on connection timeout, with tts_retry_wait_s
+            # pause between attempts. After both attempts fail, raise
+            # TTSFailureError so the orchestrator can hang up cleanly.
+            import asyncio as _asyncio
+            resp = None
+            for _attempt in range(2):
+                try:
+                    if self._breaker is not None:
+                        resp = await self._breaker.call(self._open_stream, client, url, payload, _gpu_headers)
+                    else:
+                        resp = await self._open_stream(client, url, payload, _gpu_headers)
+                    break
+                except Exception as _tts_exc:
+                    if _attempt == 0:
+                        logger.warning(
+                            "TTS connection failed on first attempt (%s: %s), "
+                            "retrying after %.1fs",
+                            type(_tts_exc).__name__,
+                            _tts_exc,
+                            self._tts_retry_wait_s,
+                        )
+                        await _asyncio.sleep(self._tts_retry_wait_s)
+                    else:
+                        raise TTSFailureError(
+                            f"TTS failed after retry: {_tts_exc}"
+                        ) from _tts_exc
+            assert resp is not None
             try:
                 async for raw_chunk in resp.aiter_bytes():
                     if not raw_chunk:
@@ -242,13 +283,20 @@ class VeenaAdapter:
             )
 
     @staticmethod
-    async def _open_stream(client: httpx.AsyncClient, url: str, payload: Mapping[str, object]) -> httpx.Response:
+    async def _open_stream(
+        client: httpx.AsyncClient,
+        url: str,
+        payload: Mapping[str, object],
+        headers: Mapping[str, str] | None = None,
+    ) -> httpx.Response:
         """Open the streaming POST to Veena and validate the response status.
 
         This is the unit the circuit breaker wraps — see
         ``vLLMAdapter._open_stream`` for the identical rationale.
+        The optional ``headers`` argument carries the X-GPU-Secret auth header
+        (Phase 9a) when a shared GPU secret is configured.
         """
-        request = client.build_request("POST", url, json=payload)
+        request = client.build_request("POST", url, json=payload, headers=dict(headers) if headers else {})
         response = await client.send(request, stream=True)
         response.raise_for_status()
         return response

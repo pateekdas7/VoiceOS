@@ -334,6 +334,7 @@ def build_llm_service(gpu_scheduler: object) -> object:
         prompt_contract=PromptContract(),
         base_url=base_url,
         breaker=breaker,
+        gpu_secret=_env("GPU_SHARED_SECRET") or None,
     )
     return LLMService.create(adapter=adapter, config=LLMServiceConfig(base_url=base_url))
 
@@ -344,7 +345,12 @@ def build_tts_service(gpu_scheduler: object) -> object:
 
     base_url = _gpu_service_url("TTS_BASE_URL", 8200)
     breaker = build_circuit_breaker_registry().get_or_create("tts")  # type: ignore[attr-defined]
-    adapter = VeenaAdapter(gpu_scheduler=gpu_scheduler, base_url=base_url, breaker=breaker)
+    adapter = VeenaAdapter(
+        gpu_scheduler=gpu_scheduler,
+        base_url=base_url,
+        breaker=breaker,
+        gpu_secret=_env("GPU_SHARED_SECRET") or None,
+    )
     return TTSService.create(adapter=adapter, config=TTSServiceConfig(base_url=base_url))
 
 
@@ -575,6 +581,7 @@ def build_stt_service(gpu_scheduler: object) -> object:
     base_url = _gpu_service_url("STT_BASE_URL", 8100)
     breaker = build_circuit_breaker_registry().get_or_create("stt")  # type: ignore[attr-defined]
     streaming = _env("VOICEOS_STT_STREAMING", "0").strip() == "1"
+    gpu_secret = _env("GPU_SHARED_SECRET") or None
     _stt_logger = logging.getLogger("voiceos.deployment.cpu")
     if streaming:
         from src.services.stt.adapters.whisper_streaming_adapter import WhisperStreamingAdapter
@@ -582,7 +589,12 @@ def build_stt_service(gpu_scheduler: object) -> object:
         _stt_logger.info("STT adapter=WhisperStreamingAdapter base_url=%s (VOICEOS_STT_STREAMING=1)", base_url)
     else:
         from src.services.stt.adapters.whisper_http_adapter import WhisperHTTPAdapter
-        adapter = WhisperHTTPAdapter(gpu_scheduler=gpu_scheduler, base_url=base_url, breaker=breaker)
+        adapter = WhisperHTTPAdapter(
+            gpu_scheduler=gpu_scheduler,
+            base_url=base_url,
+            breaker=breaker,
+            gpu_secret=gpu_secret,
+        )
         _stt_logger.info("STT adapter=WhisperHTTPAdapter base_url=%s (VOICEOS_STT_STREAMING=0)", base_url)
     return STTService.create(adapter=adapter, config=STTServiceConfig(default_language=_env("STT_LANGUAGE", "hi")))
 

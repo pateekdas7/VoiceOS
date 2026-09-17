@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import base64
 import io
+import logging
 import time
 from collections.abc import AsyncIterator, Mapping
 from typing import TYPE_CHECKING, Any
@@ -41,6 +42,17 @@ if TYPE_CHECKING:
 _WHISPER_MODEL_NAME = "whisper-large-v3-turbo"
 _WHISPER_VRAM_MB = 6144
 _DEFAULT_BASE_URL = "http://localhost:8100"
+
+logger = logging.getLogger(__name__)
+
+
+class STTRetryExhaustedError(RuntimeError):
+    """Raised when all STT retry attempts are exhausted (Phase 9c).
+
+    Caught by CallOrchestrator._run_turns() to trigger a clarify_ask_repeat
+    response and increment the consecutive-failure counter. After 3 consecutive
+    failures the orchestrator initiates a graceful hangup.
+    """
 
 
 class WhisperHTTPAdapter:
@@ -62,19 +74,27 @@ class WhisperHTTPAdapter:
         beam_size: int = 5,
         timeout: float = 30.0,
         breaker: CircuitBreaker | None = None,
+        gpu_secret: str | None = None,
+        max_retries: int = 1,
+        retry_backoff_s: float = 0.5,
     ) -> None:
         """Initialise the adapter.
 
         Args:
-            gpu_scheduler: GPU Scheduler for VRAM ledger accounting.
-            base_url:      Base URL of the GPU node's STT server (port 8100).
-            vram_mb:       VRAM to reserve before inference (scheduler ledger).
-            model_name:    Model identifier used in scheduler reservation.
-            beam_size:     Beam size sent to the server's /transcribe endpoint.
-            timeout:       httpx request timeout in seconds.
-            breaker:       Optional CircuitBreaker guarding the HTTP call
-                (Sprint-016, V3 Ch14 §14.2 — same role as vLLMAdapter/
-                VeenaAdapter's breaker). None (default) means no breaker.
+            gpu_scheduler:   GPU Scheduler for VRAM ledger accounting.
+            base_url:        Base URL of the GPU node's STT server (port 8100).
+            vram_mb:         VRAM to reserve before inference (scheduler ledger).
+            model_name:      Model identifier used in scheduler reservation.
+            beam_size:       Beam size sent to the server's /transcribe endpoint.
+            timeout:         httpx request timeout in seconds.
+            breaker:         Optional CircuitBreaker guarding the HTTP call.
+            gpu_secret:      Shared secret sent as X-GPU-Secret header (Phase 9a).
+                             None means no authentication header is sent — for
+                             deployments where the GPU node is on a private
+                             network without additional auth.
+            max_retries:     How many additional attempts to make after the first
+                             failure (Phase 9c). Default 1 = one retry.
+            retry_backoff_s: Seconds to wait between retry attempts (Phase 9c).
         """
         self._gpu_scheduler = gpu_scheduler
         self._base_url = base_url.rstrip("/")
@@ -83,6 +103,9 @@ class WhisperHTTPAdapter:
         self._beam_size = beam_size
         self._timeout = timeout
         self._breaker = breaker
+        self._gpu_secret = gpu_secret
+        self._max_retries = max_retries
+        self._retry_backoff_s = retry_backoff_s
 
     async def transcribe_stream(
         self,
@@ -137,11 +160,37 @@ class WhisperHTTPAdapter:
             raise RuntimeError(f"GPU Scheduler rejected VRAM request for {self._model_name} ({self._vram_mb} MB)")
 
         try:
+            import asyncio
+
             pcm_bytes = await self._collect_frames(audio_frames)
             infer_start = time.monotonic()
-            words_payload = await self._call_transcribe(pcm_bytes, language)
+            last_exc: BaseException | None = None
+            for attempt in range(self._max_retries + 1):
+                try:
+                    words_payload = await self._call_transcribe(pcm_bytes, language)
+                    last_exc = None
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    if attempt < self._max_retries:
+                        logger.warning(
+                            "STT attempt %d/%d failed (%s: %s), retrying in %.1fs",
+                            attempt + 1,
+                            self._max_retries + 1,
+                            type(exc).__name__,
+                            exc,
+                            self._retry_backoff_s,
+                        )
+                        await asyncio.sleep(self._retry_backoff_s)
+            if last_exc is not None:
+                stt_requests_total.labels(status="error").inc()
+                raise STTRetryExhaustedError(
+                    f"STT failed after {self._max_retries + 1} attempts"
+                ) from last_exc
             stt_latency_ms.observe((time.monotonic() - infer_start) * 1000)
             stt_requests_total.labels(status="success").inc()
+        except STTRetryExhaustedError:
+            raise
         except Exception:
             stt_requests_total.labels(status="error").inc()
             raise
@@ -180,24 +229,34 @@ class WhisperHTTPAdapter:
             "beam_size": self._beam_size,
         }
         url = f"{self._base_url}/transcribe"
+        headers: dict[str, str] = {}
+        if self._gpu_secret:
+            headers["X-GPU-Secret"] = self._gpu_secret
 
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             if self._breaker is not None:
-                response = await self._breaker.call(self._post, client, url, payload)
+                response = await self._breaker.call(self._post, client, url, payload, headers or None)
             else:
-                response = await self._post(client, url, payload)
+                response = await self._post(client, url, payload, headers or None)
             data: dict[str, Any] = response.json()
         words: list[dict[str, Any]] = data["words"]
         return words
 
     @staticmethod
-    async def _post(client: httpx.AsyncClient, url: str, payload: Mapping[str, object]) -> httpx.Response:
+    async def _post(
+        client: httpx.AsyncClient,
+        url: str,
+        payload: Mapping[str, object],
+        headers: Mapping[str, str] | None = None,
+    ) -> httpx.Response:
         """POST and validate the response status.
 
         This is the unit the circuit breaker wraps — see
         ``vLLMAdapter._open_stream``/``VeenaAdapter._open_stream`` for the
         identical rationale.
+        The optional ``headers`` argument carries the X-GPU-Secret auth header
+        (Phase 9a) when a shared GPU secret is configured.
         """
-        response = await client.post(url, json=payload)
+        response = await client.post(url, json=payload, headers=dict(headers) if headers else {})
         response.raise_for_status()
         return response

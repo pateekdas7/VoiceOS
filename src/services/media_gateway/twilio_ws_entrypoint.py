@@ -93,6 +93,19 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("voiceos.media_gateway.twilio_ws")
 
+# Phase 9c — language-keyed clarify_ask_repeat text.
+# Spoken when STT fails and retry is exhausted but < 3 consecutive failures.
+_CLARIFY_ASK_REPEAT: dict[str, str] = {
+    "hi": "क्षमा करें, मुझे समझ नहीं आया। क्या आप फिर से बोल सकते हैं?",
+    "en": "Sorry, I couldn't hear you clearly. Could you please repeat that?",
+    "ta": "மன்னிக்கவும், எனக்கு புரியவில்லை. மீண்டும் சொல்ல முடியுமா?",
+    "te": "క్షమించండి, నాకు అర్థం కాలేదు. మళ్ళీ చెప్పగలరా?",
+    "kn": "ಕ್ಷಮಿಸಿ, ನನಗೆ ಅರ್ಥವಾಗಲಿಲ್ಲ. ಮತ್ತೆ ಹೇಳಬಹುದೇ?",
+    "mr": "माफ करा, मला समजले नाही. पुन्हा सांगाल का?",
+    "bn": "ক্ষমা করুন, আমি বুঝতে পারিনি। আবার বলবেন?",
+}
+_CLARIFY_ASK_REPEAT_DEFAULT = "Sorry, I couldn't understand. Could you please say that again?"
+
 _TWILIO_MULAW_CONFIG = AudioConfig(sample_rate=SampleRate.RATE_8K, encoding=Encoding.MULAW, channels=1)
 _PCM16_8K_CONFIG = AudioConfig(sample_rate=SampleRate.RATE_8K, encoding=Encoding.PCM16LE, channels=1)
 
@@ -335,6 +348,9 @@ class CallOrchestrator:
         # deque of maxlen 80 comfortably covers the 1.5 s window.
         self._greeting_audio_buffer: deque[AudioFrame] = deque(maxlen=80)
         self._greeting_watchdog_active: bool = False
+        # Phase 9c: counts consecutive STT failures within this call. Reset to
+        # 0 on a successful turn. Once it reaches 3 the call is hung up.
+        self._consecutive_stt_failures: int = 0
 
     @classmethod
     async def create(
@@ -478,7 +494,46 @@ class CallOrchestrator:
     # Task B — turn loop: STT -> DialogueManager -> ConversationEngine -> TTS out
     # ------------------------------------------------------------------
 
+    async def _speak_stt_clarify(self) -> None:
+        """Synthesise and speak the clarify_ask_repeat phrase after an STT failure (Phase 9c).
+
+        Uses speak_scripted_text() so the audio path is identical to the
+        greeting, but does NOT set protection or run the repeat watchdog —
+        the customer can barge in immediately after the clarify phrase.
+        All TTS exceptions are swallowed so a broken TTS does not mask the
+        real STT failure.
+        """
+        import asyncio
+
+        lang = self._deps.language or "en"
+        text = _CLARIFY_ASK_REPEAT.get(lang[:2], _CLARIFY_ASK_REPEAT_DEFAULT)
+        try:
+            synth_task = asyncio.create_task(
+                self._deps.conversation_engine.speak_scripted_text(
+                    text, self._playback, tts_mode="streaming"
+                )
+            )
+            self._vad.set_playback_active(True, playback_seq=self._turn_index)
+            try:
+                while not synth_task.done() or self._playback.depth > 0:
+                    clause = self._playback.dequeue_nowait()
+                    if clause is None:
+                        await asyncio.sleep(0.005)
+                        continue
+                    await self._send_clause(clause)
+            finally:
+                self._vad.set_playback_active(False)
+            try:
+                await synth_task
+            except asyncio.CancelledError:
+                pass
+        except Exception:
+            logger.warning("clarify_ask_repeat TTS failed on call %s — continuing without audio", self._call_id)
+
     async def _run_turns(self) -> None:
+        from src.services.stt.adapters.whisper_http_adapter import STTRetryExhaustedError
+        from src.services.tts.adapters.veena_adapter import TTSFailureError
+
         if self._dialogue_manager is None:
             from src.services.dialogue_manager.service import DialogueManager
 
@@ -489,7 +544,34 @@ class CallOrchestrator:
             self._turn_ready.clear()
             if self._closing and not self._turn_active and self._current_turn_queue is None:
                 break  # woken purely to observe the close, not by a real turn
-            await self._run_turns_one_iteration()
+            try:
+                await self._run_turns_one_iteration()
+                self._consecutive_stt_failures = 0
+            except STTRetryExhaustedError:
+                # Phase 9c: STT failed on this turn after retries. Speak the
+                # clarify phrase; if failures reach 3 consecutive, hang up.
+                self._consecutive_stt_failures += 1
+                logger.warning(
+                    "STT retry exhausted on call %s (consecutive=%d/3)",
+                    self._call_id,
+                    self._consecutive_stt_failures,
+                )
+                await self._speak_stt_clarify()
+                if self._consecutive_stt_failures >= 3:
+                    logger.error(
+                        "3 consecutive STT failures — initiating graceful hangup on call %s",
+                        self._call_id,
+                    )
+                    self._closing = True
+                    break
+            except TTSFailureError:
+                # Phase 9d: TTS unreachable after retry — call cannot continue.
+                logger.error(
+                    "TTS failure after retry — initiating graceful hangup on call %s",
+                    self._call_id,
+                )
+                self._closing = True
+                break
 
     async def _run_turns_one_iteration(self) -> None:
         """Stable-suffix orchestrator: consumes STT WordHypotheses as they
