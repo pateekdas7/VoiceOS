@@ -5,6 +5,36 @@ Format: `## [version] — Sprint-NNN — Title (YYYY-MM-DD)`
 
 ---
 
+## [Unreleased] — BFF Phase 10 — Request Lifecycle Hardening (2026-09-17)
+
+> Every error is now observed, every query has a deadline, every tenant is validated, every payload is bounded.
+
+### 10a — Global Error Handler + Route Propagation (`bff.js`)
+- Added 4-param Express error-handling middleware (`app.use((err, req, res, _next) => ...)`) registered after the catch-all; logs `{ error, status, method, path, trace_id }` via structured logger; guards `res.headersSent`; returns `{ error: 'bad_request', trace_id }` for 4xx (body-parser 413, etc.) and `{ error: 'server_error', trace_id }` for 5xx
+- Converted all 31 generic route-level `catch (e) { res.status(500)... }` blocks to `throw e` — Express 5 async handlers propagate rejected promises to the error middleware automatically; no `next` parameter changes required
+- 4 intentional 500 paths in the bulk-import routes preserved as-is (carry resumable batch progress context: `last_processed_row`, `finalization_failed`)
+
+### 10b — DB Statement & Connection Timeouts (`bff.js`)
+- Added `_poolCommon` shared config object: `connectionTimeoutMillis` (default 5 s), `idleTimeoutMillis` (30 s), `options: -c statement_timeout=...` (default 30 s) — spread into both DSN and non-DSN `Pool` constructors to guarantee identical settings on both paths
+- Configurable via `DB_STATEMENT_TIMEOUT_MS` and `DB_CONNECTION_TIMEOUT_MS` env vars
+
+### 10c — Tenant Active Check (`bff.js`)
+- Added global `app.use(async (req, res, next) => ...)` middleware that queries `SELECT status FROM tenants WHERE tenant_id=$1` for every authenticated tenant request; returns 403 `{ error: 'tenant_suspended' }` if tenant is not `ACTIVE`; skips platform users (`actor_kind !== 'tenant'`) and unauthenticated requests
+- DB errors in this middleware forward to the global error handler via `next(e)` — never silent failures
+
+### 10d — Per-Route Body Size Limits (`bff.js`)
+- Replaced unconditional `express.json({ limit: '50mb' })` with a conditional middleware using `_LARGE_BODY_RE = /^\/campaigns\/[^/]+\/leads\/(upload|imports\/[^/]+\/resume)$/`; applies `50mb` only to the two bulk-import routes, `128kb` everywhere else
+- Prevents large-body DoS on standard API endpoints without restricting the legitimate CSV import paths
+
+### 10e — Token Refresh (`bff.js`)
+- Added `POST /auth/refresh` route behind `requireAuth`; strips JWT metadata fields (`iat`, `exp`) from the existing payload and reissues a fresh 7-day token using `makeToken()`; sets new cookies; logs `auth.token_refreshed`
+- Enables long-lived sessions without requiring password re-entry
+
+### Tests
+- `tests/unit/bff/test_phase10_lifecycle.js` — 32 tests, all passing; pure source inspection
+
+---
+
 ## [Unreleased] — BFF Phase 9 — RBAC, Rate Limiting & Security Headers (2026-09-17)
 
 > Defense-in-depth: role enforcement, brute-force protection, API throttling, and secure-by-default response headers.

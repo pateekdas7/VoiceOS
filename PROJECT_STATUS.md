@@ -52,7 +52,7 @@ reboot (TT-028); (2) a real pre-existing RI-3 crash risk — `PlaybackScheduler`
 
 ## Repository Status
 
-**Repository Version:** v2.0.33 (BFF Phase 9 — RBAC, Rate Limiting & Security Headers — 2026-09-17)
+**Repository Version:** v2.0.34 (BFF Phase 10 — Request Lifecycle Hardening — 2026-09-17)
 **Current Branch:** claude/ssh-gpu-cpu-servers-y99fib
 **Last Commit:** `e12a7bc` — feat(phase-5): Jest test suite — 114 tests, 43.67% coverage, 3 bff.js bugs fixed (2026-09-16).
 Recent commit history:
@@ -89,7 +89,8 @@ Recent commit history:
 | Phase 7 | Graceful Shutdown — bff.js SIGTERM, systemd units (voice-runtime + dialer-worker), uvicorn drain flag, WS drain gate | ✅ DONE | — |
 | Phase 8 | Observability Hardening — structured JSON logging (8a), audit trail (8b), OTel spans (8c), 20 Prometheus metrics (8d), 16 alert rules (8e), MongoDB index verifier (8f) | ✅ DONE | — |
 | Phase 9 | RBAC Enforcement, Rate Limiting & Security Headers — requireRole (9a), login brute-force protection (9b), per-tenant API throttling (9c), security headers (9d), input validation (9e) | ✅ DONE | — |
-| Phases 10–16 | TBD — pending user direction | ⏳ NOT STARTED | — |
+| Phase 10 | Request Lifecycle Hardening — global error handler (10a), DB statement/connection timeouts (10b), tenant active check (10c), per-route body size limits (10d), token refresh endpoint (10e) | ✅ DONE | — |
+| Phases 11–16 | TBD — pending user direction | ⏳ NOT STARTED | — |
 
 **GPU/Twilio/live-DB deferred tests:** documented in `GPU_DEPLOYMENT_CHECKLIST.md`
 
@@ -108,7 +109,7 @@ Recent commit history:
 
 **Sprint-030:** Pilot deployment
 
-**BFF Phases 10–16:** Pending user direction — see GPU_DEPLOYMENT_CHECKLIST.md for deferred tests
+**BFF Phases 11–16:** Pending user direction — see GPU_DEPLOYMENT_CHECKLIST.md for deferred tests
 
 **Phase 3 Sales (done 2026-09-10):**
 - ✅ PipelineTransitionEngine (FSM validation)

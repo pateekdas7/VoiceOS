@@ -62,15 +62,24 @@ async function bffAudit(client, { req, action, resourceType, resourceId, outcome
 }
 
 // ─── PostgreSQL ───────────────────────────────────────────────────────────────
+// Phase 10b: configurable timeouts — DB_STATEMENT_TIMEOUT_MS, DB_CONNECTION_TIMEOUT_MS
+const _DB_STATEMENT_TIMEOUT  = parseInt(process.env.DB_STATEMENT_TIMEOUT_MS  || '30000');
+const _DB_CONNECTION_TIMEOUT = parseInt(process.env.DB_CONNECTION_TIMEOUT_MS || '5000');
+const _poolCommon = {
+  max: 10,
+  connectionTimeoutMillis: _DB_CONNECTION_TIMEOUT,
+  idleTimeoutMillis:       30000,
+  options:                 `-c statement_timeout=${_DB_STATEMENT_TIMEOUT}`,
+};
 const pool = process.env.POSTGRES_DSN
-  ? new Pool({ connectionString: process.env.POSTGRES_DSN, max: 10 })
+  ? new Pool({ connectionString: process.env.POSTGRES_DSN, ..._poolCommon })
   : new Pool({
-      host: process.env.POSTGRES_HOST || '127.0.0.1',
-      port: parseInt(process.env.POSTGRES_PORT || '5432'),
-      database: process.env.POSTGRES_DB || 'voiceos',
-      user: process.env.POSTGRES_USER || 'voiceos',
+      host:     process.env.POSTGRES_HOST     || '127.0.0.1',
+      port:     parseInt(process.env.POSTGRES_PORT || '5432'),
+      database: process.env.POSTGRES_DB       || 'voiceos',
+      user:     process.env.POSTGRES_USER     || 'voiceos',
       password: process.env.POSTGRES_PASSWORD || '',
-      max: 10,
+      ..._poolCommon,
     });
 pool.on('error', (err) => log.error('pg.idle_client_error', { error: err.message }));
 
@@ -87,7 +96,11 @@ redis.on('error', e => log.warn('redis.error', { error: e.message }));
 redis.connect().catch(e => log.warn('redis.connect_failed', { error: e.message }));
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
-app.use(express.json({ limit: '50mb' }));
+// Phase 10d: 50 MB only for the two bulk-import routes; 128 KB everywhere else
+const _LARGE_BODY_RE = /^\/campaigns\/[^/]+\/leads\/(upload|imports\/[^/]+\/resume)$/;
+app.use((req, res, next) => {
+  express.json({ limit: _LARGE_BODY_RE.test(req.path) ? '50mb' : '128kb' })(req, res, next);
+});
 app.use(express.urlencoded({ extended: false })); // Twilio webhooks send form-encoded bodies
 app.use(cookieParser());
 app.use(cors({ origin: process.env.FRONTEND_BASE_URL || 'http://localhost:3000', credentials: true }));
@@ -136,6 +149,23 @@ app.use(async (req, res, next) => {
       return res.status(429).json({ error: 'rate_limit_exceeded' });
     }
   } catch { /* Redis unavailable — fail open */ }
+  next();
+});
+
+// ─── Phase 10c: Tenant active check ───────────────────────────────────────────
+// Verifies the tenant is ACTIVE before allowing any tenant-scoped request through.
+// Skips platform users and unauthenticated paths (health, Twilio callbacks).
+app.use(async (req, res, next) => {
+  if (!req.user || req.user.actor_kind !== 'tenant') return next();
+  try {
+    const r = await pool.query('SELECT status FROM tenants WHERE tenant_id=$1', [req.user.tenant_id]);
+    if (!r.rows.length || r.rows[0].status !== 'ACTIVE') {
+      log.warn('tenant.inactive', { tenant_id: req.user.tenant_id, status: r.rows[0]?.status, trace_id: req.traceId });
+      return res.status(403).json({ error: 'tenant_suspended' });
+    }
+  } catch (e) {
+    return next(e);
+  }
   next();
 });
 
@@ -705,8 +735,7 @@ app.post('/auth/password/login', async (req, res) => {
     log.warn('auth.login_failed', { trace_id: req.traceId });
     return res.status(401).json({ error: 'invalid_credentials' });
   } catch (e) {
-    log.error('auth.login_error', { error: e.message });
-    res.status(500).json({ error: 'server_error' });
+    throw e;
   }
 });
 
@@ -715,6 +744,16 @@ app.get('/auth/session', (req, res) => {
   if (!token) return res.status(401).json({ error: 'no_session' });
   try { res.json({ ok: true, ...jwt.verify(token, JWT_SECRET) }); }
   catch { res.status(401).json({ error: 'invalid_session' }); }
+});
+
+// Phase 10e: Refresh — reissue a fresh 7-day token from a valid existing session
+app.post('/auth/refresh', requireAuth, (req, res) => {
+  // Strip JWT metadata fields (iat, exp) and re-sign with the same identity claims
+  const { iat, exp, ...claims } = req.user;  // eslint-disable-line no-unused-vars
+  const token = makeToken(claims);
+  setCookies(res, token, claims.actor_kind);
+  log.info('auth.token_refreshed', { actor_kind: claims.actor_kind, trace_id: req.traceId });
+  res.json({ ok: true });
 });
 
 app.post('/auth/logout', async (req, res) => {
@@ -795,7 +834,7 @@ app.get('/campaigns', requireAuth, async (req, res) => {
       ? await pool.query('SELECT * FROM campaigns WHERE tenant_id=$1 ORDER BY created_at DESC', [tid])
       : await pool.query('SELECT * FROM campaigns ORDER BY created_at DESC');
     res.json(r.rows);
-  } catch (e) { log.error('route.error', { error: e.message }); res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 app.post('/campaigns', requireAuth, validateBody({
@@ -815,7 +854,7 @@ app.post('/campaigns', requireAuth, validateBody({
     await bffAudit(pool, { req, action: 'campaign.create', resourceType: 'campaign', resourceId: r.rows[0].campaign_id, metadata: { name } });
     log.info('campaign.created', { campaign_id: r.rows[0].campaign_id, trace_id: req.traceId, tenant_id: tid });
     res.status(201).json(r.rows[0]);
-  } catch (e) { log.error('campaign.create_error', { error: e.message }); res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { log.error('campaign.create_error', { error: e.message }); throw e; }
 });
 
 app.get('/campaigns/:id', requireAuth, async (req, res) => {
@@ -826,7 +865,7 @@ app.get('/campaigns/:id', requireAuth, async (req, res) => {
       : await pool.query('SELECT * FROM campaigns WHERE campaign_id=$1 AND tenant_id=$2', [req.params.id, req.user.tenant_id]);
     if (!r.rows.length) return res.status(404).json({ error: 'not_found' });
     res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 app.put('/campaigns/:id', requireAuth, validateBody({
@@ -879,7 +918,7 @@ app.put('/campaigns/:id', requireAuth, validateBody({
     await bffAudit(pool, { req, action: 'campaign.update', resourceType: 'campaign', resourceId: req.params.id, metadata: { fields: Object.keys(req.body) } });
     log.info('campaign.updated', { campaign_id: req.params.id, trace_id: req.traceId, tenant_id: req.user.tenant_id });
     res.json(r.rows[0]);
-  } catch (e) { log.error('campaign.update_error', { error: e.message }); res.status(500).json({ error: 'server_error', detail: e.message }); }
+  } catch (e) { log.error('campaign.update_error', { error: e.message }); throw e; }
 });
 
 app.delete('/campaigns/:id', requireAuth, async (req, res) => {
@@ -892,7 +931,7 @@ app.delete('/campaigns/:id', requireAuth, async (req, res) => {
     await bffAudit(pool, { req, action: 'campaign.delete', resourceType: 'campaign', resourceId: req.params.id, metadata: { name: r.rows[0].name } });
     log.info('campaign.deleted', { campaign_id: req.params.id, trace_id: req.traceId, tenant_id: req.user.tenant_id });
     res.json(r.rows[0]);
-  } catch (e) { log.error('campaign.delete_error', { error: e.message }); res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { log.error('campaign.delete_error', { error: e.message }); throw e; }
 });
 
 const LIFECYCLE_TRANSITIONS = {
@@ -917,7 +956,7 @@ app.get('/campaigns/:id/qualification-rules', requireAuth, async (req, res) => {
       [req.params.id, req.user.tenant_id]
     );
     res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 app.post('/campaigns/:id/qualification-rules', requireAuth, async (req, res) => {
@@ -930,14 +969,14 @@ app.post('/campaigns/:id/qualification-rules', requireAuth, async (req, res) => 
       [req.params.id, req.user.tenant_id, field, operator, String(value), action, priority]
     );
     res.status(201).json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 app.delete('/campaigns/:id/qualification-rules/:ruleId', requireAuth, async (req, res) => {
   try {
     await pool.query('DELETE FROM campaign_qualification_rules WHERE rule_id=$1 AND tenant_id=$2', [req.params.ruleId, req.user.tenant_id]);
     res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -950,7 +989,7 @@ app.get('/campaigns/:id/distribution-rules', requireAuth, async (req, res) => {
       [req.params.id, req.user.tenant_id]
     );
     res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 app.post('/campaigns/:id/distribution-rules', requireAuth, async (req, res) => {
@@ -963,14 +1002,14 @@ app.post('/campaigns/:id/distribution-rules', requireAuth, async (req, res) => {
       [req.params.id, pipeline_id, req.user.tenant_id, min_score, max_score, languages, priority]
     );
     res.status(201).json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 app.delete('/campaigns/:id/distribution-rules/:ruleId', requireAuth, async (req, res) => {
   try {
     await pool.query('DELETE FROM pipeline_distribution_rules WHERE rule_id=$1 AND tenant_id=$2', [req.params.ruleId, req.user.tenant_id]);
     res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -991,7 +1030,7 @@ app.get('/campaigns/:id/pipelines', requireAuth, async (req, res) => {
       [req.params.id, req.user.tenant_id]
     );
     res.json(r.rows);
-  } catch (e) { log.error('pipeline.list_error', { error: e.message }); res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { log.error('pipeline.list_error', { error: e.message }); throw e; }
 });
 
 app.post('/campaigns/:id/pipelines', requireAuth, validateBody({
@@ -1016,7 +1055,7 @@ app.post('/campaigns/:id/pipelines', requireAuth, validateBody({
     await bffAudit(pool, { req, action: 'pipeline.create', resourceType: 'pipeline', resourceId: r.rows[0].pipeline_id, metadata: { campaign_id: req.params.id, name: String(name).trim() } });
     log.info('pipeline.created', { pipeline_id: r.rows[0].pipeline_id, campaign_id: req.params.id, trace_id: req.traceId, tenant_id: req.user.tenant_id });
     res.status(201).json(r.rows[0]);
-  } catch (e) { log.error('pipeline.create_error', { error: e.message }); res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { log.error('pipeline.create_error', { error: e.message }); throw e; }
 });
 
 app.get('/campaigns/:id/pipelines/:pipelineId', requireAuth, async (req, res) => {
@@ -1029,7 +1068,7 @@ app.get('/campaigns/:id/pipelines/:pipelineId', requireAuth, async (req, res) =>
     );
     if (!r.rows.length) return res.status(404).json({ error: 'pipeline_not_found' });
     res.json(r.rows[0]);
-  } catch (e) { log.error('pipeline.get_error', { error: e.message }); res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { log.error('pipeline.get_error', { error: e.message }); throw e; }
 });
 
 app.patch('/campaigns/:id/pipelines/:pipelineId', requireAuth, validateBody({
@@ -1053,7 +1092,7 @@ app.patch('/campaigns/:id/pipelines/:pipelineId', requireAuth, validateBody({
     await bffAudit(pool, { req, action: 'pipeline.update', resourceType: 'pipeline', resourceId: req.params.pipelineId, metadata: { campaign_id: req.params.id, fields: Object.keys(req.body || {}) } });
     log.info('pipeline.updated', { pipeline_id: req.params.pipelineId, campaign_id: req.params.id, trace_id: req.traceId, tenant_id: req.user.tenant_id });
     res.json(r.rows[0]);
-  } catch (e) { log.error('pipeline.patch_error', { error: e.message }); res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { log.error('pipeline.patch_error', { error: e.message }); throw e; }
 });
 
 // Lifecycle state machine — registered AFTER specific sub-resource routes
@@ -1075,7 +1114,7 @@ app.post('/campaigns/:id/:action', requireAuth, async (req, res) => {
     await bffAudit(pool, { req, action: 'campaign.state_change', resourceType: 'campaign', resourceId: req.params.id, metadata: { action: req.params.action, to: transition.to } });
     log.info('campaign.state_changed', { campaign_id: req.params.id, action: req.params.action, to: transition.to, trace_id: req.traceId, tenant_id: req.user.tenant_id });
     res.json(r.rows[0]);
-  } catch (e) { log.error('route.error', { error: e.message }); res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1389,7 +1428,7 @@ app.get('/campaigns/:id/leads/imports', requireAuth, async (req, res) => {
       [req.params.id, req.user.tenant_id]
     );
     res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 app.get('/campaigns/:id/leads', requireAuth, async (req, res) => {
@@ -1407,7 +1446,7 @@ app.get('/campaigns/:id/leads', requireAuth, async (req, res) => {
       vals
     );
     res.json(r.rows);
-  } catch (e) { log.error('route.error', { error: e.message }); res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 app.get('/campaigns/:id/leads/stats', requireAuth, async (req, res) => {
@@ -1427,7 +1466,7 @@ app.get('/campaigns/:id/leads/stats', requireAuth, async (req, res) => {
       [req.params.id, req.user.tenant_id]
     );
     res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 app.post('/campaigns/:id/leads/:leadId/assign-pipeline', requireAuth, async (req, res) => {
@@ -1452,7 +1491,7 @@ app.post('/campaigns/:id/leads/:leadId/assign-pipeline', requireAuth, async (req
     res.json(r.rows[0]);
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
-    res.status(500).json({ error: 'server_error' });
+    throw e;
   } finally { client.release(); }
 });
 
@@ -1486,7 +1525,7 @@ app.post('/campaigns/:id/leads/bulk-distribute', requireAuth, async (req, res) =
     res.json({ assigned, total: leads.length });
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
-    res.status(500).json({ error: 'server_error' });
+    throw e;
   } finally { client.release(); }
 });
 
@@ -1512,7 +1551,7 @@ app.get('/campaigns/:id/execution-events', requireAuth, async (req, res) => {
       vals
     );
     res.json(r.rows);
-  } catch (e) { log.error('exec_events.error', { error: e.message }); res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { log.error('exec_events.error', { error: e.message }); throw e; }
 });
 
 // Pipeline-level execution events
@@ -1530,7 +1569,7 @@ app.get('/pipelines/:pipelineId/execution-events', requireAuth, async (req, res)
       [req.params.pipelineId, req.user.tenant_id, Number(limit), Number(offset)]
     );
     res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 // Lead-level timeline
@@ -1541,7 +1580,7 @@ app.get('/campaigns/:id/leads/:leadId/events', requireAuth, async (req, res) => 
       [req.params.leadId, req.user.tenant_id]
     );
     res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1559,7 +1598,7 @@ app.get('/pipelines/:pipelineId/leads', requireAuth, async (req, res) => {
       vals
     );
     res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 app.get('/pipelines/:pipelineId/leads/stats', requireAuth, async (req, res) => {
@@ -1573,7 +1612,7 @@ app.get('/pipelines/:pipelineId/leads/stats', requireAuth, async (req, res) => {
       [req.params.pipelineId, req.user.tenant_id]
     );
     res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1583,7 +1622,7 @@ app.get('/admin/clients', requireAuth, requireRole('PLATFORM_ADMIN'), async (req
   try {
     const r = await pool.query('SELECT * FROM tenants ORDER BY created_at DESC');
     res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 app.get('/admin/clients/:tenantId', requireAuth, requireRole('PLATFORM_ADMIN'), async (req, res) => {
@@ -1591,7 +1630,7 @@ app.get('/admin/clients/:tenantId', requireAuth, requireRole('PLATFORM_ADMIN'), 
     const r = await pool.query('SELECT * FROM tenants WHERE tenant_id=$1', [req.params.tenantId]);
     if (!r.rows.length) return res.status(404).json({ error: 'not_found' });
     res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 app.get('/team', requireAuth, async (req, res) => {
@@ -1601,7 +1640,7 @@ app.get('/team', requireAuth, async (req, res) => {
       [req.user.tenant_id]
     );
     res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 app.get('/team/roles', requireAuth, (req, res) => {
@@ -1619,7 +1658,7 @@ app.get('/users/me', requireAuth, async (req, res) => {
     }
     const r = await pool.query('SELECT user_id as id, email, name, tenant_id FROM users WHERE user_id=$1', [req.user.sub]);
     res.json({ ...(r.rows[0] || {}), actor_kind: req.user.actor_kind });
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 // ─── Enrichment API ───────────────────────────────────────────────────────────
@@ -1636,7 +1675,7 @@ app.get('/campaigns/:id/enrichment-config', requireAuth, async (req, res) => {
     const r = await pool.query('SELECT enrichment_config FROM campaigns WHERE campaign_id=$1 AND tenant_id=$2', [req.params.id, tid]);
     if (!r.rows.length) return res.status(404).json({ error: 'not_found' });
     res.json(r.rows[0].enrichment_config || DEFAULT_ENRICHMENT_CONFIG);
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 app.put('/campaigns/:id/enrichment-config', requireAuth, async (req, res) => {
@@ -1649,7 +1688,7 @@ app.put('/campaigns/:id/enrichment-config', requireAuth, async (req, res) => {
     );
     if (!r.rows.length) return res.status(404).json({ error: 'not_found' });
     res.json(r.rows[0].enrichment_config);
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 app.get('/campaigns/:id/enrichment-history', requireAuth, async (req, res) => {
@@ -1666,7 +1705,7 @@ app.get('/campaigns/:id/enrichment-history', requireAuth, async (req, res) => {
       [tid, limit]
     );
     res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 app.post('/campaigns/:id/leads/:leadId/re-enrich', requireAuth, async (req, res) => {
@@ -1685,7 +1724,7 @@ app.post('/campaigns/:id/leads/:leadId/re-enrich', requireAuth, async (req, res)
       await client.query('UPDATE leads SET metadata=$1::jsonb, updated_at=now() WHERE lead_id=$2', [JSON.stringify(newMeta), lead.lead_id]);
     }
     res.json({ lead_id: lead.lead_id, enrichment: result });
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
   finally { client.release(); }
 });
 
@@ -1702,7 +1741,7 @@ app.get('/enrichment/stats', requireAuth, async (req, res) => {
       [tid]
     );
     res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 // ─── Analytics API ────────────────────────────────────────────────────────────
@@ -1725,7 +1764,7 @@ app.get('/analytics/campaigns/:id/summary', requireAuth, async (req, res) => {
       contactability_rate: parseFloat((parseInt(d.qualified) / total).toFixed(3)),
       conversion_rate:    parseFloat((parseInt(d.completed) / total).toFixed(3)),
     });
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1746,7 +1785,7 @@ app.get('/dialer/status', requireAuth, async (req, res) => {
       alive: !!(await redis.get(`voiceos:worker:${w.worker_id}:alive`)),
     })));
     res.json(alive);
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 // ── Active calls for this tenant ───────────────────────────────────────────────
@@ -1764,7 +1803,7 @@ app.get('/dialer/active-calls', requireAuth, async (req, res) => {
       [tid]
     );
     res.json(rows);
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 // ── Recent call history for this tenant ────────────────────────────────────────
@@ -1783,7 +1822,7 @@ app.get('/dialer/call-history', requireAuth, async (req, res) => {
       [tid, limit]
     );
     res.json(rows);
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 // ── Queue statistics for this tenant ──────────────────────────────────────────
@@ -1827,7 +1866,7 @@ app.get('/dialer/queue-stats', requireAuth, async (req, res) => {
       pipelines: pipelineStats,
       today: todayStats[0] || {},
     });
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 // ── TwiML — Twilio calls this to get call instructions (no auth — Twilio webhook) ──
@@ -1967,11 +2006,32 @@ app.post('/campaigns/:id/leads/:leadId/schedule-callback', requireAuth, async (r
     );
 
     res.json({ ok: true, scheduled_at: new Date(callbackMs).toISOString() });
-  } catch (e) { res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { throw e; }
 });
 
 // ─── Catch-all ────────────────────────────────────────────────────────────────
 app.all('/{*path}', (req, res) => { res.status(404).json({ error: 'not_found' }); });
+
+// ─── Phase 10a: Global error handler ─────────────────────────────────────────
+// Receives errors thrown by route handlers (Express 5 catches async rejections).
+// Also handles Express built-in errors (413 payload too large, 400 bad JSON, etc.).
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, _next) => {
+  if (res.headersSent) return;
+  const status = err.status || err.statusCode || 500;
+  log.error('bff.error', {
+    error:    err.message,
+    type:     err.type,
+    status,
+    method:   req.method,
+    path:     req.path,
+    trace_id: req.traceId,
+  });
+  const body = status < 500
+    ? { error: err.type || 'bad_request',  trace_id: req.traceId }
+    : { error: 'server_error',             trace_id: req.traceId };
+  res.status(status).json(body);
+});
 
 if (require.main === module) {
   const server = app.listen(PORT, () => {
