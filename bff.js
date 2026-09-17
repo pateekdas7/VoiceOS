@@ -103,7 +103,16 @@ app.use((req, res, next) => {
 });
 app.use(express.urlencoded({ extended: false })); // Twilio webhooks send form-encoded bodies
 app.use(cookieParser());
-app.use(cors({ origin: process.env.FRONTEND_BASE_URL || 'http://localhost:3000', credentials: true }));
+// Phase 11d: multi-origin CORS — FRONTEND_ALLOWED_ORIGINS is comma-separated list of allowed origins
+const _CORS_ORIGINS = (process.env.FRONTEND_ALLOWED_ORIGINS || process.env.FRONTEND_BASE_URL || 'http://localhost:3000')
+  .split(',').map(o => o.trim()).filter(Boolean);
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin || _CORS_ORIGINS.includes(origin)) return cb(null, true);
+    cb(null, false);
+  },
+  credentials: true,
+}));
 
 // ─── Phase 9d: Security headers ───────────────────────────────────────────────
 app.use((_req, res, next) => {
@@ -244,6 +253,55 @@ function validateBody(schema) {
       log.warn('validation.rejected', { path: req.path, errors, trace_id: req.traceId });
       return res.status(400).json({ error: 'validation_error', details: errors });
     }
+    next();
+  };
+}
+
+// ─── Phase 11b: UUID path-param validation ────────────────────────────────────
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function requireUUID(...params) {
+  return (req, res, next) => {
+    for (const p of params) {
+      if (!UUID_RE.test(req.params[p])) {
+        log.warn('validation.invalid_uuid', { param: p, value: req.params[p], trace_id: req.traceId });
+        return res.status(400).json({ error: 'invalid_uuid', param: p });
+      }
+    }
+    next();
+  };
+}
+
+// ─── Phase 11a: Pagination helper ────────────────────────────────────────────
+const PAGE_MAX_LIMIT = 200;
+function parsePage(query, opts) {
+  const maxLimit = (opts && opts.maxLimit)     || PAGE_MAX_LIMIT;
+  const defLimit = (opts && opts.defaultLimit) || 50;
+  const limit  = Math.min(Math.max(parseInt(query.limit)  || defLimit, 1), maxLimit);
+  const offset = Math.max(parseInt(query.offset) || 0, 0);
+  return { limit, offset };
+}
+
+// ─── Phase 11c: Request idempotency (prevents duplicate POST mutations) ───────
+// Client sends Idempotency-Key header; first response is cached in Redis for 24h.
+function idempotency(resourceType) {
+  return async (req, res, next) => {
+    const ikey = req.headers['idempotency-key'];
+    if (!ikey) return next();
+    const cacheKey = `voiceos:idempotency:${req.user?.tenant_id}:${resourceType}:${ikey}`;
+    try {
+      const cached = await redis.get(cacheKey);
+      if (cached) {
+        log.info('idempotency.hit', { resource_type: resourceType, trace_id: req.traceId });
+        return res.status(200).json(JSON.parse(cached));
+      }
+      const origJson = res.json.bind(res);
+      res.json = (body) => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          redis.set(cacheKey, JSON.stringify(body), 'EX', 86400).catch(() => {});
+        }
+        return origJson(body);
+      };
+    } catch { /* Redis unavailable — proceed without idempotency */ }
     next();
   };
 }
@@ -829,15 +887,16 @@ app.get('/system/health', async (req, res) => {
 // ═════════════════════════════════════════════════════════════════════════════
 app.get('/campaigns', requireAuth, async (req, res) => {
   try {
+    const { limit, offset } = parsePage(req.query);
     const tid = req.user.actor_kind === 'platform' ? null : req.user.tenant_id;
     const r = tid
-      ? await pool.query('SELECT * FROM campaigns WHERE tenant_id=$1 ORDER BY created_at DESC', [tid])
-      : await pool.query('SELECT * FROM campaigns ORDER BY created_at DESC');
+      ? await pool.query('SELECT * FROM campaigns WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT $2 OFFSET $3', [tid, limit, offset])
+      : await pool.query('SELECT * FROM campaigns ORDER BY created_at DESC LIMIT $1 OFFSET $2', [limit, offset]);
     res.json(r.rows);
   } catch (e) { throw e; }
 });
 
-app.post('/campaigns', requireAuth, validateBody({
+app.post('/campaigns', requireAuth, idempotency('campaign'), validateBody({
   name:        { required: true, type: 'string', minLength: 1, maxLength: 255 },
   description: { type: 'string', maxLength: 2000 },
 }), async (req, res) => {
@@ -857,7 +916,7 @@ app.post('/campaigns', requireAuth, validateBody({
   } catch (e) { log.error('campaign.create_error', { error: e.message }); throw e; }
 });
 
-app.get('/campaigns/:id', requireAuth, async (req, res) => {
+app.get('/campaigns/:id', requireAuth, requireUUID('id'), async (req, res) => {
   try {
     const isPlatform = req.user.actor_kind === 'platform';
     const r = isPlatform
@@ -868,7 +927,7 @@ app.get('/campaigns/:id', requireAuth, async (req, res) => {
   } catch (e) { throw e; }
 });
 
-app.put('/campaigns/:id', requireAuth, validateBody({
+app.put('/campaigns/:id', requireAuth, requireUUID('id'), validateBody({
   name:        { type: 'string', minLength: 1, maxLength: 255 },
   description: { type: 'string', maxLength: 2000 },
 }), async (req, res) => {
@@ -921,7 +980,7 @@ app.put('/campaigns/:id', requireAuth, validateBody({
   } catch (e) { log.error('campaign.update_error', { error: e.message }); throw e; }
 });
 
-app.delete('/campaigns/:id', requireAuth, async (req, res) => {
+app.delete('/campaigns/:id', requireAuth, requireUUID('id'), async (req, res) => {
   try {
     const r = await pool.query(
       'DELETE FROM campaigns WHERE campaign_id=$1 AND tenant_id=$2 RETURNING *',
@@ -949,17 +1008,18 @@ const LIFECYCLE_TRANSITIONS = {
 // ═════════════════════════════════════════════════════════════════════════════
 // QUALIFICATION RULES CRUD
 // ═════════════════════════════════════════════════════════════════════════════
-app.get('/campaigns/:id/qualification-rules', requireAuth, async (req, res) => {
+app.get('/campaigns/:id/qualification-rules', requireAuth, requireUUID('id'), async (req, res) => {
   try {
+    const { limit, offset } = parsePage(req.query, { defaultLimit: 100, maxLimit: 200 });
     const r = await pool.query(
-      'SELECT * FROM campaign_qualification_rules WHERE campaign_id=$1 AND tenant_id=$2 ORDER BY priority DESC',
-      [req.params.id, req.user.tenant_id]
+      'SELECT * FROM campaign_qualification_rules WHERE campaign_id=$1 AND tenant_id=$2 ORDER BY priority DESC LIMIT $3 OFFSET $4',
+      [req.params.id, req.user.tenant_id, limit, offset]
     );
     res.json(r.rows);
   } catch (e) { throw e; }
 });
 
-app.post('/campaigns/:id/qualification-rules', requireAuth, async (req, res) => {
+app.post('/campaigns/:id/qualification-rules', requireAuth, requireUUID('id'), async (req, res) => {
   try {
     const { field, operator, value, action = 'QUALIFY', priority = 0 } = req.body;
     if (!field || !operator || value === undefined) return res.status(400).json({ error: 'missing_fields' });
@@ -972,7 +1032,7 @@ app.post('/campaigns/:id/qualification-rules', requireAuth, async (req, res) => 
   } catch (e) { throw e; }
 });
 
-app.delete('/campaigns/:id/qualification-rules/:ruleId', requireAuth, async (req, res) => {
+app.delete('/campaigns/:id/qualification-rules/:ruleId', requireAuth, requireUUID('id'), async (req, res) => {
   try {
     await pool.query('DELETE FROM campaign_qualification_rules WHERE rule_id=$1 AND tenant_id=$2', [req.params.ruleId, req.user.tenant_id]);
     res.json({ ok: true });
@@ -982,17 +1042,18 @@ app.delete('/campaigns/:id/qualification-rules/:ruleId', requireAuth, async (req
 // ═════════════════════════════════════════════════════════════════════════════
 // PIPELINE DISTRIBUTION RULES CRUD
 // ═════════════════════════════════════════════════════════════════════════════
-app.get('/campaigns/:id/distribution-rules', requireAuth, async (req, res) => {
+app.get('/campaigns/:id/distribution-rules', requireAuth, requireUUID('id'), async (req, res) => {
   try {
+    const { limit, offset } = parsePage(req.query, { defaultLimit: 100, maxLimit: 200 });
     const r = await pool.query(
-      'SELECT * FROM pipeline_distribution_rules WHERE campaign_id=$1 AND tenant_id=$2 ORDER BY priority DESC',
-      [req.params.id, req.user.tenant_id]
+      'SELECT * FROM pipeline_distribution_rules WHERE campaign_id=$1 AND tenant_id=$2 ORDER BY priority DESC LIMIT $3 OFFSET $4',
+      [req.params.id, req.user.tenant_id, limit, offset]
     );
     res.json(r.rows);
   } catch (e) { throw e; }
 });
 
-app.post('/campaigns/:id/distribution-rules', requireAuth, async (req, res) => {
+app.post('/campaigns/:id/distribution-rules', requireAuth, requireUUID('id'), async (req, res) => {
   try {
     const { pipeline_id, min_score = 0, max_score = 100, languages = [], priority = 0 } = req.body;
     if (!pipeline_id) return res.status(400).json({ error: 'pipeline_id_required' });
@@ -1005,7 +1066,7 @@ app.post('/campaigns/:id/distribution-rules', requireAuth, async (req, res) => {
   } catch (e) { throw e; }
 });
 
-app.delete('/campaigns/:id/distribution-rules/:ruleId', requireAuth, async (req, res) => {
+app.delete('/campaigns/:id/distribution-rules/:ruleId', requireAuth, requireUUID('id'), async (req, res) => {
   try {
     await pool.query('DELETE FROM pipeline_distribution_rules WHERE rule_id=$1 AND tenant_id=$2', [req.params.ruleId, req.user.tenant_id]);
     res.json({ ok: true });
@@ -1015,25 +1076,26 @@ app.delete('/campaigns/:id/distribution-rules/:ruleId', requireAuth, async (req,
 // ═════════════════════════════════════════════════════════════════════════════
 // PIPELINES — CRUD (backs frontend/lib/local-pipelines.ts)
 // ═════════════════════════════════════════════════════════════════════════════
-app.get('/campaigns/:id/pipelines', requireAuth, async (req, res) => {
+app.get('/campaigns/:id/pipelines', requireAuth, requireUUID('id'), async (req, res) => {
   try {
     const cam = await pool.query(
       'SELECT campaign_id FROM campaigns WHERE campaign_id=$1 AND tenant_id=$2',
       [req.params.id, req.user.tenant_id]
     );
     if (!cam.rows.length) return res.status(404).json({ error: 'campaign_not_found' });
+    const { limit, offset } = parsePage(req.query, { defaultLimit: 100, maxLimit: 200 });
     const r = await pool.query(
       `SELECT pipeline_id, campaign_id, tenant_id, name, status, created_at, updated_at, created_by
          FROM pipelines
         WHERE campaign_id=$1 AND tenant_id=$2
-        ORDER BY created_at ASC`,
-      [req.params.id, req.user.tenant_id]
+        ORDER BY created_at ASC LIMIT $3 OFFSET $4`,
+      [req.params.id, req.user.tenant_id, limit, offset]
     );
     res.json(r.rows);
   } catch (e) { log.error('pipeline.list_error', { error: e.message }); throw e; }
 });
 
-app.post('/campaigns/:id/pipelines', requireAuth, validateBody({
+app.post('/campaigns/:id/pipelines', requireAuth, requireUUID('id'), idempotency('pipeline'), validateBody({
   name: { required: true, type: 'string', minLength: 1, maxLength: 255 },
 }), async (req, res) => {
   try {
@@ -1058,7 +1120,7 @@ app.post('/campaigns/:id/pipelines', requireAuth, validateBody({
   } catch (e) { log.error('pipeline.create_error', { error: e.message }); throw e; }
 });
 
-app.get('/campaigns/:id/pipelines/:pipelineId', requireAuth, async (req, res) => {
+app.get('/campaigns/:id/pipelines/:pipelineId', requireAuth, requireUUID('id', 'pipelineId'), async (req, res) => {
   try {
     const r = await pool.query(
       `SELECT pipeline_id, campaign_id, tenant_id, name, status, created_at, updated_at, created_by
@@ -1071,7 +1133,7 @@ app.get('/campaigns/:id/pipelines/:pipelineId', requireAuth, async (req, res) =>
   } catch (e) { log.error('pipeline.get_error', { error: e.message }); throw e; }
 });
 
-app.patch('/campaigns/:id/pipelines/:pipelineId', requireAuth, validateBody({
+app.patch('/campaigns/:id/pipelines/:pipelineId', requireAuth, requireUUID('id', 'pipelineId'), validateBody({
   name: { type: 'string', minLength: 1, maxLength: 255 },
 }), async (req, res) => {
   try {
@@ -1142,7 +1204,6 @@ app.post('/campaigns/:id/leads/upload', requireAuth, async (req, res) => {
     const tenantId   = req.user.tenant_id;
 
     // Validate UUID format before hitting DB
-    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!UUID_RE.test(campaignId)) {
       return res.status(400).json({ error: 'invalid_campaign_id' });
     }
@@ -1421,26 +1482,28 @@ app.post('/campaigns/:id/leads/imports/:importId/resume', requireAuth, async (re
   }
 });
 
-app.get('/campaigns/:id/leads/imports', requireAuth, async (req, res) => {
+app.get('/campaigns/:id/leads/imports', requireAuth, requireUUID('id'), async (req, res) => {
   try {
+    const { limit, offset } = parsePage(req.query);
     const r = await pool.query(
-      'SELECT import_id,campaign_id,filename,status,total_rows,valid_rows,invalid_rows,duplicate_rows,last_processed_row,created_at,updated_at FROM lead_imports WHERE campaign_id=$1 AND tenant_id=$2 ORDER BY created_at DESC',
-      [req.params.id, req.user.tenant_id]
+      'SELECT import_id,campaign_id,filename,status,total_rows,valid_rows,invalid_rows,duplicate_rows,last_processed_row,created_at,updated_at FROM lead_imports WHERE campaign_id=$1 AND tenant_id=$2 ORDER BY created_at DESC LIMIT $3 OFFSET $4',
+      [req.params.id, req.user.tenant_id, limit, offset]
     );
     res.json(r.rows);
   } catch (e) { throw e; }
 });
 
-app.get('/campaigns/:id/leads', requireAuth, async (req, res) => {
+app.get('/campaigns/:id/leads', requireAuth, requireUUID('id'), async (req, res) => {
   try {
-    const { status, pipeline_id, search, limit = 200, offset = 0 } = req.query;
+    const { status, pipeline_id, search } = req.query;
+    const { limit, offset } = parsePage(req.query);
     const conditions = ['campaign_id=$1', 'tenant_id=$2'];
     const vals = [req.params.id, req.user.tenant_id];
     if (status)      { vals.push(status);          conditions.push(`status=$${vals.length}`); }
     if (pipeline_id === 'unassigned') conditions.push('pipeline_id IS NULL');
     else if (pipeline_id) { vals.push(pipeline_id); conditions.push(`pipeline_id=$${vals.length}`); }
     if (search)      { vals.push(`%${search}%`);   conditions.push(`(name ILIKE $${vals.length} OR phone LIKE $${vals.length})`); }
-    vals.push(Number(limit)); vals.push(Number(offset));
+    vals.push(limit); vals.push(offset);
     const r = await pool.query(
       `SELECT * FROM leads WHERE ${conditions.join(' AND ')} ORDER BY score DESC, created_at DESC LIMIT $${vals.length-1} OFFSET $${vals.length}`,
       vals
@@ -1533,13 +1596,14 @@ app.post('/campaigns/:id/leads/bulk-distribute', requireAuth, async (req, res) =
 // EXECUTION HISTORY
 // ═════════════════════════════════════════════════════════════════════════════
 // Campaign-level execution events
-app.get('/campaigns/:id/execution-events', requireAuth, async (req, res) => {
+app.get('/campaigns/:id/execution-events', requireAuth, requireUUID('id'), async (req, res) => {
   try {
-    const { limit = 100, offset = 0, lead_id } = req.query;
+    const { lead_id } = req.query;
+    const { limit, offset } = parsePage(req.query);
     const conditions = ['e.campaign_id=$1', 'e.tenant_id=$2'];
     const vals = [req.params.id, req.user.tenant_id];
     if (lead_id) { vals.push(lead_id); conditions.push(`e.lead_id=$${vals.length}`); }
-    vals.push(Number(limit)); vals.push(Number(offset));
+    vals.push(limit); vals.push(offset);
     const r = await pool.query(
       `SELECT e.event_id, e.lead_id, e.campaign_id, e.pipeline_id, e.tenant_id,
               e.event_type, e.status, e.message, e.metadata, e.created_at,
@@ -1555,9 +1619,9 @@ app.get('/campaigns/:id/execution-events', requireAuth, async (req, res) => {
 });
 
 // Pipeline-level execution events
-app.get('/pipelines/:pipelineId/execution-events', requireAuth, async (req, res) => {
+app.get('/pipelines/:pipelineId/execution-events', requireAuth, requireUUID('pipelineId'), async (req, res) => {
   try {
-    const { limit = 100, offset = 0 } = req.query;
+    const { limit, offset } = parsePage(req.query);
     const r = await pool.query(
       `SELECT e.event_id, e.lead_id, e.campaign_id, e.pipeline_id, e.tenant_id,
               e.event_type, e.status, e.message, e.metadata, e.created_at,
@@ -1573,11 +1637,14 @@ app.get('/pipelines/:pipelineId/execution-events', requireAuth, async (req, res)
 });
 
 // Lead-level timeline
-app.get('/campaigns/:id/leads/:leadId/events', requireAuth, async (req, res) => {
+app.get('/campaigns/:id/leads/:leadId/events', requireAuth, requireUUID('id', 'leadId'), async (req, res) => {
   try {
+    const { limit, offset } = parsePage(req.query);
     const r = await pool.query(
-      `SELECT * FROM lead_execution_events WHERE lead_id=$1 AND tenant_id=$2 ORDER BY created_at ASC`,
-      [req.params.leadId, req.user.tenant_id]
+      `SELECT event_id, lead_id, campaign_id, pipeline_id, tenant_id,
+              event_type, status, message, metadata, created_at
+       FROM lead_execution_events WHERE lead_id=$1 AND tenant_id=$2 ORDER BY created_at ASC LIMIT $3 OFFSET $4`,
+      [req.params.leadId, req.user.tenant_id, limit, offset]
     );
     res.json(r.rows);
   } catch (e) { throw e; }
@@ -1586,13 +1653,14 @@ app.get('/campaigns/:id/leads/:leadId/events', requireAuth, async (req, res) => 
 // ═════════════════════════════════════════════════════════════════════════════
 // PIPELINE ROUTES
 // ═════════════════════════════════════════════════════════════════════════════
-app.get('/pipelines/:pipelineId/leads', requireAuth, async (req, res) => {
+app.get('/pipelines/:pipelineId/leads', requireAuth, requireUUID('pipelineId'), async (req, res) => {
   try {
-    const { search, limit = 100, offset = 0 } = req.query;
+    const { search } = req.query;
+    const { limit, offset } = parsePage(req.query);
     const conditions = ['pipeline_id=$1', 'tenant_id=$2'];
     const vals = [req.params.pipelineId, req.user.tenant_id];
     if (search) { vals.push(`%${search}%`); conditions.push(`(name ILIKE $${vals.length} OR phone LIKE $${vals.length})`); }
-    vals.push(Number(limit)); vals.push(Number(offset));
+    vals.push(limit); vals.push(offset);
     const r = await pool.query(
       `SELECT * FROM leads WHERE ${conditions.join(' AND ')} ORDER BY score DESC LIMIT $${vals.length-1} OFFSET $${vals.length}`,
       vals
@@ -1618,16 +1686,18 @@ app.get('/pipelines/:pipelineId/leads/stats', requireAuth, async (req, res) => {
 // ═════════════════════════════════════════════════════════════════════════════
 // ADMIN / TEAM / USER ROUTES
 // ═════════════════════════════════════════════════════════════════════════════
+const _TENANT_SAFE_COLS = 'tenant_id, name, slug, status, plan, max_users, created_at, updated_at';
 app.get('/admin/clients', requireAuth, requireRole('PLATFORM_ADMIN'), async (req, res) => {
   try {
-    const r = await pool.query('SELECT * FROM tenants ORDER BY created_at DESC');
+    const { limit, offset } = parsePage(req.query);
+    const r = await pool.query(`SELECT ${_TENANT_SAFE_COLS} FROM tenants ORDER BY created_at DESC LIMIT $1 OFFSET $2`, [limit, offset]);
     res.json(r.rows);
   } catch (e) { throw e; }
 });
 
-app.get('/admin/clients/:tenantId', requireAuth, requireRole('PLATFORM_ADMIN'), async (req, res) => {
+app.get('/admin/clients/:tenantId', requireAuth, requireRole('PLATFORM_ADMIN'), requireUUID('tenantId'), async (req, res) => {
   try {
-    const r = await pool.query('SELECT * FROM tenants WHERE tenant_id=$1', [req.params.tenantId]);
+    const r = await pool.query(`SELECT ${_TENANT_SAFE_COLS} FROM tenants WHERE tenant_id=$1`, [req.params.tenantId]);
     if (!r.rows.length) return res.status(404).json({ error: 'not_found' });
     res.json(r.rows[0]);
   } catch (e) { throw e; }
@@ -1635,9 +1705,10 @@ app.get('/admin/clients/:tenantId', requireAuth, requireRole('PLATFORM_ADMIN'), 
 
 app.get('/team', requireAuth, async (req, res) => {
   try {
+    const { limit, offset } = parsePage(req.query);
     const r = await pool.query(
-      'SELECT user_id, email, name, is_active, created_at FROM users WHERE tenant_id=$1 ORDER BY created_at DESC',
-      [req.user.tenant_id]
+      'SELECT user_id, email, name, is_active, created_at FROM users WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT $2 OFFSET $3',
+      [req.user.tenant_id, limit, offset]
     );
     res.json(r.rows);
   } catch (e) { throw e; }
@@ -1792,6 +1863,7 @@ app.get('/dialer/status', requireAuth, async (req, res) => {
 app.get('/dialer/active-calls', requireAuth, async (req, res) => {
   try {
     const tid = req.user.tenant_id;
+    const { limit, offset } = parsePage(req.query, { defaultLimit: 50, maxLimit: 200 });
     const { rows } = await pool.query(
       `SELECT ac.call_sid, ac.lead_id, ac.pipeline_id, ac.phone, ac.lead_name,
               ac.language, ac.status, ac.started_at, ac.answered_at, ac.disposition,
@@ -1799,8 +1871,8 @@ app.get('/dialer/active-calls', requireAuth, async (req, res) => {
        FROM active_calls ac
        LEFT JOIN campaigns c ON c.campaign_id = ac.campaign_id
        WHERE ac.tenant_id = $1 AND ac.ended_at IS NULL
-       ORDER BY ac.started_at DESC`,
-      [tid]
+       ORDER BY ac.started_at DESC LIMIT $2 OFFSET $3`,
+      [tid, limit, offset]
     );
     res.json(rows);
   } catch (e) { throw e; }

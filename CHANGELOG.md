@@ -5,6 +5,39 @@ Format: `## [version] — Sprint-NNN — Title (YYYY-MM-DD)`
 
 ---
 
+## [Unreleased] — BFF Phase 11 — Query Safety & API Hygiene (2026-09-17)
+
+> Every list is bounded. Every UUID is validated before it hits the database. Mutations are idempotent. CORS is multi-origin. Admin queries expose only safe columns.
+
+### 11a — Pagination (`bff.js`)
+- Added `parsePage(query, opts)` helper: caps `limit` at `PAGE_MAX_LIMIT` (200) via `Math.min`; floors `offset` at 0; configurable `defaultLimit` (50) and `maxLimit` per call-site
+- Applied to all 13 previously unbounded list routes: `GET /campaigns`, `GET /campaigns/:id/qualification-rules`, `GET /campaigns/:id/distribution-rules`, `GET /campaigns/:id/pipelines`, `GET /campaigns/:id/leads/imports`, `GET /campaigns/:id/leads`, `GET /campaigns/:id/execution-events`, `GET /pipelines/:pipelineId/execution-events`, `GET /campaigns/:id/leads/:leadId/events`, `GET /pipelines/:pipelineId/leads`, `GET /admin/clients`, `GET /team`, `GET /dialer/active-calls`
+- Prevents unbounded queries from OOM-ing the DB under large tenants
+
+### 11b — UUID Path-Param Validation (`bff.js`)
+- Moved `UUID_RE` to module scope (was local to the upload route only)
+- Added `requireUUID(...params)` middleware factory — validates each named path param against `UUID_RE`; returns 400 `{ error: 'invalid_uuid', param }` on mismatch with WARN log
+- Applied to all routes accepting `:id`, `:pipelineId`, `:leadId`, `:tenantId` path params — prevents malformed strings from reaching SQL `WHERE` clauses
+
+### 11c — Request Idempotency (`bff.js`)
+- Added `idempotency(resourceType)` middleware — reads `Idempotency-Key` header; caches the first successful (2xx) response in Redis for 24 h; replays the cached response on duplicate requests
+- Applied to `POST /campaigns` and `POST /campaigns/:id/pipelines` — prevents duplicate campaigns/pipelines from double-submit or retry storms
+- Fails open: Redis errors are caught silently so requests always proceed without idempotency caching on infrastructure outage
+
+### 11d — Multi-Origin CORS (`bff.js`)
+- Replaced single-string origin with `FRONTEND_ALLOWED_ORIGINS` env var (comma-separated list); falls back to `FRONTEND_BASE_URL` then `http://localhost:3000`
+- CORS origin is now a dynamic function `(origin, cb) => ...` so multiple frontend deployments (prod + staging + preview) can be allowed simultaneously without code changes
+
+### 11e — Explicit Column Projection (`bff.js`)
+- `GET /admin/clients` and `GET /admin/clients/:tenantId` now use `_TENANT_SAFE_COLS` constant instead of `SELECT *` — omits internal fields (secrets, webhook keys) from the platform admin list view
+- `GET /campaigns/:id/leads/:leadId/events` now uses explicit column list instead of `SELECT *` — prevents inadvertent exposure of new columns added to `lead_execution_events` in future migrations
+
+### Tests
+- `tests/unit/bff/test_phase11_query_safety.js` — 36 tests, all passing; pure source inspection
+- Updated `tests/unit/bff/test_phase9_security.js` — 4 `validateBody` route-wiring assertions relaxed to use `sliceRoute` to accommodate Phase 11 middleware additions; all 40 tests still pass
+
+---
+
 ## [Unreleased] — BFF Phase 10 — Request Lifecycle Hardening (2026-09-17)
 
 > Every error is now observed, every query has a deadline, every tenant is validated, every payload is bounded.

@@ -286,31 +286,23 @@ test('9e: validateBody calls next() when validation passes', () => {
 }),
 
 test('9e: validateBody is applied to POST /campaigns', () => {
-  assert.ok(
-    SRC.includes("app.post('/campaigns', requireAuth, validateBody("),
-    'validateBody not applied to POST /campaigns'
-  );
+  const src = sliceRoute("app.post('/campaigns', requireAuth");
+  assert.ok(src.includes('validateBody('), 'validateBody not applied to POST /campaigns');
 }),
 
 test('9e: validateBody is applied to PUT /campaigns/:id', () => {
-  assert.ok(
-    SRC.includes("app.put('/campaigns/:id', requireAuth, validateBody("),
-    'validateBody not applied to PUT /campaigns/:id'
-  );
+  const src = sliceRoute("app.put('/campaigns/:id', requireAuth");
+  assert.ok(src.includes('validateBody('), 'validateBody not applied to PUT /campaigns/:id');
 }),
 
 test('9e: validateBody is applied to POST /campaigns/:id/pipelines', () => {
-  assert.ok(
-    SRC.includes("app.post('/campaigns/:id/pipelines', requireAuth, validateBody("),
-    'validateBody not applied to POST /campaigns/:id/pipelines'
-  );
+  const src = sliceRoute("app.post('/campaigns/:id/pipelines', requireAuth");
+  assert.ok(src.includes('validateBody('), 'validateBody not applied to POST /campaigns/:id/pipelines');
 }),
 
 test('9e: validateBody is applied to PATCH /campaigns/:id/pipelines/:pipelineId', () => {
-  assert.ok(
-    SRC.includes("app.patch('/campaigns/:id/pipelines/:pipelineId', requireAuth, validateBody("),
-    'validateBody not applied to PATCH /campaigns/:id/pipelines/:pipelineId'
-  );
+  const src = sliceRoute("app.patch('/campaigns/:id/pipelines/:pipelineId', requireAuth");
+  assert.ok(src.includes('validateBody('), 'validateBody not applied to PATCH /campaigns/:id/pipelines/:pipelineId');
 }),
 
 ];
