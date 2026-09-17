@@ -5,6 +5,38 @@ Format: `## [version] — Sprint-NNN — Title (YYYY-MM-DD)`
 
 ---
 
+## [v2.0.37] — Phase 10 — Data Correctness and CRM (2026-09-17)
+
+> Leads have correct CRM resolution status. Analytics report real money collected and real DPD.
+
+### 10a — CRM Match During Import (already implemented in Phase 4)
+- `crmMatchPhones()` batch-checks imported phones against `customer_contacts`
+- Upload and resume handlers return `crm_matched`, `crm_unmatched`, `crm_ambiguous` counts
+- Each lead's `metadata.crm_match_status` set to `MATCHED`|`UNMATCHED`|`AMBIGUOUS`
+
+### 10b — Campaign-Level CRM Policy Flag
+- Migration `0038`: `ALTER TABLE campaigns ADD COLUMN require_crm_match_before_dial BOOLEAN DEFAULT FALSE`
+- `POST /campaigns` + `PUT /campaigns/:id` accept `require_crm_match_before_dial` field
+- When `true`: `processOneRow` skips Redis push; after CRM batch check, only `MATCHED` leads are queued (both upload and resume handlers)
+- Unmatched leads remain at `queue_status='PENDING'` pending manual review
+
+### 10c — Fix analytics amount_collected_minor
+- `FulfilledPTPRepositoryPort` protocol added to `campaign_analytics.py`
+  - `sum_fulfilled_amount(tenant_id, campaign_id) → int`: `SELECT SUM(promised_amount_minor) FROM promises_to_pay WHERE status='FULFILLED'`
+- `CampaignAnalytics.__init__` accepts optional `ptp_repository`
+- `amount_collected_minor()` delegates to the port (returns 0 when not wired)
+
+### 10d — Fix analytics avg_dpd
+- `LoanAccountRepositoryPort` protocol added to `call_analytics.py`
+  - `avg_dpd(tenant_id) → float`: `SELECT AVG(dpd) FROM loan_accounts WHERE tenant_id=$1`
+- `CallAnalytics.__init__` accepts optional `loan_repository`
+- `CallAnalytics.avg_dpd()` delegates to the port (returns 0.0 when not wired)
+
+### Tests
+- `tests/unit/test_phase10_data_correctness.py` — 28 tests, all passing; pure source inspection
+
+---
+
 ## [v2.0.36] — Phase 9 — Voice Runtime Hardening (2026-09-17)
 
 > GPU services are authenticated. STT and TTS failures are handled gracefully. Circuit breakers are verified wired. A blue-green deployment runbook exists.

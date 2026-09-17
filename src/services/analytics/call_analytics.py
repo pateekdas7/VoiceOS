@@ -30,11 +30,24 @@ class CallDispositionRepositoryPort(Protocol):
     def find_between(self, tenant_id: TenantId, start: datetime, end: datetime) -> tuple[CallDisposition, ...]: ...
 
 
+class LoanAccountRepositoryPort(Protocol):
+    """Port for computing average DPD across all tenant loan accounts."""
+
+    def avg_dpd(self, tenant_id: TenantId) -> float:
+        """SELECT AVG(dpd) FROM loan_accounts WHERE tenant_id=$1."""
+        ...
+
+
 class CallAnalytics:
     """Per-call outcome/duration analytics, backed by ``call_dispositions``."""
 
-    def __init__(self, repository: CallDispositionRepositoryPort) -> None:
+    def __init__(
+        self,
+        repository: CallDispositionRepositoryPort,
+        loan_repository: LoanAccountRepositoryPort | None = None,
+    ) -> None:
         self._repository = repository
+        self._loans = loan_repository
 
     def dispositions_between(self, tenant_id: TenantId, start: datetime, end: datetime) -> tuple[CallDisposition, ...]:
         return self._repository.find_between(tenant_id, start, end)
@@ -65,6 +78,12 @@ class CallAnalytics:
         recovered = sum(1 for d in dispositions if d.outcome_code in _RECOVERY_OUTCOMES)
         return recovered / len(dispositions)
 
+    def avg_dpd(self, tenant_id: TenantId) -> float:
+        """Average days-past-due across all tenant loan accounts."""
+        if self._loans is None:
+            return 0.0
+        return self._loans.avg_dpd(tenant_id)
+
     @staticmethod
     def intent_sequence(turns: Sequence[Mapping[str, str]]) -> tuple[str, ...]:
         """The ordered intent sequence for a call, given its already-fetched turn records."""
@@ -81,4 +100,4 @@ class CallAnalytics:
         return tuple(emotion_scores)
 
 
-__all__ = ["CallAnalytics", "CallDispositionRepositoryPort"]
+__all__ = ["CallAnalytics", "CallDispositionRepositoryPort", "LoanAccountRepositoryPort"]

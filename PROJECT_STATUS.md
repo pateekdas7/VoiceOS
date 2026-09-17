@@ -52,9 +52,9 @@ reboot (TT-028); (2) a real pre-existing RI-3 crash risk — `PlaybackScheduler`
 
 ## Repository Status
 
-**Repository Version:** v2.0.36 (Phase 9 — Voice Runtime Hardening — 2026-09-17)
+**Repository Version:** v2.0.37 (Phase 10 — Data Correctness and CRM — 2026-09-17)
 **Current Branch:** claude/ssh-gpu-cpu-servers-y99fib
-**Last Commit:** feat(phase-9): voice runtime hardening — GPU auth, STT/TTS failure handling, circuit breaker verification, blue-green runbook (2026-09-17).
+**Last Commit:** feat(phase-10): data correctness and CRM — require_crm_match_before_dial, amount_collected_minor, avg_dpd (2026-09-17).
 Recent commit history:
 - `e12a7bc` (2026-09-16) — feat(phase-5): Jest test suite — 114 tests, 43.67% coverage, 3 bff.js bugs fixed
 - `8e0b330` (2026-09-16) — feat(phase-4): import resume fix — batch-commit progress, CRM match, shared row processor
@@ -92,7 +92,7 @@ Recent commit history:
 | Phase 10 (bff extra) | Request Lifecycle Hardening — global error handler (10a), DB statement/connection timeouts (10b), tenant active check (10c), per-route body size limits (10d), token refresh endpoint (10e) | ✅ DONE | — |
 | Phase 11 (bff extra) | Query Safety & API Hygiene — pagination (11a), UUID validation (11b), idempotency (11c), multi-origin CORS (11d), column projection (11e) | ✅ DONE | — |
 | **Phase 9 (master plan)** | **Voice Runtime Hardening** — GPU auth X-GPU-Secret (9a), STT retry+clarify+hangup (9c), TTS retry+hangup (9d), circuit breaker verification (9e), blue-green runbook (9f). 9b skipped (needs live calls) | ✅ DONE | pending commit |
-| Phase 10 (master plan) | Data Correctness & CRM — CRM match during import (10a), require_crm_match_before_dial column (10b), fix amount_collected_minor (10c), fix avg_dpd (10d) | ⏳ NOT STARTED | — |
+| **Phase 10 (master plan)** | **Data Correctness & CRM** — CRM match confirmed wired (10a), require_crm_match_before_dial migration+bff.js (10b), amount_collected_minor FulfilledPTPRepositoryPort (10c), avg_dpd LoanAccountRepositoryPort (10d) | ✅ DONE | pending commit |
 | Phases 11–16 (master plan) | DB Backup/DR, Auth Hardening, Frontend Hardening, Chaos Testing, Staging Validation, Production Rollout | ⏳ NOT STARTED | — |
 
 **GPU/Twilio/live-DB deferred tests:** documented in `GPU_DEPLOYMENT_CHECKLIST.md`

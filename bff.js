@@ -696,10 +696,13 @@ async function processOneRow(client, {
       await logEvent(client, { leadId: lead.lead_id, campaignId, pipelineId, tenantId, eventType: 'REJECTED', status: 'FAILURE', message: rejReason });
     } else if (pipelineId) {
       await logEvent(client, { leadId: lead.lead_id, campaignId, pipelineId, tenantId, eventType: 'DISTRIBUTED', message: `Assigned to pipeline ${pipelineId}` });
-      const queued = await pushToRedisQueue(lead);
-      if (queued) {
-        await client.query(`UPDATE leads SET queue_status='QUEUED', updated_at=now() WHERE lead_id=$1`, [lead.lead_id]);
-        await logEvent(client, { leadId: lead.lead_id, campaignId, pipelineId, tenantId, eventType: 'QUEUED', message: 'Pushed to Redis queue' });
+      // When require_crm_match_before_dial is set, defer queuing until CRM status is known
+      if (!campaign.require_crm_match_before_dial) {
+        const queued = await pushToRedisQueue(lead);
+        if (queued) {
+          await client.query(`UPDATE leads SET queue_status='QUEUED', updated_at=now() WHERE lead_id=$1`, [lead.lead_id]);
+          await logEvent(client, { leadId: lead.lead_id, campaignId, pipelineId, tenantId, eventType: 'QUEUED', message: 'Pushed to Redis queue' });
+        }
       }
     }
     return {
@@ -901,14 +904,14 @@ app.post('/campaigns', requireAuth, idempotency('campaign'), validateBody({
   description: { type: 'string', maxLength: 2000 },
 }), async (req, res) => {
   try {
-    const { name, description = '' } = req.body;
+    const { name, description = '', require_crm_match_before_dial = false } = req.body;
     if (!name) return res.status(400).json({ error: 'name_required' });
     const tid = req.user.tenant_id;
     if (!tid) return res.status(403).json({ error: 'platform_users_cannot_create_campaigns' });
     const r = await pool.query(
-      `INSERT INTO campaigns (tenant_id, name, description, status, created_by)
-       VALUES ($1,$2,$3,'DRAFT',$4) RETURNING *`,
-      [tid, name, description, req.user.sub]
+      `INSERT INTO campaigns (tenant_id, name, description, status, created_by, require_crm_match_before_dial)
+       VALUES ($1,$2,$3,'DRAFT',$4,$5) RETURNING *`,
+      [tid, name, description, req.user.sub, Boolean(require_crm_match_before_dial)]
     );
     await bffAudit(pool, { req, action: 'campaign.create', resourceType: 'campaign', resourceId: r.rows[0].campaign_id, metadata: { name } });
     log.info('campaign.created', { campaign_id: r.rows[0].campaign_id, trace_id: req.traceId, tenant_id: tid });
@@ -938,6 +941,7 @@ app.put('/campaigns/:id', requireAuth, requireUUID('id'), validateBody({
       scheduled_start, scheduled_end,
       allowed_weekdays, excluded_dates,
       max_attempts, retry_interval_hours,
+      require_crm_match_before_dial,
     } = req.body;
 
     // Coerce arrays where present (frontend may send undefined = no change)
@@ -947,6 +951,7 @@ app.put('/campaigns/:id', requireAuth, requireUUID('id'), validateBody({
     const excl = Array.isArray(excluded_dates)
       ? excluded_dates.filter(d => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d))
       : null;
+    const crmFlag = require_crm_match_before_dial !== undefined ? Boolean(require_crm_match_before_dial) : null;
 
     const r = await pool.query(
       `UPDATE campaigns SET
@@ -962,14 +967,16 @@ app.put('/campaigns/:id', requireAuth, requireUUID('id'), validateBody({
         excluded_dates=COALESCE($10::date[],excluded_dates),
         max_attempts=COALESCE($11,max_attempts),
         retry_interval_hours=COALESCE($12,retry_interval_hours),
+        require_crm_match_before_dial=COALESCE($13,require_crm_match_before_dial),
         updated_at=now()
-       WHERE campaign_id=$13 AND tenant_id=$14 RETURNING *`,
+       WHERE campaign_id=$14 AND tenant_id=$15 RETURNING *`,
       [
         name, description, target_call_count,
         daily_start_hour, daily_end_hour, timezone,
         scheduled_start || null, scheduled_end || null,
         weekdays, excl,
         max_attempts, retry_interval_hours,
+        crmFlag,
         req.params.id, req.user.tenant_id,
       ]
     );
@@ -1032,9 +1039,12 @@ app.post('/campaigns/:id/qualification-rules', requireAuth, requireUUID('id'), a
   } catch (e) { throw e; }
 });
 
-app.delete('/campaigns/:id/qualification-rules/:ruleId', requireAuth, requireUUID('id'), async (req, res) => {
+app.delete('/campaigns/:id/qualification-rules/:ruleId', requireAuth, requireUUID('id', 'ruleId'), async (req, res) => {
   try {
-    await pool.query('DELETE FROM campaign_qualification_rules WHERE rule_id=$1 AND tenant_id=$2', [req.params.ruleId, req.user.tenant_id]);
+    await pool.query(
+      'DELETE FROM campaign_qualification_rules WHERE rule_id=$1 AND campaign_id=$2 AND tenant_id=$3',
+      [req.params.ruleId, req.params.id, req.user.tenant_id]
+    );
     res.json({ ok: true });
   } catch (e) { throw e; }
 });
@@ -1066,9 +1076,12 @@ app.post('/campaigns/:id/distribution-rules', requireAuth, requireUUID('id'), as
   } catch (e) { throw e; }
 });
 
-app.delete('/campaigns/:id/distribution-rules/:ruleId', requireAuth, requireUUID('id'), async (req, res) => {
+app.delete('/campaigns/:id/distribution-rules/:ruleId', requireAuth, requireUUID('id', 'ruleId'), async (req, res) => {
   try {
-    await pool.query('DELETE FROM pipeline_distribution_rules WHERE rule_id=$1 AND tenant_id=$2', [req.params.ruleId, req.user.tenant_id]);
+    await pool.query(
+      'DELETE FROM pipeline_distribution_rules WHERE rule_id=$1 AND campaign_id=$2 AND tenant_id=$3',
+      [req.params.ruleId, req.params.id, req.user.tenant_id]
+    );
     res.json({ ok: true });
   } catch (e) { throw e; }
 });
@@ -1158,19 +1171,23 @@ app.patch('/campaigns/:id/pipelines/:pipelineId', requireAuth, requireUUID('id',
 });
 
 // Lifecycle state machine — registered AFTER specific sub-resource routes
-app.post('/campaigns/:id/:action', requireAuth, async (req, res) => {
+app.post('/campaigns/:id/:action', requireAuth, requireUUID('id'), async (req, res) => {
   try {
     const transition = LIFECYCLE_TRANSITIONS[req.params.action];
     if (!transition) return res.status(400).json({ error: 'unknown_action' });
     const vals = [req.params.id, req.user.tenant_id];
-    const setClauses = [`status='${transition.to}'`, 'updated_at=now()'];
+    // Parameterize status values so this query is always fully parameterized
+    vals.push(transition.to);
+    const setClauses = [`status=$${vals.length}`, 'updated_at=now()'];
     if (req.params.action === 'start' && req.body?.target_call_count) {
       vals.push(req.body.target_call_count);
       setClauses.push(`target_call_count=$${vals.length}`);
     }
-    const where = transition.from
-      ? `campaign_id=$1 AND tenant_id=$2 AND status='${transition.from}'`
-      : `campaign_id=$1 AND tenant_id=$2`;
+    let where = 'campaign_id=$1 AND tenant_id=$2';
+    if (transition.from) {
+      vals.push(transition.from);
+      where += ` AND status=$${vals.length}`;
+    }
     const r = await pool.query(`UPDATE campaigns SET ${setClauses.join(',')} WHERE ${where} RETURNING *`, vals);
     if (!r.rows.length) return res.status(409).json({ error: 'invalid_transition' });
     await bffAudit(pool, { req, action: 'campaign.state_change', resourceType: 'campaign', resourceId: req.params.id, metadata: { action: req.params.action, to: transition.to } });
@@ -1182,11 +1199,11 @@ app.post('/campaigns/:id/:action', requireAuth, async (req, res) => {
 // ═════════════════════════════════════════════════════════════════════════════
 // LEAD INTAKE — UPLOAD (full engine pipeline)
 // ═════════════════════════════════════════════════════════════════════════════
-app.post('/campaigns/:id/leads/suggest-mapping', requireAuth, (req, res) => {
+app.post('/campaigns/:id/leads/suggest-mapping', requireAuth, requireUUID('id'), (req, res) => {
   res.json({ suggested_mapping: suggestMapping(req.body.columns || []) });
 });
 
-app.post('/campaigns/:id/leads/upload', requireAuth, async (req, res) => {
+app.post('/campaigns/:id/leads/upload', requireAuth, requireUUID('id'), async (req, res) => {
   // Reject multipart/form-data — this endpoint expects JSON with pre-parsed rows
   const ct = req.headers['content-type'] || '';
   if (ct.startsWith('multipart/form-data')) {
@@ -1202,11 +1219,6 @@ app.post('/campaigns/:id/leads/upload', requireAuth, async (req, res) => {
 
     const campaignId = req.params.id;
     const tenantId   = req.user.tenant_id;
-
-    // Validate UUID format before hitting DB
-    if (!UUID_RE.test(campaignId)) {
-      return res.status(400).json({ error: 'invalid_campaign_id' });
-    }
 
     const cam = await client.query(
       'SELECT * FROM campaigns WHERE campaign_id=$1 AND tenant_id=$2',
@@ -1297,6 +1309,19 @@ app.post('/campaigns/:id/leads/upload', requireAuth, async (req, res) => {
           );
         }
       }
+      // Queue only MATCHED leads when campaign requires CRM match before dial
+      if (campaign.require_crm_match_before_dial && byStatus.MATCHED.length) {
+        const matchedLeads = await client.query(
+          `SELECT * FROM leads WHERE campaign_id=$1 AND tenant_id=$2 AND phone = ANY($3::text[]) AND queue_status='PENDING'`,
+          [campaignId, tenantId, byStatus.MATCHED]
+        );
+        for (const lead of matchedLeads.rows) {
+          const queued = await pushToRedisQueue(lead);
+          if (queued) {
+            await client.query(`UPDATE leads SET queue_status='QUEUED', updated_at=now() WHERE lead_id=$1`, [lead.lead_id]);
+          }
+        }
+      }
     }
 
     // Finalize import
@@ -1318,7 +1343,7 @@ app.post('/campaigns/:id/leads/upload', requireAuth, async (req, res) => {
 });
 
 // Resume a failed or interrupted import — processes remaining rows in crash-safe batches
-app.post('/campaigns/:id/leads/imports/:importId/resume', requireAuth, async (req, res) => {
+app.post('/campaigns/:id/leads/imports/:importId/resume', requireAuth, requireUUID('id', 'importId'), async (req, res) => {
   const campaignId = req.params.id;
   const tenantId   = req.user.tenant_id;
   const importId   = req.params.importId;
@@ -1452,6 +1477,19 @@ app.post('/campaigns/:id/leads/imports/:importId/resume', requireAuth, async (re
             );
           }
         }
+        // Queue only MATCHED leads when campaign requires CRM match before dial
+        if (campaign.require_crm_match_before_dial && byStatus.MATCHED.length) {
+          const matchedLeads = await finalClient.query(
+            `SELECT * FROM leads WHERE campaign_id=$1 AND tenant_id=$2 AND phone = ANY($3::text[]) AND queue_status='PENDING'`,
+            [campaignId, tenantId, byStatus.MATCHED]
+          );
+          for (const lead of matchedLeads.rows) {
+            const queued = await pushToRedisQueue(lead);
+            if (queued) {
+              await finalClient.query(`UPDATE leads SET queue_status='QUEUED', updated_at=now() WHERE lead_id=$1`, [lead.lead_id]);
+            }
+          }
+        }
       }
       await finalClient.query(
         `UPDATE lead_imports SET status='DONE', valid_rows=$1, invalid_rows=$2, duplicate_rows=$3,
@@ -1512,7 +1550,7 @@ app.get('/campaigns/:id/leads', requireAuth, requireUUID('id'), async (req, res)
   } catch (e) { throw e; }
 });
 
-app.get('/campaigns/:id/leads/stats', requireAuth, async (req, res) => {
+app.get('/campaigns/:id/leads/stats', requireAuth, requireUUID('id'), async (req, res) => {
   try {
     const r = await pool.query(
       `SELECT
@@ -1532,7 +1570,7 @@ app.get('/campaigns/:id/leads/stats', requireAuth, async (req, res) => {
   } catch (e) { throw e; }
 });
 
-app.post('/campaigns/:id/leads/:leadId/assign-pipeline', requireAuth, async (req, res) => {
+app.post('/campaigns/:id/leads/:leadId/assign-pipeline', requireAuth, requireUUID('id', 'leadId'), async (req, res) => {
   const client = await pool.connect();
   try {
     const { pipeline_id } = req.body;
@@ -1558,7 +1596,7 @@ app.post('/campaigns/:id/leads/:leadId/assign-pipeline', requireAuth, async (req
   } finally { client.release(); }
 });
 
-app.post('/campaigns/:id/leads/bulk-distribute', requireAuth, async (req, res) => {
+app.post('/campaigns/:id/leads/bulk-distribute', requireAuth, requireUUID('id'), async (req, res) => {
   const client = await pool.connect();
   try {
     const { pipeline_ids = [] } = req.body;
@@ -1669,7 +1707,7 @@ app.get('/pipelines/:pipelineId/leads', requireAuth, requireUUID('pipelineId'), 
   } catch (e) { throw e; }
 });
 
-app.get('/pipelines/:pipelineId/leads/stats', requireAuth, async (req, res) => {
+app.get('/pipelines/:pipelineId/leads/stats', requireAuth, requireUUID('pipelineId'), async (req, res) => {
   try {
     const r = await pool.query(
       `SELECT COUNT(*) AS total, AVG(score)::int AS avg_score,
@@ -1740,7 +1778,7 @@ app.get('/enrichment/providers', requireAuth, (req, res) => {
   })));
 });
 
-app.get('/campaigns/:id/enrichment-config', requireAuth, async (req, res) => {
+app.get('/campaigns/:id/enrichment-config', requireAuth, requireUUID('id'), async (req, res) => {
   try {
     const tid = req.user.tenant_id;
     const r = await pool.query('SELECT enrichment_config FROM campaigns WHERE campaign_id=$1 AND tenant_id=$2', [req.params.id, tid]);
