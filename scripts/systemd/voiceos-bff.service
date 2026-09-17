@@ -9,6 +9,7 @@ EnvironmentFile=/opt/voiceos/.env
 ExecStart=/usr/bin/node bff.js
 Restart=always
 RestartSec=10
+TimeoutStopSec=30
 StandardOutput=append:/opt/voiceos/logs/bff.log
 StandardError=append:/opt/voiceos/logs/bff.log
 

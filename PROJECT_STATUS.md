@@ -52,7 +52,7 @@ reboot (TT-028); (2) a real pre-existing RI-3 crash risk — `PlaybackScheduler`
 
 ## Repository Status
 
-**Repository Version:** v2.0.42 (Phase 15 — Staging Validation — 2026-09-17)
+**Repository Version:** v2.0.43 (Phase 16 — Controlled Production Rollout — 2026-09-18)
 **Current Branch:** claude/ssh-gpu-cpu-servers-y99fib
 **Last Commit:** feat(phase-12): auth hardening — Vault secret loading, JWT JTI revocation, cookie domain scoping (2026-09-17).
 Recent commit history:
@@ -97,8 +97,8 @@ Recent commit history:
 | **Phase 12 (master plan)** | **Auth Hardening** — login rate limiting verified (12a), Vault secret loading `_load_vault_secret_or_env` (12b), JWT JTI revocation via Redis (12c), secure cookie flag verified (12d), cookie domain scoping `COOKIE_DOMAIN` (12e). 21/21 tests pass | ✅ DONE | committed |
 | **Phase 13 (master plan)** | **Frontend Hardening** — shared fetch-client with 401→login redirect (13a), React error boundaries on all page segments (13b), CRM route fixed to web_api (13c), import progress polling + Resume button + CRM match counts (13d+13e), analytics revenue display (13f). 24/24 tests pass | ✅ DONE | 845ea30 |
 | **Phase 14 (master plan)** | **Chaos and Failure Testing** — source verification for all 10 chaos scenarios (26/26 pass), deferred hardware test catalogue, executable chaos scripts (dry-run by default), runbooks for all 10 scenarios. Real execution deferred to post-Phase-16 (real VM required) | ✅ DONE | 51f4e22 |
-| **Phase 15 (master plan)** | **Staging Validation** — staging setup/teardown scripts, 6 E2E scenarios, BFF load test (50 concurrent, p95 < 2s gate), security scan (gitleaks/trufflehog/ZAP), source verification 22/22. Real execution deferred to post-Phase-16 | ✅ DONE | pending commit |
-| Phase 16 (master plan) | Controlled Production Rollout | ⏳ NOT STARTED | — |
+| **Phase 15 (master plan)** | **Staging Validation** — staging setup/teardown scripts, 6 E2E scenarios, BFF load test (50 concurrent, p95 < 2s gate), security scan (gitleaks/trufflehog/ZAP), source verification 22/22. Real execution deferred to post-Phase-16 | ✅ DONE | 1dced76 |
+| **Phase 16 (master plan)** | **Controlled Production Rollout** — pre-deploy checklist, deploy.sh (ordered restart with health checks), single-tenant simulation rollout, rollback.sh (< 15 min, dry-run by default), voiceos-bff.service TimeoutStopSec. 23/23 source tests pass | ✅ DONE | pending commit |
 
 **GPU/Twilio/live-DB deferred tests:** documented in `GPU_DEPLOYMENT_CHECKLIST.md`
 

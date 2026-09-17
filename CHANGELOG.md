@@ -5,6 +5,31 @@ Format: `## [version] — Sprint-NNN — Title (YYYY-MM-DD)`
 
 ---
 
+## [v2.0.43] — Phase 16 — Controlled Production Rollout (2026-09-18)
+
+> All deploy scripts, rollback procedure, single-tenant rollout strategy, systemd TimeoutStopSec hardening, and production readiness source verification.
+
+### 16a — Pre-Deploy Checklist
+- `scripts/deploy/pre_deploy_checklist.sh` — verifies Phase 13/14/15 source tests, all 5 systemd units, secrets/PII checks, Vault snapshot, WAL archiving reference, and all 5 runbooks before allowing deploy
+
+### 16b — Deployment Script
+- `scripts/deploy/deploy.sh` — ordered deployment: alembic → K8s → web_api → bff.js → voice-runtime → dialer_worker; health check between each service restart; enables backup timers post-deploy; supports `--dry-run`
+
+### 16c — Single-Tenant Rollout
+- `scripts/deploy/rollout_first_tenant.sh` — creates simulation-mode campaign for first tenant, health-checks bff.js and web_api, activates `dialing_enabled: true, mode: simulation`; expands to real dialing only after simulation validates
+
+### 16d — Rollback Procedure
+- `scripts/deploy/rollback.sh` — safe by default (dry-run); `--execute` stops dialer_worker and voice-runtime gracefully, checks if alembic downgrade needed, `git checkout <sha>`, re-installs systemd units, restarts all services; tracks elapsed time against 15-minute target
+
+### Systemd Hardening
+- `scripts/systemd/voiceos-bff.service` — added `TimeoutStopSec=30` (was missing; bff.js has SIGTERM handler since Phase 7)
+
+### Tests
+- `tests/unit/bff/test_phase16_source.js` — 23/23 passing
+- `docs/runbooks/phase16-production-rollout-runbook.md` — complete deployment and rollback runbook
+
+---
+
 ## [v2.0.42] — Phase 15 — Staging Validation (2026-09-17)
 
 > Staging environment setup scripts, 6 end-to-end scenario tests, BFF load test (50 concurrent), security scan script, and source verification. Real execution deferred to post-Phase-16 (real staging environment required).
