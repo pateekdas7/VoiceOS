@@ -82,6 +82,207 @@ def record_queue_depth(queue_name: str, depth: int) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Section 17.2 — Service-level metrics
+# ---------------------------------------------------------------------------
+
+calls_initiated_total = Counter(
+    "voiceos_calls_initiated_total",
+    "Total outbound calls placed, by tenant and campaign.",
+    labelnames=["tenant_id", "campaign_id"],
+)
+
+calls_completed_total = Counter(
+    "voiceos_calls_completed_total",
+    "Total calls that reached a terminal state.",
+    labelnames=["tenant_id", "outcome"],
+)
+
+call_duration_seconds = Histogram(
+    "voiceos_call_duration_seconds",
+    "End-to-end call duration from first WebSocket frame to call end.",
+    buckets=(30, 60, 120, 180, 300, 600, 900, 1800, 3600),
+    labelnames=["tenant_id"],
+)
+
+dialer_queue_depth = Gauge(
+    "voiceos_queue_depth",
+    "Current depth of the per-tenant outbound dialer Redis queue.",
+    labelnames=["tenant_id"],
+)
+
+queue_age_seconds = Histogram(
+    "voiceos_queue_age_seconds",
+    "Age of calls sitting in the dialer queue waiting to be placed.",
+    buckets=(5, 15, 30, 60, 120, 300, 600, 1800),
+    labelnames=["tenant_id"],
+)
+
+retry_count_total = Counter(
+    "voiceos_retry_count_total",
+    "Total call retry attempts, labelled by attempt number.",
+    labelnames=["tenant_id", "attempt"],
+)
+
+stuck_calls_total = Counter(
+    "voiceos_stuck_calls_total",
+    "Calls detected as stuck (no state change within the watchdog window).",
+    labelnames=["tenant_id"],
+)
+
+callback_auth_failures_total = Counter(
+    "voiceos_callback_auth_failures_total",
+    "Twilio dialer callback requests with an invalid HMAC-SHA1 signature.",
+    labelnames=["source"],
+)
+
+
+def record_call_initiated(tenant_id: str, campaign_id: str) -> None:
+    calls_initiated_total.labels(tenant_id=tenant_id, campaign_id=campaign_id).inc()
+
+
+def record_call_completed(tenant_id: str, outcome: str) -> None:
+    calls_completed_total.labels(tenant_id=tenant_id, outcome=outcome).inc()
+
+
+def record_call_duration(tenant_id: str, duration_seconds: float) -> None:
+    call_duration_seconds.labels(tenant_id=tenant_id).observe(duration_seconds)
+
+
+def record_dialer_queue_depth(tenant_id: str, depth: int) -> None:
+    dialer_queue_depth.labels(tenant_id=tenant_id).set(depth)
+
+
+def record_queue_age(tenant_id: str, age_seconds: float) -> None:
+    queue_age_seconds.labels(tenant_id=tenant_id).observe(age_seconds)
+
+
+def record_retry(tenant_id: str, attempt: int) -> None:
+    retry_count_total.labels(tenant_id=tenant_id, attempt=str(attempt)).inc()
+
+
+def record_stuck_call(tenant_id: str) -> None:
+    stuck_calls_total.labels(tenant_id=tenant_id).inc()
+
+
+def record_callback_auth_failure(source: str) -> None:
+    callback_auth_failures_total.labels(source=source).inc()
+
+
+# ---------------------------------------------------------------------------
+# Section 17.2 — Voice path latency metrics
+# ---------------------------------------------------------------------------
+
+stt_latency_ms = Histogram(
+    "voiceos_stt_latency_ms",
+    "STT transcription latency from first frame to final transcript.",
+    buckets=(100, 200, 400, 700, 1000, 1500, 2500, 5000),
+    labelnames=["language", "result"],
+)
+
+llm_latency_ms = Histogram(
+    "voiceos_llm_latency_ms",
+    "LLM response latency from TurnInput to first AudioClause.",
+    buckets=(100, 200, 400, 700, 1000, 1500, 2500, 5000),
+    labelnames=["dialogue_state"],
+)
+
+tts_latency_ms = Histogram(
+    "voiceos_tts_latency_ms",
+    "TTS synthesis latency from text clause to first audio frame (TTFA).",
+    buckets=(100, 250, 500, 1000, 2500, 5000, 10000, 20000),
+    labelnames=["cached"],
+)
+
+turn_latency_ms = Histogram(
+    "voiceos_turn_latency_ms",
+    "End-to-end turn latency: VADSpeechEnd → first TTS frame sent.",
+    buckets=(200, 400, 700, 1000, 1500, 2500, 4000, 7000),
+    labelnames=["tenant_id"],
+)
+
+gpu_errors_total = Counter(
+    "voiceos_gpu_errors_total",
+    "Total errors from GPU-hosted AI services.",
+    labelnames=["service"],
+)
+
+ws_disconnects_total = Counter(
+    "voiceos_ws_disconnects_total",
+    "Total Twilio WebSocket disconnects.",
+    labelnames=["reason"],
+)
+
+
+def record_stt_latency(language: str, result: str, latency_ms: float) -> None:
+    stt_latency_ms.labels(language=language, result=result).observe(latency_ms)
+
+
+def record_llm_latency(dialogue_state: str, latency_ms: float) -> None:
+    llm_latency_ms.labels(dialogue_state=dialogue_state).observe(latency_ms)
+
+
+def record_tts_latency(cached: bool, latency_ms: float) -> None:
+    tts_latency_ms.labels(cached="true" if cached else "false").observe(latency_ms)
+
+
+def record_turn_latency(tenant_id: str, latency_ms: float) -> None:
+    turn_latency_ms.labels(tenant_id=tenant_id).observe(latency_ms)
+
+
+def record_gpu_error(service: str) -> None:
+    gpu_errors_total.labels(service=service).inc()
+
+
+def record_ws_disconnect(reason: str) -> None:
+    ws_disconnects_total.labels(reason=reason).inc()
+
+
+# ---------------------------------------------------------------------------
+# Section 17.2 — Business metrics
+# ---------------------------------------------------------------------------
+
+ptp_created_total = Counter(
+    "voiceos_ptp_created_total",
+    "Total promise-to-pay agreements created.",
+    labelnames=["tenant_id"],
+)
+
+hitl_escalations_total = Counter(
+    "voiceos_hitl_escalations_total",
+    "Total calls escalated to a human agent.",
+    labelnames=["tenant_id", "reason"],
+)
+
+hitl_sla_breached_total = Counter(
+    "voiceos_hitl_sla_breached_total",
+    "Total HITL escalations that breached the SLA pickup time.",
+    labelnames=["tenant_id"],
+)
+
+billing_events_total = Counter(
+    "voiceos_billing_events_total",
+    "Total billing events emitted, labelled by event type.",
+    labelnames=["tenant_id", "event_type"],
+)
+
+
+def record_ptp_created(tenant_id: str) -> None:
+    ptp_created_total.labels(tenant_id=tenant_id).inc()
+
+
+def record_hitl_escalation(tenant_id: str, reason: str) -> None:
+    hitl_escalations_total.labels(tenant_id=tenant_id, reason=reason).inc()
+
+
+def record_hitl_sla_breach(tenant_id: str) -> None:
+    hitl_sla_breached_total.labels(tenant_id=tenant_id).inc()
+
+
+def record_billing_event(tenant_id: str, event_type: str) -> None:
+    billing_events_total.labels(tenant_id=tenant_id, event_type=event_type).inc()
+
+
+# ---------------------------------------------------------------------------
 # Per-service RED metrics
 # ---------------------------------------------------------------------------
 

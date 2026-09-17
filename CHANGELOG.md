@@ -5,6 +5,51 @@ Format: `## [version] — Sprint-NNN — Title (YYYY-MM-DD)`
 
 ---
 
+## [Unreleased] — BFF Phase 8 — Observability Hardening (2026-09-17)
+
+> Every critical event is now logged, metered, and alertable.
+> 6 workstreams: structured logging, audit trail, OTel spans, Prometheus metrics, alert rules, MongoDB index verification.
+
+### 8a — Structured JSON Logger (bff.js)
+
+- `bff.js` — replaced all 34 `console.log/error/warn` calls with a single `log` object (`_write`, `info`, `warn`, `error`); every log line emits `{timestamp, level, service, event, ...fields}` as a JSON newline to `process.stdout`; zero `console.*` calls remain
+- `bff.js` — added trace-ID propagation middleware: `req.traceId = req.headers['x-trace-id'] || randomUUID()` using Node.js built-in `crypto` (no new dependency)
+
+### 8b — Audit Logging (bff.js)
+
+- `bff.js` — added `bffAudit(client, {req, action, resourceType, resourceId, outcome, metadata})` helper: inserts into `audit_log` (existing table from migration `006_audit_log.sql`); errors logged as `WARN audit.write_failed`, never thrown
+- `bff.js` — wired audit calls for all security-sensitive operations: `auth.login` (success + failure), `auth.logout` (both POST and GET routes), `campaign.create`, `campaign.update`, `campaign.delete`, `campaign.state_change` (lifecycle transitions), `lead.upload`, `pipeline.create`, `pipeline.update`
+
+### 8c — OTel Span Coverage (twilio_ws_entrypoint.py)
+
+- `src/services/media_gateway/twilio_ws_entrypoint.py` — added `import contextlib`; added `OTelTracer` to `TYPE_CHECKING` imports
+- `src/services/media_gateway/twilio_ws_entrypoint.py` — `SharedCallDependencies` gained optional `tracer: OTelTracer | None = None` field; when set, spans are emitted at all 6 key pipeline points; when `None`, zero overhead (uses `contextlib.nullcontext`)
+- Span coverage added: `voice.http.inbound` (admission + TwiML generation in `/voice`), `ws.call.connect` (full WS call lifecycle in `_endpoint`), `crm.context_assemble` (`start_call()` in `_endpoint`), `stt.transcribe` (STT call in `_run_turns_one_iteration`), `llm.handle_turn` (awaiting LLM task in `_run_turns_one_iteration`), `tts.greeting` (live TTS synthesis in `_speak_greeting`)
+
+### 8d — Prometheus Metrics (src/libs/observability/metrics.py)
+
+- `src/libs/observability/metrics.py` — added 20 missing metrics from Section 17.2
+  - Service-level: `calls_initiated_total`, `calls_completed_total`, `call_duration_seconds`, `dialer_queue_depth`, `queue_age_seconds`, `retry_count_total`, `stuck_calls_total`, `callback_auth_failures_total`
+  - Voice path: `stt_latency_ms`, `llm_latency_ms`, `tts_latency_ms`, `turn_latency_ms`, `gpu_errors_total`, `ws_disconnects_total`
+  - Business: `ptp_created_total`, `hitl_escalations_total`, `hitl_sla_breached_total`, `billing_events_total`
+  - Corresponding `record_*` helper functions added for all 20 metrics
+
+### 8e — Alert Rules (monitoring/prometheus/alert_rules/)
+
+- `monitoring/prometheus/alert_rules/voiceos_bff_dialer.yml` (new) — 6 rules: `CallbackAuthFailure`, `CallbackAuthFailureCritical`, `QueueBacklog`, `QueueBacklogCritical`, `WorkerDead`, `StuckCalls`; all with `team: platform` label and runbook references
+- `monitoring/prometheus/alert_rules/application.yml` — added 6 rules: `HighTurnLatency`, `HighTurnLatencyCritical` (p95 turn latency gate vs V1 Ch23 §23.5), `PostgresErrors`, `PostgresErrorsCritical`, `RedisErrors`, `RedisErrorsCritical`
+- `monitoring/prometheus/alert_rules/business.yml` — added 4 rules: `HITLSLABreach`, `HITLSLABreachCritical`, `TenantIsolationViolation` (Sev-1 security event, immediate page), `BillingInconsistency` (Sev-1, finance team)
+
+### 8f — MongoDB Index Verification (scripts/db/mongodb/verify_indexes.py)
+
+- `scripts/db/mongodb/verify_indexes.py` (new) — post-server-replacement index verification CLI; loads canonical Sprint-002 index specs (`response_plans`, `decision_envelopes`, `call_transcripts`, `call_lineage`); compares against live `collection.index_information()`; reports present/missing/errors; `--fix` flag re-creates any missing indexes; `--dry-run` flag prints planned actions without touching MongoDB; exits non-zero when missing indexes remain unfixed
+
+### Tests
+
+- `tests/unit/bff/test_phase8_observability.py` (new) — 66 tests across all 6 workstreams: structured logger JSON shape, bffAudit schema + error isolation, OTel wiring (SharedCallDependencies.tracer field), Prometheus metric presence and record_* helpers, alert rule file presence and content, verify_indexes.py CLI (dry-run / verify / fix logic); **22 passed, 44 skipped** (pydantic v2 / prometheus_client not available on Android/Termux — same platform constraint as Phases 6/7)
+
+---
+
 ## [Unreleased] — BFF Phase 7 — Graceful Shutdown & Process Supervision (2026-09-17)
 
 > All services shut down cleanly on SIGTERM. No in-flight requests dropped.

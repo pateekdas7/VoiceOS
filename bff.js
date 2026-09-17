@@ -13,11 +13,53 @@ const app          = express();
 const PORT         = 8000;
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
-  console.error('[FATAL] JWT_SECRET environment variable is not set. Exiting.');
+  process.stderr.write(JSON.stringify({ timestamp: new Date().toISOString(), level: 'ERROR', service: 'voiceos-bff', event: 'startup.fatal', error: 'JWT_SECRET not set' }) + '\n');
   process.exit(1);
 }
 const SESSION_COOKIE  = 'voiceos_session';
 const ACTOR_KIND_COOKIE = 'voiceos_actor_kind';
+
+// ─── Structured JSON logger (Phase 8a) ───────────────────────────────────────
+const log = {
+  _write(level, event, fields = {}) {
+    process.stdout.write(JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level,
+      service:   'voiceos-bff',
+      event,
+      ...fields,
+    }) + '\n');
+  },
+  info:  (event, fields) => log._write('INFO',  event, fields),
+  warn:  (event, fields) => log._write('WARN',  event, fields),
+  error: (event, fields) => log._write('ERROR', event, fields),
+};
+
+// ─── Trace-ID propagation middleware ─────────────────────────────────────────
+const { randomUUID } = require('crypto');
+app.use((req, _res, next) => {
+  req.traceId = req.headers['x-trace-id'] || randomUUID();
+  next();
+});
+
+// ─── Audit log helper (Phase 8b) ─────────────────────────────────────────────
+async function bffAudit(client, { req, action, resourceType, resourceId, outcome = 'SUCCESS', metadata = {} }) {
+  const tenantId  = req?.user?.tenant_id || null;
+  const actorId   = req?.user?.sub       || 'anonymous';
+  const ip        = req?.ip              || '';
+  const traceId   = req?.traceId        || '';
+  try {
+    await client.query(
+      `INSERT INTO audit_log
+         (tenant_id, actor_id, action, resource_type, resource_id, outcome, ip_address, event_payload)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)`,
+      [tenantId, actorId, action, resourceType, String(resourceId), outcome, ip,
+       JSON.stringify({ trace_id: traceId, ...metadata })]
+    );
+  } catch (e) {
+    log.warn('audit.write_failed', { action, error: e.message });
+  }
+}
 
 // ─── PostgreSQL ───────────────────────────────────────────────────────────────
 const pool = process.env.POSTGRES_DSN
@@ -30,7 +72,7 @@ const pool = process.env.POSTGRES_DSN
       password: process.env.POSTGRES_PASSWORD || '',
       max: 10,
     });
-pool.on('error', (err) => console.error('[pg] idle client error:', err.message));
+pool.on('error', (err) => log.error('pg.idle_client_error', { error: err.message }));
 
 // ─── Redis ────────────────────────────────────────────────────────────────────
 const redisOpts = {
@@ -41,8 +83,8 @@ const redisOpts = {
 };
 if (process.env.REDIS_PASSWORD) redisOpts.password = process.env.REDIS_PASSWORD;
 const redis = new Redis(redisOpts);
-redis.on('error', e => console.warn('[redis]', e.message));
-redis.connect().catch(e => console.warn('[redis] connect failed:', e.message));
+redis.on('error', e => log.warn('redis.error', { error: e.message }));
+redis.connect().catch(e => log.warn('redis.connect_failed', { error: e.message }));
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 app.use(express.json({ limit: '50mb' }));
@@ -219,7 +261,7 @@ async function pushToRedisQueue(lead) {
     }));
     return true;
   } catch (e) {
-    console.warn('[redis] push failed:', e.message);
+    log.warn('redis.push_failed', { error: e.message });
     return false;
   }
 }
@@ -234,7 +276,7 @@ async function logEvent(dbClient, { leadId, campaignId, pipelineId, tenantId, ev
       [leadId, campaignId, pipelineId, tenantId, eventType, status, message, JSON.stringify(metadata)]
     );
   } catch (e) {
-    console.warn('[logEvent]', e.message);
+    log.warn('db.log_event_failed', { error: e.message });
   }
 }
 
@@ -348,7 +390,7 @@ async function logEnrichment(dbClient, lead, provider, result) {
       [leadId, lead.phone || null, provider, JSON.stringify(result)]
     );
   } catch (e) {
-    console.warn('[enrich] log failed:', e.message);
+    log.warn('enrich.log_failed', { error: e.message });
   }
 }
 
@@ -374,7 +416,7 @@ async function enrichLead(lead, campaignConfig, dbClient) {
         return result;
       }
     } catch (e) {
-      console.warn(`[enrich] provider ${providerName} failed:`, e.message);
+      log.warn('enrich.provider_failed', { provider: providerName, error: e.message });
       await logEnrichment(dbClient, lead, providerName, { fields: {}, error: e.message });
     }
   }
@@ -519,6 +561,9 @@ app.post('/auth/password/login', async (req, res) => {
       const { platform_user_id, name, platform_role } = pu.rows[0];
       const token = makeToken({ actor_kind: 'platform', sub: platform_user_id, email: em, role: platform_role });
       setCookies(res, token, 'platform');
+      req.user = { sub: platform_user_id, actor_kind: 'platform' };
+      await bffAudit(pool, { req, action: 'auth.login', resourceType: 'user', resourceId: em, outcome: 'SUCCESS' });
+      log.info('auth.login', { actor_kind: 'platform', trace_id: req.traceId });
       return res.json({ ok: true, name, role: platform_role, actor_kind: 'platform' });
     }
 
@@ -530,12 +575,17 @@ app.post('/auth/password/login', async (req, res) => {
       const { user_id, name, tenant_id } = tu.rows[0];
       const token = makeToken({ actor_kind: 'tenant', sub: user_id, email: em, role: 'TENANT_ADMIN', tenant_id });
       setCookies(res, token, 'tenant');
+      req.user = { sub: user_id, tenant_id, actor_kind: 'tenant' };
+      await bffAudit(pool, { req, action: 'auth.login', resourceType: 'user', resourceId: em, outcome: 'SUCCESS' });
+      log.info('auth.login', { actor_kind: 'tenant', trace_id: req.traceId });
       return res.json({ ok: true, name, role: 'TENANT_ADMIN', actor_kind: 'tenant' });
     }
 
+    await bffAudit(pool, { req, action: 'auth.login', resourceType: 'user', resourceId: em || 'unknown', outcome: 'FAILURE' });
+    log.warn('auth.login_failed', { trace_id: req.traceId });
     return res.status(401).json({ error: 'invalid_credentials' });
   } catch (e) {
-    console.error('login error:', e);
+    log.error('auth.login_error', { error: e.message });
     res.status(500).json({ error: 'server_error' });
   }
 });
@@ -547,11 +597,15 @@ app.get('/auth/session', (req, res) => {
   catch { res.status(401).json({ error: 'invalid_session' }); }
 });
 
-app.post('/auth/logout', (req, res) => {
+app.post('/auth/logout', async (req, res) => {
+  await bffAudit(pool, { req, action: 'auth.logout', resourceType: 'user', resourceId: req.user?.sub || 'anonymous' });
+  log.info('auth.logout', { trace_id: req.traceId });
   res.clearCookie(SESSION_COOKIE); res.clearCookie(ACTOR_KIND_COOKIE);
   res.json({ ok: true });
 });
-app.get('/auth/logout', (req, res) => {
+app.get('/auth/logout', async (req, res) => {
+  await bffAudit(pool, { req, action: 'auth.logout', resourceType: 'user', resourceId: req.user?.sub || 'anonymous' });
+  log.info('auth.logout', { trace_id: req.traceId });
   res.clearCookie(SESSION_COOKIE); res.clearCookie(ACTOR_KIND_COOKIE);
   res.redirect((process.env.FRONTEND_BASE_URL || 'http://localhost:3000') + '/login');
 });
@@ -621,7 +675,7 @@ app.get('/campaigns', requireAuth, async (req, res) => {
       ? await pool.query('SELECT * FROM campaigns WHERE tenant_id=$1 ORDER BY created_at DESC', [tid])
       : await pool.query('SELECT * FROM campaigns ORDER BY created_at DESC');
     res.json(r.rows);
-  } catch (e) { console.error(e); res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { log.error('route.error', { error: e.message }); res.status(500).json({ error: 'server_error' }); }
 });
 
 app.post('/campaigns', requireAuth, async (req, res) => {
@@ -635,8 +689,10 @@ app.post('/campaigns', requireAuth, async (req, res) => {
        VALUES ($1,$2,$3,'DRAFT',$4) RETURNING *`,
       [tid, name, description, req.user.sub]
     );
+    await bffAudit(pool, { req, action: 'campaign.create', resourceType: 'campaign', resourceId: r.rows[0].campaign_id, metadata: { name } });
+    log.info('campaign.created', { campaign_id: r.rows[0].campaign_id, trace_id: req.traceId, tenant_id: tid });
     res.status(201).json(r.rows[0]);
-  } catch (e) { console.error(e); res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { log.error('campaign.create_error', { error: e.message }); res.status(500).json({ error: 'server_error' }); }
 });
 
 app.get('/campaigns/:id', requireAuth, async (req, res) => {
@@ -694,8 +750,10 @@ app.put('/campaigns/:id', requireAuth, async (req, res) => {
       ]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'not_found' });
+    await bffAudit(pool, { req, action: 'campaign.update', resourceType: 'campaign', resourceId: req.params.id, metadata: { fields: Object.keys(req.body) } });
+    log.info('campaign.updated', { campaign_id: req.params.id, trace_id: req.traceId, tenant_id: req.user.tenant_id });
     res.json(r.rows[0]);
-  } catch (e) { console.error('PUT /campaigns error:', e.message); res.status(500).json({ error: 'server_error', detail: e.message }); }
+  } catch (e) { log.error('campaign.update_error', { error: e.message }); res.status(500).json({ error: 'server_error', detail: e.message }); }
 });
 
 app.delete('/campaigns/:id', requireAuth, async (req, res) => {
@@ -705,8 +763,10 @@ app.delete('/campaigns/:id', requireAuth, async (req, res) => {
       [req.params.id, req.user.tenant_id]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'not_found' });
+    await bffAudit(pool, { req, action: 'campaign.delete', resourceType: 'campaign', resourceId: req.params.id, metadata: { name: r.rows[0].name } });
+    log.info('campaign.deleted', { campaign_id: req.params.id, trace_id: req.traceId, tenant_id: req.user.tenant_id });
     res.json(r.rows[0]);
-  } catch (e) { console.error('DELETE /campaigns error:', e.message); res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { log.error('campaign.delete_error', { error: e.message }); res.status(500).json({ error: 'server_error' }); }
 });
 
 const LIFECYCLE_TRANSITIONS = {
@@ -805,7 +865,7 @@ app.get('/campaigns/:id/pipelines', requireAuth, async (req, res) => {
       [req.params.id, req.user.tenant_id]
     );
     res.json(r.rows);
-  } catch (e) { console.error('pipelines list:', e); res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { log.error('pipeline.list_error', { error: e.message }); res.status(500).json({ error: 'server_error' }); }
 });
 
 app.post('/campaigns/:id/pipelines', requireAuth, async (req, res) => {
@@ -825,8 +885,10 @@ app.post('/campaigns/:id/pipelines', requireAuth, async (req, res) => {
        RETURNING pipeline_id, campaign_id, tenant_id, name, status, created_at, updated_at, created_by`,
       [req.user.tenant_id, req.params.id, String(name).trim(), req.user.email || req.user.sub || '']
     );
+    await bffAudit(pool, { req, action: 'pipeline.create', resourceType: 'pipeline', resourceId: r.rows[0].pipeline_id, metadata: { campaign_id: req.params.id, name: String(name).trim() } });
+    log.info('pipeline.created', { pipeline_id: r.rows[0].pipeline_id, campaign_id: req.params.id, trace_id: req.traceId, tenant_id: req.user.tenant_id });
     res.status(201).json(r.rows[0]);
-  } catch (e) { console.error('pipeline create:', e); res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { log.error('pipeline.create_error', { error: e.message }); res.status(500).json({ error: 'server_error' }); }
 });
 
 app.get('/campaigns/:id/pipelines/:pipelineId', requireAuth, async (req, res) => {
@@ -839,7 +901,7 @@ app.get('/campaigns/:id/pipelines/:pipelineId', requireAuth, async (req, res) =>
     );
     if (!r.rows.length) return res.status(404).json({ error: 'pipeline_not_found' });
     res.json(r.rows[0]);
-  } catch (e) { console.error('pipeline get:', e); res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { log.error('pipeline.get_error', { error: e.message }); res.status(500).json({ error: 'server_error' }); }
 });
 
 app.patch('/campaigns/:id/pipelines/:pipelineId', requireAuth, async (req, res) => {
@@ -858,8 +920,10 @@ app.patch('/campaigns/:id/pipelines/:pipelineId', requireAuth, async (req, res) 
       vals
     );
     if (!r.rows.length) return res.status(404).json({ error: 'pipeline_not_found' });
+    await bffAudit(pool, { req, action: 'pipeline.update', resourceType: 'pipeline', resourceId: req.params.pipelineId, metadata: { campaign_id: req.params.id, fields: Object.keys(req.body || {}) } });
+    log.info('pipeline.updated', { pipeline_id: req.params.pipelineId, campaign_id: req.params.id, trace_id: req.traceId, tenant_id: req.user.tenant_id });
     res.json(r.rows[0]);
-  } catch (e) { console.error('pipeline patch:', e); res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { log.error('pipeline.patch_error', { error: e.message }); res.status(500).json({ error: 'server_error' }); }
 });
 
 // Lifecycle state machine — registered AFTER specific sub-resource routes
@@ -878,8 +942,10 @@ app.post('/campaigns/:id/:action', requireAuth, async (req, res) => {
       : `campaign_id=$1 AND tenant_id=$2`;
     const r = await pool.query(`UPDATE campaigns SET ${setClauses.join(',')} WHERE ${where} RETURNING *`, vals);
     if (!r.rows.length) return res.status(409).json({ error: 'invalid_transition' });
+    await bffAudit(pool, { req, action: 'campaign.state_change', resourceType: 'campaign', resourceId: req.params.id, metadata: { action: req.params.action, to: transition.to } });
+    log.info('campaign.state_changed', { campaign_id: req.params.id, action: req.params.action, to: transition.to, trace_id: req.traceId, tenant_id: req.user.tenant_id });
     res.json(r.rows[0]);
-  } catch (e) { console.error(e); res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { log.error('route.error', { error: e.message }); res.status(500).json({ error: 'server_error' }); }
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -931,8 +997,8 @@ app.post('/campaigns/:id/leads/upload', requireAuth, async (req, res) => {
       await client.query(`UPDATE lead_imports SET status='PROCESSING', total_rows=$1, updated_at=now() WHERE import_id=$2`, [rows.length, importId]);
     } else {
       const cmJson = JSON.stringify(column_mapping);
-      console.log('[upload] columns type:', typeof columns, Array.isArray(columns), columns?.slice(0,3));
-      console.log('[upload] column_mapping json:', cmJson?.slice(0,80));
+      log.info('upload.columns_parsed', { type: typeof columns, is_array: Array.isArray(columns) });
+      log.info('upload.column_mapping', { preview: cmJson?.slice(0,80) });
       const imp = await client.query(
         `INSERT INTO lead_imports (campaign_id,tenant_id,filename,original_columns,column_mapping,status,total_rows,rows_data)
          VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,'PROCESSING',$6,$7::jsonb) RETURNING import_id`,
@@ -1011,10 +1077,12 @@ app.post('/campaigns/:id/leads/upload', requireAuth, async (req, res) => {
     );
 
     await client.query('COMMIT');
+    await bffAudit(pool, { req, action: 'lead.upload', resourceType: 'lead_import', resourceId: importId, metadata: { campaign_id: campaignId, filename, total: rows.length, valid, invalid, duplicates, rejected } });
+    log.info('lead.upload_complete', { import_id: importId, campaign_id: campaignId, total: rows.length, valid, invalid, duplicates, rejected, trace_id: req.traceId, tenant_id: tenantId });
     res.json({ import_id: importId, total: rows.length, valid, invalid, duplicates, rejected, processed, crm_matched, crm_unmatched, crm_ambiguous });
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
-    console.error('lead upload error:', e);
+    log.error('lead.upload_error', { error: e.message });
     res.status(500).json({ error: 'server_error', detail: e.message });
   } finally { client.release(); }
 });
@@ -1124,7 +1192,7 @@ app.post('/campaigns/:id/leads/imports/:importId/resume', requireAuth, async (re
           `UPDATE lead_imports SET status='FAILED', failed_rows=$1::jsonb, updated_at=now() WHERE import_id=$2`,
           [JSON.stringify(failedRows), importId]
         );
-        console.error(`[resume] batch ${batchStart}-${batchEnd} failed:`, batchErr);
+        log.error('resume.batch_failed', { batch_start: batchStart, batch_end: batchEnd, error: batchErr?.message || String(batchErr) });
         return res.status(500).json({ error: 'batch_failed', detail: batchErr.message, last_processed_row: batchStart });
       } finally {
         batchClient.release();
@@ -1167,7 +1235,7 @@ app.post('/campaigns/:id/leads/imports/:importId/resume', requireAuth, async (re
         `UPDATE lead_imports SET status='FAILED', updated_at=now() WHERE import_id=$1`,
         [importId]
       );
-      console.error('[resume] finalization failed:', finalErr);
+      log.error('resume.finalization_failed', { error: finalErr?.message || String(finalErr) });
       return res.status(500).json({ error: 'finalization_failed', detail: finalErr.message });
     } finally {
       finalClient.release();
@@ -1179,7 +1247,7 @@ app.post('/campaigns/:id/leads/imports/:importId/resume', requireAuth, async (re
       crm_matched, crm_unmatched, crm_ambiguous,
     });
   } catch (e) {
-    console.error('[resume] error:', e);
+    log.error('resume.error', { error: e.message });
     res.status(500).json({ error: 'server_error', detail: e.message });
   }
 });
@@ -1209,7 +1277,7 @@ app.get('/campaigns/:id/leads', requireAuth, async (req, res) => {
       vals
     );
     res.json(r.rows);
-  } catch (e) { console.error(e); res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { log.error('route.error', { error: e.message }); res.status(500).json({ error: 'server_error' }); }
 });
 
 app.get('/campaigns/:id/leads/stats', requireAuth, async (req, res) => {
@@ -1314,7 +1382,7 @@ app.get('/campaigns/:id/execution-events', requireAuth, async (req, res) => {
       vals
     );
     res.json(r.rows);
-  } catch (e) { console.error('[exec-events]', e.message); res.status(500).json({ error: 'server_error' }); }
+  } catch (e) { log.error('exec_events.error', { error: e.message }); res.status(500).json({ error: 'server_error' }); }
 });
 
 // Pipeline-level execution events
@@ -1661,14 +1729,14 @@ app.post('/dialer/callback', async (req, res) => {
       const host  = req.headers['x-forwarded-host'] || req.headers.host;
       const fullUrl = `${proto}://${host}${req.originalUrl}`;
       if (!twilio.validateRequest(twilioAuthToken, signature, fullUrl, req.body)) {
-        console.warn('[dialer/callback] invalid Twilio signature from', req.ip);
+        log.warn('dialer.callback.invalid_signature', { ip: req.ip });
         return res.sendStatus(403);
       }
     } else if (process.env.NODE_ENV === 'production') {
-      console.error('[dialer/callback] TWILIO_AUTH_TOKEN not set in production — rejecting request');
+      log.error('dialer.callback.no_auth_token', { env: 'production' });
       return res.sendStatus(503);
     } else {
-      console.warn('[dialer/callback] TWILIO_AUTH_TOKEN not set — signature validation disabled (dev only)');
+      log.warn('dialer.callback.no_auth_token', { env: 'development' });
     }
 
     const { CallSid, CallStatus, Duration, AnsweredBy } = req.body;
@@ -1695,7 +1763,7 @@ app.post('/dialer/callback', async (req, res) => {
         [idempKey]
       );
       if (existing.rows.length) {
-        console.log(`[dialer/callback] duplicate event suppressed sid=${CallSid} status=${CallStatus}`);
+        log.info('dialer.callback.duplicate_suppressed', { call_sid: CallSid, status: CallStatus });
         return res.sendStatus(200);
       }
       await pool.query(
@@ -1730,7 +1798,7 @@ app.post('/dialer/callback', async (req, res) => {
 
     res.sendStatus(200);
   } catch (e) {
-    console.error('[dialer/callback]', e.message);
+    log.error('dialer.callback_error', { error: e.message });
     res.sendStatus(500);
   }
 });
@@ -1777,11 +1845,11 @@ app.all('/{*path}', (req, res) => { res.status(404).json({ error: 'not_found' })
 
 if (require.main === module) {
   const server = app.listen(PORT, () => {
-    console.log(`VoiceOS BFF running on http://localhost:${PORT}`);
+    log.info('bff.started', { port: PORT });
   });
 
   process.on('SIGTERM', () => {
-    console.log('[bff] SIGTERM received — draining connections');
+    log.info('bff.sigterm', { event: 'drain_started' });
     server.close(() => {
       pool.end(() => {
         redis.disconnect();
@@ -1789,7 +1857,7 @@ if (require.main === module) {
       });
     });
     setTimeout(() => {
-      console.error('[bff] Graceful shutdown timed out — forcing exit');
+      log.error('bff.sigterm_timeout', { event: 'force_exit' });
       process.exit(1);
     }, 30000);
   });

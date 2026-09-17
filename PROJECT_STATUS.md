@@ -52,7 +52,7 @@ reboot (TT-028); (2) a real pre-existing RI-3 crash risk — `PlaybackScheduler`
 
 ## Repository Status
 
-**Repository Version:** v2.0.31 (BFF Phase 7 — Graceful Shutdown & Process Supervision — 2026-09-17)
+**Repository Version:** v2.0.32 (BFF Phase 8 — Observability Hardening — 2026-09-17)
 **Current Branch:** claude/ssh-gpu-cpu-servers-y99fib
 **Last Commit:** `e12a7bc` — feat(phase-5): Jest test suite — 114 tests, 43.67% coverage, 3 bff.js bugs fixed (2026-09-16).
 Recent commit history:
@@ -87,7 +87,8 @@ Recent commit history:
 | Phase 5 | Node.js Jest test suite — 114 tests, 43.67% coverage, 3 bugs fixed | ✅ DONE | e12a7bc |
 | Phase 6 | Background Job Wiring — SLA enforcer, daily aggregation, monthly invoicing, compliance persistence, SSE stream | ✅ DONE | 61fdb8b |
 | Phase 7 | Graceful Shutdown — bff.js SIGTERM, systemd units (voice-runtime + dialer-worker), uvicorn drain flag, WS drain gate | ✅ DONE | — |
-| Phases 8–16 | TBD — pending user direction | ⏳ NOT STARTED | — |
+| Phase 8 | Observability Hardening — structured JSON logging (8a), audit trail (8b), OTel spans (8c), 20 Prometheus metrics (8d), 16 alert rules (8e), MongoDB index verifier (8f) | ✅ DONE | — |
+| Phases 9–16 | TBD — pending user direction | ⏳ NOT STARTED | — |
 
 **GPU/Twilio/live-DB deferred tests:** documented in `GPU_DEPLOYMENT_CHECKLIST.md`
 
@@ -106,7 +107,7 @@ Recent commit history:
 
 **Sprint-030:** Pilot deployment
 
-**BFF Phases 7–16:** Pending user direction — see GPU_DEPLOYMENT_CHECKLIST.md for deferred tests
+**BFF Phases 9–16:** Pending user direction — see GPU_DEPLOYMENT_CHECKLIST.md for deferred tests
 
 **Phase 3 Sales (done 2026-09-10):**
 - ✅ PipelineTransitionEngine (FSM validation)

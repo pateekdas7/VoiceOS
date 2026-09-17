@@ -44,6 +44,7 @@ Dialogue Manager), V2 Ch1 (Conversation Engine); V6 Ch4 AR-2
 from __future__ import annotations
 
 import audioop
+import contextlib
 import logging
 import re
 import time
@@ -83,6 +84,7 @@ from src.services.vad_endpointing.service import VADEndpointingService
 from src.services.vad_endpointing.vad_engine import VADEngine, VADModelProtocol
 
 if TYPE_CHECKING:
+    from src.libs.observability.tracer import OTelTracer
     from src.services.conversation_engine.engine import ConversationEngine
     from src.services.crm.service import CustomerService
     from src.services.dialogue_manager.service import DialogueManager
@@ -195,6 +197,12 @@ class SharedCallDependencies:
     constructed), preserving prior behavior for every existing test and
     deployment that hasn't opted in."""
     greeting_cache: "GreetingCache | None" = None
+    tracer: "OTelTracer | None" = None
+    """Optional OTelTracer (src/libs/observability/tracer.py). When set,
+    spans are emitted for: /voice HTTP handler, WS call lifecycle,
+    CustomerContext assembly, STT transcription, LLM engine turn,
+    TTS greeting, and call end. When None the entire pipeline runs
+    without tracing overhead — safe for dev/test environments."""
     """Optional pre-synthesised u-law greeting cache. When set and a hit
     is found for the rendered greeting text, _speak_greeting() splices the
     cached 20 ms frames straight into the outbound WebSocket at wire-cadence
@@ -515,9 +523,11 @@ class CallOrchestrator:
         import asyncio
 
         stt_start = time.monotonic()
-        word_stream: AsyncIterator[WordHypothesis] = await self._deps.stt_service.transcribe_stream(
-            _queue_to_frame_gen(queue), language=self._deps.language
-        )
+        _stt_span = self._deps.tracer.start_span("stt.transcribe", {"call_id": self._call_id, "turn_index": self._turn_index}) if self._deps.tracer else contextlib.nullcontext()
+        with _stt_span:
+            word_stream: AsyncIterator[WordHypothesis] = await self._deps.stt_service.transcribe_stream(
+                _queue_to_frame_gen(queue), language=self._deps.language
+            )
 
         stable_prefix: list[str] = []
         last_growth_ts: float = time.monotonic()
@@ -694,7 +704,9 @@ class CallOrchestrator:
 
         dialogue_start = time.monotonic()
         try:
-            clauses = await llm_task
+            _llm_span = self._deps.tracer.start_span("llm.handle_turn", {"call_id": self._call_id, "turn_index": self._turn_index}) if self._deps.tracer else contextlib.nullcontext()
+            with _llm_span:
+                clauses = await llm_task
         except asyncio.CancelledError:
             logger.warning("stable-suffix: final LLM task cancelled - no clauses to send")
             return
@@ -1038,59 +1050,61 @@ class CallOrchestrator:
         # VAD-triggered barge-in until greeting_done fires (cleared in
         # the finally-block below).
         self._playback.set_protected(greeting_generation)
-        synth_task = asyncio.create_task(
-            self._deps.conversation_engine.speak_scripted_text(
-                greeting, self._playback, tts_mode="streaming"
+        _tts_ctx = self._deps.tracer.start_span("tts.greeting", {"call_id": self._call_id}) if self._deps.tracer else contextlib.nullcontext()
+        with _tts_ctx:
+            synth_task = asyncio.create_task(
+                self._deps.conversation_engine.speak_scripted_text(
+                    greeting, self._playback, tts_mode="streaming"
+                )
             )
-        )
-        self._vad.set_playback_active(True, playback_seq=self._turn_index)
-        try:
-            while not synth_task.done() or self._playback.depth > 0:
-                # Phase E — observe barge-in / generation advance and
-                # cancel the greeting synthesis immediately. Without
-                # this, synth_task could produce dozens more stale
-                # clauses before the async cascade unwinds.
-                if self._playback.generation != greeting_generation:
-                    if not synth_task.done():
-                        logger.info(
-                            "twilio_ws: greeting barge-in — cancelling "
-                            "synth_task (gen advanced %d→%d)",
-                            greeting_generation, self._playback.generation,
+            self._vad.set_playback_active(True, playback_seq=self._turn_index)
+            try:
+                while not synth_task.done() or self._playback.depth > 0:
+                    # Phase E — observe barge-in / generation advance and
+                    # cancel the greeting synthesis immediately. Without
+                    # this, synth_task could produce dozens more stale
+                    # clauses before the async cascade unwinds.
+                    if self._playback.generation != greeting_generation:
+                        if not synth_task.done():
+                            logger.info(
+                                "twilio_ws: greeting barge-in — cancelling "
+                                "synth_task (gen advanced %d→%d)",
+                                greeting_generation, self._playback.generation,
+                            )
+                            synth_task.cancel()
+                        break
+                    clause = self._playback.dequeue_nowait()
+                    if clause is None:
+                        await asyncio.sleep(0.005)
+                        continue
+                    if getattr(self, "_pace_greeting_first_frame_at", None) is None:
+                        self._pace_greeting_first_frame_at = _time.monotonic()
+                        import logging as _lg2
+                        _lg2.getLogger("voiceos.twilio_ws").info(
+                            "PACE_DIAG greeting_ttfa_ms=%d",
+                            int((self._pace_greeting_first_frame_at - self._pace_greeting_start) * 1000),
                         )
-                        synth_task.cancel()
-                    break
-                clause = self._playback.dequeue_nowait()
-                if clause is None:
-                    await asyncio.sleep(0.005)
-                    continue
-                if getattr(self, "_pace_greeting_first_frame_at", None) is None:
-                    self._pace_greeting_first_frame_at = _time.monotonic()
-                    import logging as _lg2
-                    _lg2.getLogger("voiceos.twilio_ws").info(
-                        "PACE_DIAG greeting_ttfa_ms=%d",
-                        int((self._pace_greeting_first_frame_at - self._pace_greeting_start) * 1000),
-                    )
-                await self._send_clause(clause)
-        finally:
-            self._vad.set_playback_active(False)
-            import logging as _lg3
-            _wall = int((_time.monotonic() - self._pace_greeting_start) * 1000)
-            _lg3.getLogger("voiceos.twilio_ws").info(
-                "PACE_DIAG greeting_done wall_ms=%d ttfa_ms=%d out_seq=%d",
-                _wall,
-                int((self._pace_greeting_first_frame_at - self._pace_greeting_start) * 1000) if getattr(self, "_pace_greeting_first_frame_at", None) else -1,
-                self._out_seq,
-            )
-            # Uninterruptible greeting complete: restore normal barge-in
-            # behavior. Inside finally so protection is cleared even on exception.
-            self._playback.clear_protection()
-        # Phase E — if we cancelled synth_task, awaiting it will re-raise
-        # CancelledError; swallow that specifically (the cancel was
-        # intentional, not a failure).
-        try:
-            await synth_task  # surface any synthesis exception
-        except asyncio.CancelledError:
-            pass
+                    await self._send_clause(clause)
+            finally:
+                self._vad.set_playback_active(False)
+                import logging as _lg3
+                _wall = int((_time.monotonic() - self._pace_greeting_start) * 1000)
+                _lg3.getLogger("voiceos.twilio_ws").info(
+                    "PACE_DIAG greeting_done wall_ms=%d ttfa_ms=%d out_seq=%d",
+                    _wall,
+                    int((self._pace_greeting_first_frame_at - self._pace_greeting_start) * 1000) if getattr(self, "_pace_greeting_first_frame_at", None) else -1,
+                    self._out_seq,
+                )
+                # Uninterruptible greeting complete: restore normal barge-in
+                # behavior. Inside finally so protection is cleared even on exception.
+                self._playback.clear_protection()
+            # Phase E — if we cancelled synth_task, awaiting it will re-raise
+            # CancelledError; swallow that specifically (the cancel was
+            # intentional, not a failure).
+            try:
+                await synth_task  # surface any synthesis exception
+            except asyncio.CancelledError:
+                pass
 
     async def run(self, websocket: WebSocket) -> None:
         import asyncio
@@ -1370,9 +1384,11 @@ def create_twilio_media_stream_app(
         context = None
         if customer_id:
             try:
-                context = deps.conversation_engine.start_call(
-                    tenant_id=TenantId(deps.tenant_id), customer_id=customer_id, call_id=call_id
-                )
+                _ctx_span = deps.tracer.start_span("crm.context_assemble", {"call_id": call_id, "customer_id": customer_id}) if deps.tracer else contextlib.nullcontext()
+                with _ctx_span:
+                    context = deps.conversation_engine.start_call(
+                        tenant_id=TenantId(deps.tenant_id), customer_id=customer_id, call_id=call_id
+                    )
             except Exception:
                 logger.exception("start_call() failed for customer_id=%s call_id=%s — proceeding without context", customer_id, call_id)
         else:
@@ -1424,25 +1440,27 @@ def create_twilio_media_stream_app(
         import asyncio
 
         forward_task = asyncio.create_task(_forward_inbound())
-        try:
-            await orchestrator.run(websocket)
-        finally:
-            if not forward_task.done():
-                forward_task.cancel()
-            await asyncio.gather(forward_task, return_exceptions=True)
-            # Phase 3: persist post-call state (RelationshipMemory, PostCallSummary).
-            # Best-effort — never re-raise; the WS is already closing at this point.
+        _ws_span = deps.tracer.start_span("ws.call.connect", {"call_id": call_id, "tenant_id": deps.tenant_id}) if deps.tracer else contextlib.nullcontext()
+        with _ws_span:
             try:
-                deps.conversation_engine.end_call(
-                    call_id,
-                    outcome="completed",
-                    customer_id=customer_id,
-                )
-            except Exception:
-                logger.exception(
-                    "end_call() failed in finally block for call_id=%s — continuing WS teardown",
-                    call_id,
-                )
+                await orchestrator.run(websocket)
+            finally:
+                if not forward_task.done():
+                    forward_task.cancel()
+                await asyncio.gather(forward_task, return_exceptions=True)
+                # Phase 3: persist post-call state (RelationshipMemory, PostCallSummary).
+                # Best-effort — never re-raise; the WS is already closing at this point.
+                try:
+                    deps.conversation_engine.end_call(
+                        call_id,
+                        outcome="completed",
+                        customer_id=customer_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "end_call() failed in finally block for call_id=%s — continuing WS teardown",
+                        call_id,
+                    )
 
     def _public_http_base_url() -> str:
         """Public HTTPS base URL Twilio POSTs /voice to — derived from the
@@ -1581,32 +1599,34 @@ def create_twilio_media_stream_app(
                 call_sid, deps.customer_service is not None, caller_phone,
             )
 
-        ticket = await deps.admission_registry.issue(
-            call_sid=call_sid,
-            account_sid=account_sid,
-            tenant_id=deps.tenant_id,
-        )
+        _voice_span = deps.tracer.start_span("voice.http.inbound", {"call_sid": call_sid, "direction": direction}) if deps.tracer else contextlib.nullcontext()
+        with _voice_span:
+            ticket = await deps.admission_registry.issue(
+                call_sid=call_sid,
+                account_sid=account_sid,
+                tenant_id=deps.tenant_id,
+            )
 
-        host = request.headers.get("host") or request.url.hostname
-        wss = f"wss://{host}/twilio/media-stream"
-        # secrets.token_urlsafe uses only URL-safe base64 [-_A-Za-z0-9] so
-        # no XML-attribute escaping is required for value. Escape anyway
-        # so a future token-format change cannot silently break TwiML.
-        import xml.sax.saxutils as _xmlutils
-        token_attr = _xmlutils.quoteattr(ticket.token)
-        wss_attr = _xmlutils.quoteattr(wss)
-        customer_param = ""
-        if resolved_customer_id:
-            customer_attr = _xmlutils.quoteattr(resolved_customer_id)
-            customer_param = f"<Parameter name=\"customer_id\" value={customer_attr}/>"
-        xml = (
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
-            f"<Response><Connect><Stream url={wss_attr}>"
-            f"<Parameter name=\"admission_token\" value={token_attr}/>"
-            f"{customer_param}"
-            "</Stream></Connect></Response>"
-        )
-        return Response(xml, media_type="application/xml")
+            host = request.headers.get("host") or request.url.hostname
+            wss = f"wss://{host}/twilio/media-stream"
+            # secrets.token_urlsafe uses only URL-safe base64 [-_A-Za-z0-9] so
+            # no XML-attribute escaping is required for value. Escape anyway
+            # so a future token-format change cannot silently break TwiML.
+            import xml.sax.saxutils as _xmlutils
+            token_attr = _xmlutils.quoteattr(ticket.token)
+            wss_attr = _xmlutils.quoteattr(wss)
+            customer_param = ""
+            if resolved_customer_id:
+                customer_attr = _xmlutils.quoteattr(resolved_customer_id)
+                customer_param = f"<Parameter name=\"customer_id\" value={customer_attr}/>"
+            xml = (
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+                f"<Response><Connect><Stream url={wss_attr}>"
+                f"<Parameter name=\"admission_token\" value={token_attr}/>"
+                f"{customer_param}"
+                "</Stream></Connect></Response>"
+            )
+            return Response(xml, media_type="application/xml")
 
     async def _health(request):
         return Response("ok", media_type="text/plain")
