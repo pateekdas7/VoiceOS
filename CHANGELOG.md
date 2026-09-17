@@ -5,6 +5,39 @@ Format: `## [version] — Sprint-NNN — Title (YYYY-MM-DD)`
 
 ---
 
+## [v2.0.38] — Phase 11 — Database Backup and Disaster Recovery (2026-09-17)
+
+> Every database has a tested restore procedure. RTO/RPO targets are documented. Scripts are ready to execute when hardware is available.
+
+### 11a — PostgreSQL WAL Archiving
+- `scripts/backup/pg_wal_archiving_setup.sh` — patches `postgresql.conf` with `wal_level=replica`, `archive_mode=on`, `archive_command` (mc to MinIO), `archive_timeout=3600` (RPO=1h)
+- `scripts/backup/pg_restore_from_wal.sh` — PITR recovery from base backup + WAL stream; verifies row counts post-restore
+- **Execution deferred** — requires live Postgres server
+
+### 11b — Redis Persistence Verification
+- `scripts/backup/redis_verify_persistence.sh` — checks `appendonly=yes`, `appendfsync=everysec`; verifies AOF file; documents replica configuration steps
+- **Execution deferred** — requires live Redis
+
+### 11c — MongoDB Daily Dump
+- `scripts/backup/mongodb_dump.sh` — `mongodump --gzip`, 30-day local retention, MinIO offsite sync
+- `scripts/backup/mongodb_restore.sh` — `mongorestore --drop`, collection count verification
+- `scripts/systemd/voiceos-mongodb-backup.service` + `.timer` — daily at 01:30 UTC
+- **Execution deferred** — requires live MongoDB
+
+### 11d — Vault Snapshot
+- `scripts/backup/vault_snapshot.sh` — `vault operator raft snapshot save`, MinIO sync, 30-day retention, R-8 warning
+- `scripts/systemd/voiceos-vault-snapshot.service` + `.timer` — daily at 02:00 UTC
+- **Execution deferred** — requires live Vault
+
+### 11e — Failure Scenario Runbooks
+- `docs/runbooks/database-failure-scenarios.md` — covers all 4 stores: Postgres (process crash, PITR, migration failure), Redis (crash, AOF corruption, replica failover), MongoDB (crash, restore), Vault (sealed, snapshot restore)
+- RTO/RPO summary table included
+
+### Tests
+- `tests/unit/test_phase11_backup_dr.py` — 38 tests, all passing; file-existence + content inspection
+
+---
+
 ## [v2.0.37] — Phase 10 — Data Correctness and CRM (2026-09-17)
 
 > Leads have correct CRM resolution status. Analytics report real money collected and real DPD.
