@@ -5,6 +5,32 @@ Format: `## [version] — Sprint-NNN — Title (YYYY-MM-DD)`
 
 ---
 
+## [v2.0.41] — Phase 14 — Chaos and Failure Testing (2026-09-17)
+
+> Source verification for all 10 chaos scenarios, deferred hardware test catalogue, executable chaos scripts, and runbooks for post-Phase-16 VM execution.
+
+### Source Verification (26/26 passing)
+- **S1 — Worker crash**: `Reconciler.reconcile()` runs before `_consumerLoop` on startup; `recovery_log` written per reconciled attempt
+- **S2 — Crash before active_calls**: `INSERT INTO call_attempts` (INITIATED) precedes `twilio.calls.create`
+- **S3 — Crash after Twilio init**: `call_sid` written to `call_attempts` after Twilio responds; `_reconcileAttempt` handles `INITIATED` → `CRASH_INITIATED`
+- **S4 — Forged callback**: `validateRequest` HMAC check precedes Redis LPUSH in `/dialer/callback`
+- **S5 — Duplicate callback**: `idempotency_keys` checked per `CallSid` to prevent double-push
+- **S6 — Redis restart**: `twilio_ws_entrypoint.py` imports no Redis; `dialer_worker` has SIGTERM handler to requeue
+- **S7 — PostgreSQL failure**: `_handleCallEnd` is awaited (synchronous); `setImmediate` does not wrap post-call handlers
+- **S8 — GPU timeout**: Circuit breaker wired to STT/TTS in `app.py`; `clarify_ask_repeat` fallback and 3-strike hangup in voice runtime
+- **S9 — Runtime restart**: `_DrainGate` in `app.py`, activated on SIGTERM; `TimeoutStopSec` in systemd unit
+- **S10 — MongoDB unavailable**: MongoDB writes not on per-turn hot path; failure logged, not re-raised
+
+### Test Files
+- `tests/unit/bff/test_phase14_source.js` — 26/26 passing (source-inspection, no network/VM required)
+- `tests/chaos/DEFERRED_HARDWARE_TESTS.md` — per-scenario criteria for post-Phase-16 real VM execution
+- `tests/chaos/phase14_productionization_chaos.py` — executable chaos scripts (default: dry-run, `--execute` for real)
+
+### Documentation
+- `docs/runbooks/phase14-chaos-testing-runbook.md` — step-by-step runbook for all 10 scenarios
+
+---
+
 ## [v2.0.40] — Phase 13 — Frontend Hardening (2026-09-17)
 
 > Session expiry redirects to login, React error boundaries on all page segments, CRM route fixed to web_api, import progress polling with CRM match counts, and analytics revenue display.

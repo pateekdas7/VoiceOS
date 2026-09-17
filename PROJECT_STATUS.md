@@ -52,7 +52,7 @@ reboot (TT-028); (2) a real pre-existing RI-3 crash risk — `PlaybackScheduler`
 
 ## Repository Status
 
-**Repository Version:** v2.0.40 (Phase 13 — Frontend Hardening — 2026-09-17)
+**Repository Version:** v2.0.41 (Phase 14 — Chaos and Failure Testing — 2026-09-17)
 **Current Branch:** claude/ssh-gpu-cpu-servers-y99fib
 **Last Commit:** feat(phase-12): auth hardening — Vault secret loading, JWT JTI revocation, cookie domain scoping (2026-09-17).
 Recent commit history:
@@ -95,8 +95,9 @@ Recent commit history:
 | **Phase 10 (master plan)** | **Data Correctness & CRM** — CRM match confirmed wired (10a), require_crm_match_before_dial migration+bff.js (10b), amount_collected_minor FulfilledPTPRepositoryPort (10c), avg_dpd LoanAccountRepositoryPort (10d) | ✅ DONE | pending commit |
 | **Phase 11 (master plan)** | **Database Backup & DR** — PostgreSQL WAL archiving scripts (11a), Redis AOF verify + replica docs (11b), MongoDB daily dump + systemd timer (11c), Vault snapshot + systemd timer (11d), DB failure runbooks (11e). Execution deferred (needs live DBs) | ✅ DONE | pending commit |
 | **Phase 12 (master plan)** | **Auth Hardening** — login rate limiting verified (12a), Vault secret loading `_load_vault_secret_or_env` (12b), JWT JTI revocation via Redis (12c), secure cookie flag verified (12d), cookie domain scoping `COOKIE_DOMAIN` (12e). 21/21 tests pass | ✅ DONE | committed |
-| **Phase 13 (master plan)** | **Frontend Hardening** — shared fetch-client with 401→login redirect (13a), React error boundaries on all page segments (13b), CRM route fixed to web_api (13c), import progress polling + Resume button + CRM match counts (13d+13e), analytics revenue display (13f). 24/24 tests pass | ✅ DONE | pending commit |
-| Phases 13–16 (master plan) | Frontend Hardening, Chaos Testing, Staging Validation, Production Rollout | ⏳ NOT STARTED | — |
+| **Phase 13 (master plan)** | **Frontend Hardening** — shared fetch-client with 401→login redirect (13a), React error boundaries on all page segments (13b), CRM route fixed to web_api (13c), import progress polling + Resume button + CRM match counts (13d+13e), analytics revenue display (13f). 24/24 tests pass | ✅ DONE | 845ea30 |
+| **Phase 14 (master plan)** | **Chaos and Failure Testing** — source verification for all 10 chaos scenarios (26/26 pass), deferred hardware test catalogue, executable chaos scripts (dry-run by default), runbooks for all 10 scenarios. Real execution deferred to post-Phase-16 (real VM required) | ✅ DONE | pending commit |
+| Phases 15–16 (master plan) | Staging Validation, Production Rollout | ⏳ NOT STARTED | — |
 
 **GPU/Twilio/live-DB deferred tests:** documented in `GPU_DEPLOYMENT_CHECKLIST.md`
 
