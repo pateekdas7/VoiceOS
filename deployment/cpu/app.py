@@ -53,8 +53,24 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import time
 
 logger = logging.getLogger("voiceos.cpu_app")
+
+
+# ---------------------------------------------------------------------------
+# Graceful drain gate (Phase 7d)
+# ---------------------------------------------------------------------------
+
+
+class _DrainGate:
+    """Signals that the process is shutting down; new WS connections are rejected."""
+
+    def __init__(self) -> None:
+        self.draining: bool = False
+
+    def set_draining(self) -> None:
+        self.draining = True
 
 
 # ---------------------------------------------------------------------------
@@ -717,7 +733,7 @@ def serve() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     port = int(_env("MEDIA_GATEWAY_PORT", "8010"))
     deps = build_shared_call_dependencies()
-    app = create_twilio_media_stream_app(deps)  # type: ignore[arg-type]
+
     async def _warm_greeting_cache() -> None:
         try:
             from src.libs.contracts.streaming import VoiceConfig
@@ -736,13 +752,33 @@ def serve() -> None:
         except Exception:
             logger.exception("GreetingCache: warm-up crashed - live TTS will handle greetings")
 
+    drain_gate = _DrainGate()
+    app = create_twilio_media_stream_app(deps, drain_gate=drain_gate)  # type: ignore[arg-type]
+
     from contextlib import asynccontextmanager
+
+    _DRAIN_MAX_SECONDS = 120.0
 
     @asynccontextmanager
     async def _lifespan(_app):
         import asyncio as _aio
         _aio.create_task(_warm_greeting_cache())
         yield
+        # Shutdown: stop accepting new WS connections, wait for active calls.
+        drain_gate.set_draining()
+        logger.info("SIGTERM: voice runtime draining (max %.0fs)", _DRAIN_MAX_SECONDS)
+        deadline = time.monotonic() + _DRAIN_MAX_SECONDS
+        asm = deps.audio_session_manager_service
+        while time.monotonic() < deadline:
+            active = asm.active_session_count  # type: ignore[attr-defined]
+            if active == 0:
+                logger.info("Voice runtime: all calls completed — shutting down cleanly")
+                break
+            logger.info("Voice runtime: %d active call(s) remaining, waiting...", active)
+            await _aio.sleep(1.0)
+        else:
+            logger.warning("Voice runtime: drain timeout — %d call(s) still active",
+                           asm.active_session_count)  # type: ignore[attr-defined]
 
     app.router.lifespan_context = _lifespan
     logger.info("Serving Twilio Media Streams WS entrypoint on 0.0.0.0:%d/twilio/media-stream", port)

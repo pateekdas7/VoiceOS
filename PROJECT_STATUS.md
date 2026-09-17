@@ -52,7 +52,7 @@ reboot (TT-028); (2) a real pre-existing RI-3 crash risk — `PlaybackScheduler`
 
 ## Repository Status
 
-**Repository Version:** v2.0.30 (BFF Phase 6 — Background Job Wiring — 2026-09-17)
+**Repository Version:** v2.0.31 (BFF Phase 7 — Graceful Shutdown & Process Supervision — 2026-09-17)
 **Current Branch:** claude/ssh-gpu-cpu-servers-y99fib
 **Last Commit:** `e12a7bc` — feat(phase-5): Jest test suite — 114 tests, 43.67% coverage, 3 bff.js bugs fixed (2026-09-16).
 Recent commit history:
@@ -86,7 +86,8 @@ Recent commit history:
 | Phase 4 | Import resume — batch-commit progress, CRM match, finalize | ✅ DONE | 8e0b330 |
 | Phase 5 | Node.js Jest test suite — 114 tests, 43.67% coverage, 3 bugs fixed | ✅ DONE | e12a7bc |
 | Phase 6 | Background Job Wiring — SLA enforcer, daily aggregation, monthly invoicing, compliance persistence, SSE stream | ✅ DONE | 61fdb8b |
-| Phases 7–16 | TBD — pending user direction | ⏳ NOT STARTED | — |
+| Phase 7 | Graceful Shutdown — bff.js SIGTERM, systemd units (voice-runtime + dialer-worker), uvicorn drain flag, WS drain gate | ✅ DONE | — |
+| Phases 8–16 | TBD — pending user direction | ⏳ NOT STARTED | — |
 
 **GPU/Twilio/live-DB deferred tests:** documented in `GPU_DEPLOYMENT_CHECKLIST.md`
 

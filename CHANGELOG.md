@@ -5,7 +5,36 @@ Format: `## [version] — Sprint-NNN — Title (YYYY-MM-DD)`
 
 ---
 
-## [Unreleased] — BFF Phase 6 — Background Job Wiring (2026-09-17)
+## [Unreleased] — BFF Phase 7 — Graceful Shutdown & Process Supervision (2026-09-17)
+
+> All services shut down cleanly on SIGTERM. No in-flight requests dropped.
+> 4 workstreams, 7 new/modified files, 4 test files (9 JS + 28 Python tests).
+
+### 7a — BFF SIGTERM Handler (bff.js)
+
+- `bff.js` — replaced fire-and-forget `app.listen()` with `const server = app.listen()` assignment; added `process.on('SIGTERM', ...)` handler: `server.close()` → `pool.end()` → `redis.disconnect()` → `process.exit(0)`; `setTimeout(..., 30000)` force-exits with code 1 if drain takes >30s
+- `tests/unit/bff/test_phase7_sigterm.js` — 9 source-inspection tests verifying all shutdown steps (server assignment, handler registration, close/end/disconnect sequence, exit codes, timeout)
+
+### 7b — systemd Units for Missing Services
+
+- `scripts/systemd/voiceos-voice-runtime.service` (new) — runs `deployment/cpu/app.py --serve`; `Type=simple`, `Restart=always`, `RestartSec=10`, `TimeoutStopSec=45` (WS drain needs extra time), `EnvironmentFile=/opt/voiceos/.env`
+- `scripts/systemd/voiceos-dialer-worker.service` (new) — runs `scripts/jobs/run_dialer_worker.py`; same pattern + `TimeoutStopSec=45`
+- `scripts/jobs/run_dialer_worker.py` (new) — long-running asyncio worker; BLPOP-polls `voiceos:dialer:cmds` for `start`/`stop` campaign commands; dispatches to `DialerSessionManager`; on SIGTERM stops all running sessions and waits up to 45s for asyncio tasks to drain
+- `tests/unit/deployment/test_phase7_systemd_units.py` — 19 tests verifying all 5 unit files exist, required fields present (Restart/WantedBy/TimeoutStopSec/EnvironmentFile/ExecStart)
+
+### 7c — uvicorn Graceful Shutdown
+
+- `scripts/systemd/voiceos-webapi.service` — added `--timeout-graceful-shutdown 30` to uvicorn ExecStart; uvicorn will wait up to 30s for in-flight HTTP requests to complete before forcibly closing
+
+### 7d — Voice Runtime Graceful Drain (deployment/cpu/app.py + twilio_ws_entrypoint.py)
+
+- `deployment/cpu/app.py` — added `_DrainGate` class (`draining: bool`, `set_draining()`); `serve()` now creates a `_DrainGate`, passes it to `create_twilio_media_stream_app(deps, drain_gate=gate)`, and in the `_lifespan` shutdown phase: sets draining, then polls `deps.audio_session_manager_service.active_session_count` every 1s up to 120s; exits cleanly when count reaches 0; warns with remaining count on timeout; added `import time` at module level
+- `src/services/media_gateway/twilio_ws_entrypoint.py` — `create_twilio_media_stream_app()` gained optional keyword-only `drain_gate: object | None = None`; in `_endpoint`, right after `await websocket.accept()`, rejects new connections with WS close code 1001 (Going Away) when `drain_gate.draining` is True — allows active calls to complete while Twilio routes no new calls to a terminating instance
+- `tests/unit/deployment/test_phase7_graceful_drain.py` — 8 tests: DrainGate state transitions, drain wait loop (exits immediately / waits for sessions / times out), create_twilio_media_stream_app drain_gate signature (2 skipped on pydantic-v2-unavailable platforms)
+
+---
+
+## [v2.0.30] — BFF Phase 6 — Background Job Wiring (2026-09-17)
 
 > All 5 workstreams fully production-wired. 23 new files, 8 modified.
 > Commit: 61fdb8b.

@@ -1776,8 +1776,22 @@ app.post('/campaigns/:id/leads/:leadId/schedule-callback', requireAuth, async (r
 app.all('/{*path}', (req, res) => { res.status(404).json({ error: 'not_found' }); });
 
 if (require.main === module) {
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log(`VoiceOS BFF running on http://localhost:${PORT}`);
+  });
+
+  process.on('SIGTERM', () => {
+    console.log('[bff] SIGTERM received — draining connections');
+    server.close(() => {
+      pool.end(() => {
+        redis.disconnect();
+        process.exit(0);
+      });
+    });
+    setTimeout(() => {
+      console.error('[bff] Graceful shutdown timed out — forcing exit');
+      process.exit(1);
+    }, 30000);
   });
 }
 

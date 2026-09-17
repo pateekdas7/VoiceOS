@@ -1189,7 +1189,11 @@ def _default_vad_model() -> VADModelProtocol:
 # ---------------------------------------------------------------------------
 
 
-def create_twilio_media_stream_app(deps: SharedCallDependencies) -> Starlette:
+def create_twilio_media_stream_app(
+    deps: SharedCallDependencies,
+    *,
+    drain_gate: object | None = None,
+) -> Starlette:
     """Build the Starlette app serving the Twilio Media Streams WebSocket.
 
     Unlike admin_portal/api_platform/hitl's create_*_api() factories, this
@@ -1197,10 +1201,17 @@ def create_twilio_media_stream_app(deps: SharedCallDependencies) -> Starlette:
     Phase 4 telephony transport this consolidation plan exists to build.
 
     Route: WS /twilio/media-stream
+
+    drain_gate: optional _DrainGate (deployment/cpu/app.py). When set and
+    drain_gate.draining is True, new WebSocket connections are rejected with
+    close code 1001 (Going Away) so in-flight calls can complete uninterrupted.
     """
 
     async def _endpoint(websocket: WebSocket) -> None:
         await websocket.accept()
+        if drain_gate is not None and getattr(drain_gate, "draining", False):
+            await websocket.close(code=1001)
+            return
         call_id = ""
         try:
             first_message = await websocket.receive_json()
