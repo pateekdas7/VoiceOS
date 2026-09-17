@@ -46,12 +46,15 @@ from src.libs.repositories.call_disposition import CallDispositionRepository
 from src.libs.repositories.campaign import CampaignRepository
 from src.libs.repositories.campaign_audience import CampaignAudienceRepository
 from src.libs.repositories.campaign_result import CampaignResultRepository
+from src.libs.repositories.compliance_violations import ComplianceViolationRepository
 from src.libs.repositories.customer import CustomerRepository
 from src.libs.repositories.escalation import EscalationRepository
 from src.libs.repositories.hitl import HITLDecisionRepository, HITLQueueRepository
 from src.libs.repositories.invitation import InvitationRepository
+from src.libs.repositories.loan_account import LoanAccountRepository
 from src.libs.repositories.party import PartyRepository
 from src.libs.repositories.platform_user import PlatformUserRepository
+from src.libs.repositories.promise_to_pay import PromiseToPayRepository
 from src.libs.repositories.saas_ops import FeatureFlagRepository
 from src.libs.repositories.tenant import TenantRepository
 from src.libs.repositories.user import UserRepository
@@ -259,14 +262,20 @@ def create_app() -> Starlette:
         InvoiceGenerator(UsageRepository(conn), InvoiceRepository(conn)),
     )
     feature_flag_service = FeatureFlagService(FeatureFlagRepository(conn))
-    compliance_monitoring = ComplianceMonitoring.create()
+    compliance_monitoring = ComplianceMonitoring.create(
+        violation_repository=ComplianceViolationRepository(conn),
+    )
     gpu_fleet_monitor = GPUFleetHealthMonitor()
     executive_dashboard = ExecutiveDashboard(BIRepository(conn))
 
     call_analytics = CallAnalytics(CallDispositionRepository(conn))
     campaign_analytics = CampaignAnalytics(CampaignResultRepository(conn))
     aggregation_job = DailyAggregationJob(
-        CallDispositionRepository(conn), CampaignResultRepository(conn), AnalyticsDailyRepository(conn)
+        CallDispositionRepository(conn),
+        CampaignResultRepository(conn),
+        AnalyticsDailyRepository(conn),
+        ptp_repository=PromiseToPayRepository(conn),
+        loan_repository=LoanAccountRepository(conn),
     )
     analytics_service = AnalyticsService(
         call_analytics, campaign_analytics, RealtimeAnalytics(call_analytics, campaign_analytics), aggregation_job

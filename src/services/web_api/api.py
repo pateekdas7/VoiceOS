@@ -30,6 +30,7 @@ import logging
 import secrets
 import uuid
 from datetime import UTC, date, datetime, timedelta
+from collections.abc import AsyncGenerator
 from typing import Any, Protocol
 
 _log = logging.getLogger("voiceos.web_api")
@@ -39,7 +40,7 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse, RedirectResponse
+from starlette.responses import JSONResponse, RedirectResponse, StreamingResponse
 from starlette.routing import Route
 
 from src.libs.audit.event import AuditEvent
@@ -378,6 +379,7 @@ def create_web_api(
 
     if analytics_service is not None:
         routes.extend(_build_client_analytics_routes(analytics_service))
+        routes.extend(_build_realtime_analytics_routes(analytics_service))
 
     if reporting_service is not None:
         routes.extend(_build_reports_routes(reporting_service))
@@ -1848,6 +1850,72 @@ def _build_client_analytics_routes(analytics_service: AnalyticsService) -> list[
     return [
         Route("/analytics/dashboard", dashboard_snapshot, methods=["GET"]),
         Route("/analytics/campaigns/{id}/summary", campaign_summary, methods=["GET"]),
+    ]
+
+
+def _build_realtime_analytics_routes(analytics_service: AnalyticsService) -> list[Route]:
+    """Authenticated SSE endpoint for live dashboard data (Phase 6e, ADR-005 Sec 6.9).
+
+    Streams JSON snapshots as Server-Sent Events. Each frame is:
+        data: {json}\\n\\n
+    Keepalive comments (": keepalive\\n\\n") are sent every 30 s to prevent
+    proxies and load-balancers from closing idle connections.
+
+    The client controls the polling interval via ?interval_seconds= (1–60 s,
+    default 5). The stream runs until the client disconnects or the server
+    is shut down.
+    """
+
+    async def realtime_stream(request: Request) -> StreamingResponse | JSONResponse:
+        try:
+            session = require_tenant_permission(request, PERM_VIEW_ANALYTICS)
+        except SessionRequiredError:
+            return _error(401, "UNAUTHENTICATED", "sign in required")
+        except ForbiddenError as exc:
+            return _error(403, "FORBIDDEN", str(exc))
+
+        tenant_id = _require_tenant_id(session)
+        campaign_id_param = request.query_params.get("campaign_id")
+        campaign_id = CampaignId(campaign_id_param) if campaign_id_param else None
+
+        try:
+            interval = float(request.query_params.get("interval_seconds", "5"))
+        except ValueError:
+            interval = 5.0
+        interval = max(1.0, min(60.0, interval))
+
+        async def event_generator() -> AsyncGenerator[bytes, None]:
+            import asyncio
+
+            keepalive_interval = 30.0
+            elapsed_since_keepalive = 0.0
+            while True:
+                if await request.is_disconnected():
+                    break
+                window_end_now = datetime.now(UTC)
+                window_start_now = window_end_now - timedelta(hours=24)
+                snapshot = analytics_service.dashboard_snapshot(
+                    tenant_id, window_start_now, window_end_now, campaign_id
+                )
+                yield f"data: {json.dumps(snapshot)}\n\n".encode()
+                await asyncio.sleep(interval)
+                elapsed_since_keepalive += interval
+                if elapsed_since_keepalive >= keepalive_interval:
+                    yield b": keepalive\n\n"
+                    elapsed_since_keepalive = 0.0
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
+
+    return [
+        Route("/analytics/stream", realtime_stream, methods=["GET"]),
     ]
 
 
