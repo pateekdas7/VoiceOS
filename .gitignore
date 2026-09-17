@@ -32,6 +32,7 @@ credentials.json
 
 # Generated local artifacts
 *.wav
+!tests/audio_clips/*.wav
 *.log
 
 # Editor / OS
@@ -39,3 +40,16 @@ credentials.json
 .idea/
 .DS_Store
 Thumbs.db
+
+# Node / frontend build artifacts
+node_modules/
+bff.err
+bff.out
+cookies.txt
+vc2.txt
+
+# Claude Code session data
+.claude/
+
+# Kaggle kernel output (model weights, large binaries — never commit)
+deployment/gpu/kaggle/kernels/*/output/

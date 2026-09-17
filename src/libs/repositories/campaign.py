@@ -115,6 +115,11 @@ class CampaignRepository(BaseRepository):
         )
         return tuple(self._hydrate(row) for row in rows)
 
+    def find_all_for_tenant(self, tenant_id: TenantId) -> tuple[Campaign, ...]:
+        """Every campaign for a tenant, any status (ADR-005 Sec 6.2 -- Client "Campaigns" list)."""
+        rows = self._tenant_select(_TABLE, _CAMPAIGN_COLUMNS, tenant_id, order_by="created_at DESC")
+        return tuple(self._hydrate(row) for row in rows)
+
     def update_status(self, tenant_id: TenantId, campaign_id: str, status: CampaignStatus) -> None:
         """Transition a campaign's lifecycle status, scoped to ``tenant_id``."""
         self._tenant_update(

@@ -382,8 +382,24 @@ class BillingInvoiceGenerated(DomainEvent):
     """Number of aggregated usage line items in this invoice."""
 
 
+class OpsIntelligenceAnalysisPerformed(DomainEvent):
+    """Emitted when OpsIntelligence completes a reasoning analysis for a tenant (ADR-006 §13.10).
+
+    Published only for tenant-scoped analyses so the token cost is metered
+    through the standard UsageCollector billing pipeline.
+    """
+
+    event_type: Literal["saas.ops_intelligence.analysis_performed"] = "saas.ops_intelligence.analysis_performed"
+    tenant_id: TenantId
+    insight_id: str
+    """Stable identifier of the Insight record that was generated."""
+    token_count: int = Field(ge=0)
+    """Total tokens consumed by the reasoning model for this analysis."""
+
+
 __all__ = [
     "BillingInvoiceGenerated",
+    "OpsIntelligenceAnalysisPerformed",
     "CallDispositioned",
     "CallTransferred",
     "CallbackScheduled",

@@ -1,0 +1,36 @@
+[Unit]
+Description=VoiceOS Founder Audio Evaluator (Qwen2.5-Omni-7B)
+After=network-online.target voiceos-llm.service
+Wants=network-online.target
+# Isolated from production STT/LLM/TTS pipeline — Sprint-029 Founder Validation only.
+# NOT part of the customer call path. Port 8300 is never called by any production service.
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/voiceos-gpu
+EnvironmentFile=-/opt/voiceos-gpu/.env
+# CUDA 13.0 forward compatibility — same requirement as STT/LLM/TTS services.
+Environment=LD_LIBRARY_PATH=/usr/local/cuda-13.0/compat:/usr/local/cuda-13.0/lib64
+Environment=HF_HOME=/opt/voiceos-gpu/cache/hf
+# Evaluator port (isolated from production ports 8000/8100/8200).
+Environment=EVALUATOR_SERVICE_PORT=8300
+Environment=OMNI_MODEL_PATH=/opt/voiceos-gpu/models/qwen2.5-omni-7b
+#
+# Qwen2.5-Omni-7B (BF16, enable_audio_output=False):
+#   Language model:  ~14.5 GiB
+#   Audio encoder:   ~0.8 GiB
+#   Total loaded:    ~15.3 GiB
+#   A6000 free (after STT+LLM+TTS at 0.32): ~20 GiB — fits with ~5 GiB headroom.
+#
+ExecStart=/opt/voiceos-gpu/venv/bin/python3 /opt/voiceos-gpu/services/evaluator/server.py
+Restart=on-failure
+RestartSec=30
+# Model loading takes ~3–5 min on first cold start.
+TimeoutStartSec=600
+StandardOutput=append:/opt/voiceos-gpu/logs/evaluator.log
+StandardError=append:/opt/voiceos-gpu/logs/evaluator.log
+
+[Install]
+WantedBy=multi-user.target

@@ -51,6 +51,9 @@ class CustomerService:
     def find_by_phone(self, tenant_id: TenantId, phone: str) -> Customer | None:
         return self._repos.customer.find_by_phone(tenant_id, phone)
 
+    def list_for_tenant(self, tenant_id: TenantId) -> tuple[Customer, ...]:
+        return self._repos.customer.list_for_tenant(tenant_id)
+
     def record_count(self, tenant_id: TenantId, count: int) -> None:
         """Refresh the ``voiceos_crm_customer_count`` gauge for ``tenant_id`` (V5 §4.17)."""
         metrics.set_customer_count(str(tenant_id), count)

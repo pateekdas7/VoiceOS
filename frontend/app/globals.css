@@ -1,0 +1,80 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f8f9fb;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --foreground: #12151b;
+  --muted: #6b7280;
+  --border: #e5e7eb;
+
+  --brand: #2f5fff;
+  --brand-foreground: #ffffff;
+
+  --status-healthy: #16a34a;
+  --status-healthy-bg: #dcfce7;
+  --status-warning: #b45309;
+  --status-warning-bg: #fef3c7;
+  --status-critical: #dc2626;
+  --status-critical-bg: #fee2e2;
+  --status-neutral: #6b7280;
+  --status-neutral-bg: #f3f4f6;
+
+  --sidebar-bg: #12151b;
+  --sidebar-foreground: #d1d5db;
+  --sidebar-foreground-active: #ffffff;
+  --sidebar-border: #1f2430;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+
+  --color-status-healthy: var(--status-healthy);
+  --color-status-healthy-bg: var(--status-healthy-bg);
+  --color-status-warning: var(--status-warning);
+  --color-status-warning-bg: var(--status-warning-bg);
+  --color-status-critical: var(--status-critical);
+  --color-status-critical-bg: var(--status-critical-bg);
+  --color-status-neutral: var(--status-neutral);
+  --color-status-neutral-bg: var(--status-neutral-bg);
+
+  --color-sidebar-bg: var(--sidebar-bg);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-foreground-active: var(--sidebar-foreground-active);
+  --color-sidebar-border: var(--sidebar-border);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0b0d12;
+    --surface: #12151c;
+    --surface-raised: #171b24;
+    --foreground: #e5e7eb;
+    --muted: #9ca3af;
+    --border: #232733;
+
+    --status-healthy-bg: #052e1a;
+    --status-warning-bg: #3a2405;
+    --status-critical-bg: #3a0a0a;
+    --status-neutral-bg: #1a1d26;
+
+    --sidebar-bg: #0b0d12;
+    --sidebar-border: #1a1d26;
+  }
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-foreground);
+}

@@ -1,0 +1,43 @@
+[Unit]
+Description=VoiceOS Vault Auto-Unseal (oneshot, reads key from /opt/vault/init.json)
+Documentation=https://developer.hashicorp.com/vault/docs/concepts/seal
+After=vault.service network-online.target
+Wants=network-online.target
+# Run after Vault itself has started. Vault seals on every process restart, so
+# this unit is responsible for the single unseal operation needed at boot time.
+# Only needed in staging/dev where Vault is deployed with a single Shamir key
+# share (init.json on disk). Production should use cloud auto-unseal (AWS KMS /
+# GCP Cloud KMS) — if so, disable this unit.
+ConditionPathExists=/opt/vault/init.json
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=root
+Group=root
+# Wait for the Vault TCP listener to be ready before attempting unseal.
+# vault.service itself may not expose a ready check, so we poll the /v1/sys/health
+# endpoint. 30 attempts * 2s = 60s max wait.
+ExecStartPre=/bin/bash -c '\
+  for i in $(seq 1 30); do \
+    if curl -sf http://127.0.0.1:8200/v1/sys/health >/dev/null 2>&1; then \
+      echo "Vault listener ready"; break; \
+    fi; \
+    echo "Waiting for Vault listener (attempt $i/30)..."; \
+    sleep 2; \
+  done'
+ExecStart=/bin/bash -c '\
+  SEALED=$(vault status -format=json 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin).get(\"sealed\",True))" 2>/dev/null || echo "True"); \
+  if [ "$SEALED" = "True" ]; then \
+    UNSEAL_KEY=$(python3 -c "import json; print(json.load(open(\"/opt/vault/init.json\"))[\"unseal_keys_b64\"][0])"); \
+    vault operator unseal "$UNSEAL_KEY" && echo "Vault unsealed successfully" || echo "Vault unseal failed (check /opt/vault/init.json)"; \
+  else \
+    echo "Vault already unsealed — nothing to do"; \
+  fi'
+Environment=VAULT_ADDR=http://127.0.0.1:8200
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=voiceos-vault-unseal
+
+[Install]
+WantedBy=multi-user.target

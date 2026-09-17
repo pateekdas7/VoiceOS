@@ -1,0 +1,14 @@
+{
+  "id": "mamatadas7777/voiceos-x4b-cross-precision-replay",
+  "title": "VoiceOS X4B Cross-Precision Replay",
+  "code_file": "voiceos-x4b-cross-precision.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": true,
+  "dataset_sources": [],
+  "competition_sources": [],
+  "kernel_sources": []
+}

@@ -51,11 +51,26 @@ class BaseRepository:
         Routed through the optional CircuitBreaker (Sprint-016) — every
         concrete repository funnels through this one primitive, so wiring
         the breaker here covers every domain repository's Postgres calls.
+
+        Rolls back on any failure: Postgres aborts the entire transaction
+        on the first error a connection hits, and refuses every further
+        statement (``InFailedSqlTransaction``) until a rollback clears it.
+        Every repository shares one long-lived connection per process (no
+        pool, no per-request scope — see WebSessionMiddleware), so without
+        this, one bad query here poisons every other request the process
+        serves until it's restarted — not a hypothetical: this is exactly
+        what happened live in dev (a duplicate-key error on invitation
+        acceptance left the connection stuck, and the next unrelated
+        request failed with the same aborted-transaction error).
         """
 
         def _do_execute() -> Any:
             cur = self._cursor()
-            cur.execute(sql, tuple(params))
+            try:
+                cur.execute(sql, tuple(params))
+            except Exception:
+                self._conn.rollback()
+                raise
             return cur
 
         if self._breaker is not None:

@@ -21,7 +21,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Protocol, runtime_checkable
 
 from src.libs.ai_safety.prompt_injection import PromptInjectionDetector
@@ -31,7 +35,7 @@ from src.libs.contracts.decision import DecisionEnvelope
 from src.libs.contracts.models.ai_config import ModelConfig, PromptVersion
 from src.libs.contracts.primitives import CallId, CustomerId, TenantId
 from src.libs.contracts.response_plan import ResponsePlan, Snippet
-from src.libs.contracts.streaming import AudioClause
+from src.libs.contracts.streaming import AudioClause, TokenChunk
 from src.libs.contracts.turn import TurnInput
 from src.libs.idempotency.guard import IdempotencyGuard
 from src.libs.idempotency.key_builder import IdempotencyKeyBuilder
@@ -43,6 +47,11 @@ from src.services.ai_config.model_config import ModelConfigService
 from src.services.ai_config.prompt_versioning import PromptVersioningService
 from src.services.ai_governance.service import AIGovernanceService
 from src.services.campaign_management.service import CampaignPromptNotPinnedError
+from src.services.collections.promise_to_pay import (
+    PolicyDeniedError,
+    PromiseToPayService,
+    PTPValidationError,
+)
 from src.services.contact_center.live_transfer import TransferResult
 from src.services.contact_center.service import ContactCenterService
 from src.services.conversation_quality.scorer import ConversationQualityScorer
@@ -54,8 +63,13 @@ from src.services.playback.scheduler import PlaybackScheduler
 from src.services.policy_engine.decision import PolicyDecision, PolicyOutcome
 from src.services.policy_engine.service import PolicyEngineService
 from src.services.tts.service import TTSService
+from src.services.tts.startup_buffer_gate import StartupBufferGate, TTSMode
 from src.services.tts.streaming_pipeline import TrueStreamingPipeline
 
+from src.libs.observability.metrics import call_count_total as _call_count_total
+from src.libs.observability.metrics import negotiation_outcome_total as _negotiation_outcome_total
+
+from .metrics import red as _metrics
 from .session_state import ConversationSessionState
 
 logger = logging.getLogger(__name__)
@@ -80,6 +94,29 @@ class RuntimeConfig:
     model_config: ModelConfig | None
 
 
+def _make_csi_tracker() -> Any:
+    """Create a ConversationStateIntelligence tracker without importing from
+    src/engines/ (boundary Rule 1). Deferred import so the import only fires
+    the first time a call needs a fresh tracker — zero cost for callers that
+    never wire conversation_state_tracker at all."""
+    from src.engines.conversation_state.engine import ConversationStateIntelligence  # noqa: PLC0415
+
+    return ConversationStateIntelligence()
+
+
+def _default_response_plan() -> ResponsePlan:
+    """A minimal, valid ResponsePlan for speak_scripted_text() calls that
+    have no real per-turn plan yet (the call-open greeting, the call-close
+    hangup — both spoken outside handle_turn()'s per-turn CIL pipeline)."""
+    return ResponsePlan(
+        plan_id=str(uuid.uuid4()),
+        version=1,
+        call_id="",
+        tenant_id="",
+        created_at=datetime.now(timezone.utc),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Protocol interfaces — allow injecting engine implementations without
 # importing from src/engines/ (check_boundaries Rule 1).
@@ -98,6 +135,8 @@ class CILPort(Protocol):
         intent_history: list[str] | None,
         identity_verified: bool,
         silence_duration_ms: int,
+        conversation_state_tracker: Any = None,
+        concession_round: int = 0,
     ) -> tuple[ResponsePlan, DecisionEnvelope]:
         """Run all CIL engines and return (ResponsePlan, DecisionEnvelope)."""
         ...
@@ -127,6 +166,47 @@ class OutputEvaluatorPort(Protocol):
         response_plan: ResponsePlan,
     ) -> Any:
         """Return a TurnQualityScore-like object."""
+        ...
+
+
+@runtime_checkable
+class DialogueTurnOutputPort(Protocol):
+    """Structural shape of DialogueResponseEngine's per-turn output.
+
+    Only the attributes this engine actually reads are declared — the real
+    return type (src.engines.dialogue_response.engine.DialogueTurnOutput,
+    Phase 6f) cannot be imported here (check_boundaries.py Rule 1).
+    """
+
+    reply_text: str
+    needs_llm_fallback: bool
+
+
+@runtime_checkable
+class DialogueResponsePort(Protocol):
+    """Protocol for the scripted-response FSM (implemented by
+    DialogueResponseEngine, Path-A Phase 6f).
+
+    ``session`` is typed ``Any`` here rather than re-declaring
+    DialogueSessionState: ConversationEngine already owns the concrete
+    ConversationSessionState instance it passes in (same-package import,
+    not a boundary crossing) — the port only needs to describe what this
+    class receives *back*, not re-validate what it already has.
+    """
+
+    def generate_reply(
+        self,
+        session: Any,
+        response_plan: ResponsePlan,
+        context: CustomerContext | None,
+        user_text: str,
+        lender_name: str,
+    ) -> DialogueTurnOutputPort:
+        """Return the scripted reply (and routing/empathy metadata) for one turn."""
+        ...
+
+    def build_greeting(self, context: CustomerContext | None, lender_name: str) -> str:
+        """Return the call-open identity-verification greeting."""
         ...
 
 
@@ -184,6 +264,28 @@ class ConversationEngine:
         structured_logger: StructuredLogger for JSON turn-completion logs
             (Sprint-016; no-op if None).
         tracer: OTelTracer opening a span per turn (Sprint-016; no-op if None).
+        promise_to_pay_service: PromiseToPayService (Path-A Phase 5). Optional
+            — None preserves the pre-Phase-5 behavior of computing but never
+            persisting a negotiated commitment. When wired, a turn whose
+            ResponsePlan.negotiation_envelope.is_finalized_commitment is True
+            triggers a synchronous, idempotent PTP creation immediately after
+            the RI-4 DecisionEnvelope commit and before any LLM/TTS output —
+            the durable commitment is recorded before the agent ever speaks a
+            confirmation of it.
+        dialogue_response: DialogueResponsePort (Path-A Phase 6g — the
+            scripted-response FSM, DialogueResponseEngine). Optional — None
+            preserves pre-Phase-6 behavior (every turn goes through the LLM
+            streaming path, Step 5). When wired, it becomes the PRIMARY
+            reply path for every turn: the LLM/TTS token-streaming path is
+            not invoked at all for a call using this engine — the golden
+            path is deterministic end to end, matching what Call-001 proved
+            worked (V2 Ch13). The scripted reply still passes through
+            TrueStreamingPipeline (OutputValidator + AIGovernance + TTS +
+            playback) via :meth:`speak_scripted_text`, so no governance gate
+            is bypassed by using this path instead of the LLM.
+        lender_name: The tenant's lender/brand name spoken by the scripted
+            response engine (e.g. in kavya_persona templates). Only used
+            when ``dialogue_response`` is wired.
     """
 
     def __init__(
@@ -211,6 +313,13 @@ class ConversationEngine:
         contact_center_service: ContactCenterService | None = None,
         model_config_service: ModelConfigService | None = None,
         prompt_versioning_service: PromptVersioningService | None = None,
+        promise_to_pay_service: PromiseToPayService | None = None,
+        dialogue_response: DialogueResponsePort | None = None,
+        lender_name: str = "",
+        working_memory_store: Any | None = None,
+        relationship_memory_store: Any | None = None,
+        sales_action_dispatcher: Any | None = None,
+        call_summary_repository: Any | None = None,
     ) -> None:
         self._cil = cil
         self._prompt_builder = prompt_builder
@@ -278,6 +387,46 @@ class ConversationEngine:
         self._model_config_service = model_config_service
         self._prompt_versioning_service = prompt_versioning_service
 
+        # Path-A Phase 5 (V5 Ch4.3): Collections persistence for a finalized
+        # negotiation commitment. Optional — None preserves pre-Phase-5
+        # behavior (negotiation moves are computed and spoken but never
+        # durably recorded — the exact gap the architecture audit found).
+        self._promise_to_pay_service = promise_to_pay_service
+
+        # Path-A Phase 6g (V2 Ch13): the scripted-response FSM. Optional —
+        # None preserves pre-Phase-6 behavior (LLM streaming path for every
+        # turn). When wired, it replaces the LLM as the primary reply path.
+        self._dialogue_response = dialogue_response
+        self._lender_name = lender_name
+
+        # V2 Ch11 Working Memory: per-call short-term Redis-backed state shared
+        # with CIL engines via the caller-owned CSI tracker pattern. Optional —
+        # None preserves pre-memory-wiring behavior (CIL gets a fresh tracker
+        # each turn, so AdaptiveConversationEngine has no cross-turn state).
+        self._working_memory_store = working_memory_store
+
+        # V2 Ch12 Relationship Memory: cross-call Postgres-backed customer state
+        # loaded at call start and persisted at call end. Optional.
+        self._relationship_memory_store = relationship_memory_store
+        # Per-call cache: call_id → RelationshipMemory loaded at start_call().
+        self._relationship_memories: dict[str, Any] = {}
+
+        # Phase 3: per-call sales production action wiring. Optional — None
+        # preserves pre-Phase-3 behavior (no callback scheduling, no handoff).
+        self._sales_action_dispatcher = sales_action_dispatcher
+        self._call_summary_repository = call_summary_repository
+
+        # Phase 3: per-call tenant_id cache so end_call() can scope the
+        # PostCallSummary write to the correct tenant without changing the
+        # existing end_call() signature (call_contexts stores CustomerContext,
+        # not the tenant_id).
+        self._call_tenant_ids: dict[str, str] = {}
+
+        # One ConversationStateIntelligence tracker per active call — same
+        # instance passed on every turn so dialogue-state persists across turns.
+        # Typed Any here to avoid importing from src/engines/ (boundary Rule 1).
+        self._csi_trackers: dict[str, Any] = {}
+
     def start_call(
         self, tenant_id: TenantId, customer_id: str, call_id: str, campaign_id: str | None = None
     ) -> CustomerContext:
@@ -303,14 +452,84 @@ class ConversationEngine:
             raise RuntimeError("start_call() requires a context_assembler to be configured")
         context = self._context_assembler.assemble(tenant_id, CustomerId(customer_id), call_id)
         self._call_contexts[call_id] = context
+        self._call_tenant_ids[call_id] = str(tenant_id)
         if campaign_id is not None:
             self._call_campaign_ids[call_id] = campaign_id
+
+        # V2 Ch12: load relationship memory at call start and cache it so
+        # RelationshipContextBuilder can inject historical context into the
+        # LLM prompt on the very first turn without a second DB round-trip.
+        if self._relationship_memory_store is not None:
+            try:
+                rm = self._relationship_memory_store.get(customer_id)
+                self._relationship_memories[call_id] = rm
+            except Exception:
+                logger.warning("RelationshipMemoryStore.get() failed for customer %s", customer_id)
+
         return context
 
-    def end_call(self, call_id: str) -> None:
-        """Release the cached CustomerContext (and campaign linkage) for a finished call."""
+    def end_call(self, call_id: str, outcome: str = "completed", *, customer_id: str = "", sentiment: str = "neutral") -> None:
+        """Release the cached CustomerContext (and campaign linkage) for a finished call.
+
+        ``outcome`` is the SLO-level label: "completed" for a normally
+        terminated call, "system_error" for a call terminated by an AI
+        pipeline failure. The availability recording rule in
+        recording_rules.yml partitions on outcome!="system_error".
+
+        ``customer_id`` and ``sentiment``: when provided (and
+        ``relationship_memory_store`` is wired), a minimal CallSummary is
+        persisted so the next call can see this call's outcome and sentiment.
+        """
+        _call_count_total.labels(outcome=outcome).inc()
+
+        # V2 Ch12: persist a cross-call CallSummary before releasing any state.
+        if self._relationship_memory_store is not None and customer_id:
+            try:
+                from src.engines.memory.relationship.schema import CallSummary
+                summary = CallSummary(
+                    call_id=call_id,
+                    sentiment=sentiment,
+                    outcome=outcome,
+                )
+                self._relationship_memory_store.update(customer_id, summary)
+            except Exception:
+                logger.warning("RelationshipMemoryStore.update() failed for call %s", call_id)
+
+        # Phase 3: generate and persist post-call sales summary (best-effort).
+        _tenant_id = self._call_tenant_ids.get(call_id, "")
+        if self._call_summary_repository is not None and customer_id:
+            try:
+                from src.engines.sales.post_call_summary import generate_post_call_summary  # noqa: PLC0415
+                from src.engines.sales.schema import SalesState  # noqa: PLC0415
+                _wm_data: dict | None = None
+                if self._working_memory_store is not None:
+                    try:
+                        _wm = self._working_memory_store.get(call_id)
+                        _wm_data = _wm.sales_state
+                    except Exception:
+                        pass
+                if _wm_data:
+                    _ss = SalesState.from_dict(_wm_data)
+                    _call_summary = generate_post_call_summary(
+                        _ss,
+                        call_id=call_id,
+                        customer_id=customer_id,
+                        escalated=(outcome == "escalated"),
+                    )
+                    self._call_summary_repository.save(
+                        call_id=call_id,
+                        tenant_id=_tenant_id,
+                        customer_id=customer_id,
+                        summary=_call_summary,
+                    )
+            except Exception:
+                logger.warning("PostCallSummary.save() failed for call %s — continuing", call_id)
+
         self._call_contexts.pop(call_id, None)
         self._call_campaign_ids.pop(call_id, None)
+        self._csi_trackers.pop(call_id, None)
+        self._call_tenant_ids.pop(call_id, None)
+        self._relationship_memories.pop(call_id, None)
 
     def campaign_id_for_call(self, call_id: str) -> str | None:
         """The campaign that dispatched ``call_id``, if any (Sprint-023)."""
@@ -415,6 +634,7 @@ class ConversationEngine:
         intent_history: list[str] | None = None,
         identity_verified: bool = False,
         silence_duration_ms: int = 0,
+        cancel_event: "asyncio.Event | None" = None,
     ) -> list[AudioClause]:
         """Process one customer turn end-to-end.
 
@@ -441,7 +661,8 @@ class ConversationEngine:
 
         if self._tracer is None:
             return await self._handle_turn_impl(
-                turn, playback, context, intent_history, identity_verified, silence_duration_ms
+                turn, playback, context, intent_history, identity_verified, silence_duration_ms,
+                cancel_event=cancel_event,
             )
 
         with self._tracer.start_span(
@@ -450,7 +671,8 @@ class ConversationEngine:
         ) as span:
             trace_id = format(span.get_span_context().trace_id, "032x")
             clauses = await self._handle_turn_impl(
-                turn, playback, context, intent_history, identity_verified, silence_duration_ms, trace_id=trace_id
+                turn, playback, context, intent_history, identity_verified, silence_duration_ms,
+                trace_id=trace_id, cancel_event=cancel_event,
             )
         return clauses
 
@@ -463,8 +685,33 @@ class ConversationEngine:
         identity_verified: bool,
         silence_duration_ms: int,
         trace_id: str = "",
+        cancel_event: "asyncio.Event | None" = None,
     ) -> list[AudioClause]:
         """The actual per-turn pipeline — see :meth:`handle_turn` for the public contract."""
+        _t0 = time.monotonic()
+        try:
+            result = await self.__handle_turn_body(
+                turn, playback, context, intent_history, identity_verified, silence_duration_ms, trace_id,
+                cancel_event=cancel_event,
+            )
+        except Exception as exc:
+            _metrics.record_error(type(exc).__name__)
+            _metrics.record_request("error", (time.monotonic() - _t0) * 1000)
+            raise
+        _metrics.record_request("success", (time.monotonic() - _t0) * 1000)
+        return result
+
+    async def __handle_turn_body(
+        self,
+        turn: TurnInput,
+        playback: PlaybackScheduler,
+        context: CustomerContext | None,
+        intent_history: list[str] | None,
+        identity_verified: bool,
+        silence_duration_ms: int,
+        trace_id: str = "",
+        cancel_event: "asyncio.Event | None" = None,
+    ) -> list[AudioClause]:
         # Step 0 — Sprint-020 (V4 Ch13 §13.7): detective prompt-injection screen.
         # Structural containment (Law of Authority) is the real defense; this
         # only logs a SECURITY signal for monitoring/incident-response (Ch16/17).
@@ -486,10 +733,27 @@ class ConversationEngine:
         # CampaignPromptNotPinnedError, failing this turn closed, if unpinned.
         self._require_pinned_prompt(TenantId(turn.tenant_id), self._call_campaign_ids.get(turn.call_id))
 
+        # Session and CSI tracker must be initialized before the CIL call so
+        # concession_round and the per-call ConversationStateIntelligence
+        # instance are available as inputs to ResponsePlanningEngine.assemble().
+        session = self._sessions.setdefault(turn.call_id, ConversationSessionState(CallId(turn.call_id)))
+        csi_tracker = self._csi_trackers.setdefault(turn.call_id, _make_csi_tracker())
+
         # Step 1 — Knowledge retrieval.
         snippets: list[Snippet] = await self._knowledge.retrieve(turn.transcript)
 
         # Step 2 — CIL pipeline (all engines via injected protocol).
+        # conversation_state_tracker: same instance across every turn so
+        # AdaptiveConversationEngine's dialogue-state machine persists across turns.
+        # concession_round: how many COUNTER moves have already been made this call.
+        _prev_sales_state: dict | None = None
+        if self._working_memory_store is not None:
+            try:
+                _wm_for_sales = self._working_memory_store.get(turn.call_id)
+                _prev_sales_state = _wm_for_sales.sales_state
+            except Exception:
+                pass  # best-effort; missing sales_state treated as first turn
+
         response_plan, decision_envelope = self._cil.assemble(
             turn=turn,
             context=context,
@@ -497,10 +761,63 @@ class ConversationEngine:
             intent_history=intent_history,
             identity_verified=identity_verified,
             silence_duration_ms=silence_duration_ms,
+            conversation_state_tracker=csi_tracker,
+            concession_round=session.concession_round,
+            previous_sales_state=_prev_sales_state,
         )
+
+        # Step 2b — Phase 3: validate LeadStage FSM transition (best-effort).
+        # An invalid transition is logged as ERROR but never aborts turn processing
+        # — the call must continue even if the CIL produced a forbidden stage jump.
+        _new_sales_state = response_plan.sales_state
+        if _new_sales_state and _prev_sales_state:
+            try:
+                from src.engines.sales.pipeline_transitions import InvalidTransitionError, PipelineTransitionEngine  # noqa: PLC0415
+                from src.engines.sales.schema import LeadStage  # noqa: PLC0415
+                _prev_stage_val = _prev_sales_state.get("lead_stage")
+                _new_stage_val = _new_sales_state.get("lead_stage")
+                if _prev_stage_val and _new_stage_val and _prev_stage_val != _new_stage_val:
+                    try:
+                        PipelineTransitionEngine.evaluate(
+                            LeadStage(_prev_stage_val),
+                            LeadStage(_new_stage_val),
+                            reason=f"CIL turn {turn.turn_id}",
+                            trigger="SalesStateUpdater",
+                        )
+                    except InvalidTransitionError as _ite:
+                        logger.error(
+                            "ConversationEngine: invalid pipeline transition for call %s: %s",
+                            turn.call_id, _ite,
+                        )
+            except Exception:
+                logger.warning(
+                    "PipelineTransitionEngine check failed for call %s — continuing", turn.call_id
+                )
+
+        # Detect a COUNTER negotiation move (agent proposed a counter-offer but
+        # did not finalize commitment) and advance the per-call concession counter
+        # so the next turn's NegotiationEngine knows how much runway is left.
+        _neg = response_plan.negotiation_envelope
+        if _neg is not None and not _neg.is_finalized_commitment and _neg.proposed_amount_minor is not None:
+            session.increment_concession_round()
 
         # Step 3 — Build deterministic prompt.
         prompt_text, _prompt_hash = self._prompt_builder.build(response_plan, context)
+
+        # Phase 3: append historical relationship context block to prompt (best-effort).
+        # Labeled "HISTORICAL" by RelationshipContextBuilder so the LLM cannot
+        # confuse past-call facts with current-turn state (architecture invariant).
+        _rm = self._relationship_memories.get(turn.call_id)
+        if _rm is not None:
+            try:
+                from src.engines.sales.relationship_context import RelationshipContextBuilder  # noqa: PLC0415
+                _ctx_block = RelationshipContextBuilder.build_block(_rm)
+                if _ctx_block:
+                    prompt_text = f"{prompt_text}\n\n{_ctx_block}"
+            except Exception:
+                logger.warning(
+                    "RelationshipContextBuilder failed for call %s — continuing", turn.call_id
+                )
 
         # Step 4 — RI-4: commit DecisionEnvelope before any external act.
         # Sprint-015: publishing is the authoritative effect this turn
@@ -529,12 +846,42 @@ class ConversationEngine:
             action_name="tts_synthesis",
         )
 
+        # Step 4.5 — Path-A Phase 5 (V5 Ch4.3): persist a finalized negotiation
+        # commitment (RI-4: durably recorded before the agent ever speaks a
+        # confirmation of it, i.e. before Step 5's LLM/TTS).
+        await self._persist_finalized_commitment(turn, context, response_plan)
+
+        # Step 4b — Phase 3: dispatch production actions after RI-4 commit.
+        # SalesProductionActionDispatcher is best-effort — failures logged,
+        # never abort turn processing. HUMAN_HANDOFF is signalled to Step 5b.
+        _handoff_requested = False
+        if self._sales_action_dispatcher is not None and response_plan.sales_state:
+            try:
+                from src.engines.sales.schema import SalesAction  # noqa: PLC0415
+                _dispatched = self._sales_action_dispatcher.dispatch(
+                    response_plan.sales_state,
+                    context,
+                    turn.tenant_id,
+                    turn.call_id,
+                )
+                if _dispatched is not None:
+                    try:
+                        _da = SalesAction(_dispatched) if isinstance(_dispatched, str) else _dispatched
+                        _handoff_requested = (_da == SalesAction.HUMAN_HANDOFF)
+                    except (ValueError, TypeError):
+                        pass
+            except Exception:
+                logger.exception(
+                    "SalesProductionActionDispatcher.dispatch() failed for call %s — continuing",
+                    turn.call_id,
+                )
+
         # Sprint-015: track this call's Recoverable session state and take a
         # periodic snapshot (every `snapshot_every_n_turns` turns — V3 Ch6).
         # `entry_id` is the real EventBus stream offset (not decision_envelope's
         # own UUID) — EventTailReplay resumes from it via a literal Redis
         # XRANGE, which rejects anything that is not a genuine stream ID.
-        session = self._sessions.setdefault(turn.call_id, ConversationSessionState(CallId(turn.call_id)))
+        # (session already initialized above before the CIL call)
         session.record_turn(
             intent_label=intent_history[-1] if intent_history else None,
             event_offset=entry_id,
@@ -542,25 +889,101 @@ class ConversationEngine:
         if self._snapshot_store is not None and session.turn_count % self._snapshot_every_n_turns == 0:
             self._snapshot_store.take_snapshot(session, TenantId(turn.tenant_id), CallId(turn.call_id))
 
-        # Step 5 — Stream LLM → validate → TTS → playback.
+        # V2 Ch11 Working Memory: update the per-call Redis state after each
+        # turn so downstream engines and the next turn's CIL have the latest
+        # extracted intents, entities, and strategy. Best-effort — a Redis
+        # failure must never abort the call's reply generation.
+        if self._working_memory_store is not None:
+            try:
+                from src.engines.memory.working.schema import WorkingMemoryDelta
+                _existing_wm = self._working_memory_store.get(turn.call_id)
+                _primary_intent = response_plan.intents[0].label if response_plan.intents else None
+                _strategy_label = response_plan.strategy.action.value if response_plan.strategy else None
+                _neg_state = "negotiating" if response_plan.negotiation_envelope else "initial"
+                _entities_str = {k: str(v) for k, v in response_plan.entities.items()}
+                _wm_delta = WorkingMemoryDelta(
+                    turn_count=session.turn_count,
+                    last_intent=_primary_intent,
+                    extracted_entities=_entities_str if _entities_str else None,
+                    negotiation_state=_neg_state,
+                    last_strategy=_strategy_label,
+                    customer_utterances=(*_existing_wm.customer_utterances, turn.transcript),
+                    sales_state=response_plan.sales_state,
+                )
+                self._working_memory_store.update(turn.call_id, _wm_delta)
+            except Exception:
+                logger.warning("WorkingMemoryStore update failed for call %s — continuing", turn.call_id)
+
+        # Step 5 — Reply generation: scripted golden path (Phase 6g) when
+        # wired, with a real per-turn LLM fallback when the golden path can't
+        # classify the customer's utterance for _ELSE_FALLBACK_THRESHOLD
+        # consecutive turns (DialogueTurnOutput.needs_llm_fallback — the live
+        # trigger condition for the approved plan's "LLM as fallback" intent,
+        # not merely "LLM only runs when dialogue_response is unwired at
+        # construction time"). Falls back to the plain LLM streaming path
+        # (Sprint-009-018) unchanged when no dialogue_response is wired at all.
         all_clauses: list[AudioClause] = []
         full_output_text = ""
+        customer_name = context.primary_party.name if context is not None else ""
 
-        token_stream = await self._llm.generate_stream(
-            prompt=prompt_text,
-            response_plan=response_plan,
-            max_tokens=response_plan.delivery.max_response_tokens,
-        )
+        if self._dialogue_response is not None:
+            dialogue_output = self._dialogue_response.generate_reply(
+                session, response_plan, context, turn.transcript, self._lender_name
+            )
+            if dialogue_output.needs_llm_fallback:
+                logger.info(
+                    "ConversationEngine: scripted golden path exhausted for call %s turn %s — "
+                    "falling back to the LLM for this turn",
+                    turn.call_id,
+                    turn.turn_id,
+                )
+                # Play first clause as soon as threshold_ms of audio is buffered,
+                # stream remaining clauses concurrently (buffered_streaming mode).
+                clauses = await self._run_llm_streaming_path(
+                    prompt_text, response_plan, playback, customer_name,
+                    tts_mode="buffered_streaming",
+                    cancel_event=cancel_event,
+                )
+                all_clauses.extend(clauses)
+                full_output_text = " ".join(c.text for c in all_clauses)
+            else:
+                full_output_text = dialogue_output.reply_text
+                # buffered_streaming: ClauseSplitter segments the reply; first
+                # clause releases after threshold_ms is buffered, rest stream behind.
+                all_clauses.extend(await self.speak_scripted_text(
+                    full_output_text, playback, response_plan,
+                    tts_mode="buffered_streaming",
+                ))
+        else:
+            # buffered_streaming: legacy no-dialogue-response path.
+            clauses = await self._run_llm_streaming_path(
+                prompt_text, response_plan, playback, customer_name,
+                tts_mode="buffered_streaming",
+                cancel_event=cancel_event,
+            )
+            all_clauses.extend(clauses)
+            full_output_text = " ".join(c.text for c in all_clauses)
 
-        clauses = await self._pipeline.run(
-            token_stream=token_stream,
-            response_plan=response_plan,
-            tts_service=self._tts,
-            validator=self._validator,
-            playback=playback,
-        )
-        all_clauses.extend(clauses)
-        full_output_text = " ".join(c.text for c in all_clauses)
+        # Step 5b — Phase 3: trigger human handoff AFTER the reply is spoken.
+        # Doing this after Step 5 (not before) ensures Kavya finishes her
+        # current turn before handing off — no mid-sentence cut-off.
+        if _handoff_requested and self._contact_center_service is not None:
+            try:
+                self.escalate_call(
+                    TenantId(turn.tenant_id),
+                    turn.call_id,
+                    reason="AI requested HUMAN_HANDOFF",
+                    ai_summary=full_output_text[:500],
+                )
+                logger.info(
+                    "ConversationEngine: HUMAN_HANDOFF escalation triggered for call %s",
+                    turn.call_id,
+                )
+            except Exception:
+                logger.exception(
+                    "ConversationEngine: escalate_call() failed for call %s — continuing without transfer",
+                    turn.call_id,
+                )
 
         # Step 6 — Async quality scoring (fire-and-forget, non-blocking).
         # Sprint-016: dispatched through the bounded WorkerPool at LOW
@@ -592,6 +1015,215 @@ class ConversationEngine:
                 plan_id=response_plan.plan_id,
             )
         return all_clauses
+
+    def build_greeting(self, context: CustomerContext | None) -> str | None:
+        """The call-open identity-verification greeting (Path-A Phase 6g),
+        or None when no dialogue_response is wired (pre-Phase-6 behavior —
+        callers must fall back to their own call-open handling).
+
+        Callers (the WS entrypoint) speak this once via
+        :meth:`speak_scripted_text` before the customer's first turn, so
+        DialogueResponseEngine's AWAIT_IDENTITY state has already asked its
+        question before handle_turn() is ever called for this call.
+        """
+        if self._dialogue_response is None:
+            return None
+        return self._dialogue_response.build_greeting(context, self._lender_name)
+
+    async def speak_scripted_text(
+        self,
+        text: str,
+        playback: PlaybackScheduler,
+        response_plan: ResponsePlan | None = None,
+        tts_mode: str | None = None,
+    ) -> list[AudioClause]:
+        """Synthesize a fixed string (not an LLM stream) through the same
+        governance/validation/TTS/playback pipeline every LLM turn uses.
+
+        Used by the scripted-response golden path (Phase 6g) for per-turn
+        replies, and by callers outside handle_turn() (the WS entrypoint's
+        call-start/call-end handling) for the fixed greeting and hangup
+        lines (kavya_persona.build_greeting_text()/HANGUP_TEXT) — neither
+        of which has a real per-turn ResponsePlan yet, hence ``response_plan``
+        is optional and a minimal default is used when absent. Routing a
+        fixed string through a single-chunk TokenChunk stream reuses
+        TrueStreamingPipeline exactly as-is: OutputValidator and
+        AIGovernanceService still run, so no fixed string bypasses the
+        governance gate that every LLM turn is subject to.
+        """
+        plan = response_plan if response_plan is not None else _default_response_plan()
+
+        async def _single_chunk() -> AsyncIterator[TokenChunk]:
+            yield TokenChunk(text=text, token_id=0, finish_reason="stop")
+
+        # ``tts_mode`` overrides VOICEOS_TTS_MODE for THIS one call only,
+        # constructing a per-turn StartupBufferGate at the requested mode.
+        # The greeting caller passes "blocking" so all greeting clauses are
+        # held until is_final=True, then released FIFO — this eliminates the
+        # 337–353ms inter-clause gaps that came from serial per-clause TTS
+        # HTTP POSTs and were audible as mid-word breaks in Gate 3C.
+        gate: StartupBufferGate | None = None
+        if tts_mode is not None:
+            try:
+                mode_enum = TTSMode(tts_mode)
+            except ValueError:
+                logger.warning(
+                    "speak_scripted_text: unknown tts_mode=%r — falling back to env default",
+                    tts_mode,
+                )
+                mode_enum = None
+            if mode_enum is not None and mode_enum != TTSMode.STREAMING:
+                gate = StartupBufferGate(
+                    playback=playback,
+                    mode=mode_enum,
+                    threshold_ms=0,
+                    generation=playback.generation,
+                )
+
+        return await self._pipeline.run(
+            token_stream=_single_chunk(),
+            response_plan=plan,
+            tts_service=self._tts,
+            validator=self._validator,
+            playback=playback,
+            gate=gate,
+        )
+
+    async def _run_llm_streaming_path(
+        self,
+        prompt_text: str,
+        response_plan: ResponsePlan,
+        playback: PlaybackScheduler,
+        customer_name: str = "",
+        tts_mode: str | None = None,
+        cancel_event: "asyncio.Event | None" = None,
+    ) -> list[AudioClause]:
+        """The original LLM token-streaming path (Sprint-009-018), extracted
+        so it can be invoked either as the whole-call fallback (no
+        dialogue_response wired at all) or as a genuine per-turn fallback
+        when the scripted golden path can't classify the customer's
+        utterance (DialogueTurnOutput.needs_llm_fallback, Phase 6g's
+        Call-002-readiness follow-up). Same governance/validation gates as
+        every other path through TrueStreamingPipeline — including, as of
+        the same Call-002 readiness pass, the persona/register gate
+        (customer_name plumbed through so LLM-generated replies get the
+        same name-scrub/register enforcement the scripted path already had
+        via DialogueResponseEngine's own guard pass).
+
+        Phase I Gate 1 — ``tts_mode`` overrides ``VOICEOS_TTS_MODE`` for
+        this one turn: when set to ``"full_response"`` every clause the
+        splitter emits is held in a per-turn ``StartupBufferGate`` until
+        ``is_final=True`` or ``flush_final()``, and nothing reaches the
+        scheduler mid-response. Leaving it ``None`` restores the pre-Phase-I
+        env-driven default (streaming pass-through)."""
+        token_stream = await self._llm.generate_stream(
+            prompt=prompt_text,
+            response_plan=response_plan,
+            max_tokens=response_plan.delivery.max_response_tokens,
+            cancel_event=cancel_event,
+        )
+        gate: StartupBufferGate | None = None
+        if tts_mode is not None:
+            try:
+                mode_enum = TTSMode(tts_mode)
+            except ValueError:
+                logger.warning(
+                    "_run_llm_streaming_path: unknown tts_mode=%r — "
+                    "falling back to env default", tts_mode,
+                )
+                mode_enum = None
+            if mode_enum is not None and mode_enum != TTSMode.STREAMING:
+                gate = StartupBufferGate(
+                    playback=playback,
+                    mode=mode_enum,
+                    threshold_ms=0,
+                    generation=playback.generation,
+                )
+        return await self._pipeline.run(
+            token_stream=token_stream,
+            response_plan=response_plan,
+            tts_service=self._tts,
+            validator=self._validator,
+            playback=playback,
+            customer_name=customer_name,
+            gate=gate,
+        )
+
+    async def _persist_finalized_commitment(
+        self,
+        turn: TurnInput,
+        context: CustomerContext | None,
+        response_plan: ResponsePlan,
+    ) -> None:
+        """Persist a finalized negotiation commitment to Collections (V5 Ch4.3).
+
+        No-op unless every one of the following holds: a promise_to_pay_service
+        was wired, the ResponsePlan carries a negotiation_envelope, that
+        envelope's is_finalized_commitment is True (engine-level
+        NegotiationMove.ACCEPT/PROPOSE_PTP — see response_planning/engine.py),
+        and enough authoritative data is available (CustomerContext with a
+        primary_loan, a proposed amount, a proposed date) to construct a valid
+        PTP. Missing data logs a warning and skips persistence rather than
+        raising — a turn should not crash outright over an unpersisted
+        commitment; the gap is surfaced in logs for operator follow-up.
+
+        A PTPValidationError/PolicyDeniedError from the service itself
+        (invalid amount/date, or a live policy denial) is also caught and
+        logged rather than propagated — deciding what the agent should say
+        differently when a commitment can't be recorded is a persona/dialogue
+        concern (Phase 6), not this transport-and-plumbing layer's job.
+        PromiseToPayService.create() is idempotent by construction
+        (IdempotencyGuard + a DB-level unique constraint on the same key), so
+        a retried turn never double-creates a PTP.
+        """
+        if self._promise_to_pay_service is None:
+            return
+        envelope = response_plan.negotiation_envelope
+        if envelope is None or not envelope.is_finalized_commitment:
+            return
+        if context is None or context.primary_loan is None:
+            logger.warning(
+                "Finalized commitment on call %s cannot be persisted — no CustomerContext/primary_loan available",
+                turn.call_id,
+            )
+            return
+        if envelope.proposed_amount_minor is None or envelope.proposed_date is None:
+            logger.warning(
+                "Finalized commitment on call %s cannot be persisted — missing proposed_amount_minor/proposed_date",
+                turn.call_id,
+            )
+            return
+
+        promise_date = datetime.combine(envelope.proposed_date, datetime.min.time())
+        currency = context.primary_loan.outstanding_balance.currency.value
+
+        try:
+            ptp = await self._promise_to_pay_service.create(
+                tenant_id=TenantId(turn.tenant_id),
+                call_id=CallId(turn.call_id),
+                customer_id=context.customer_id,
+                loan_account_id=str(context.primary_loan.account_id),
+                promised_amount_minor=envelope.proposed_amount_minor,
+                currency=currency,
+                promise_date=promise_date,
+            )
+        except (PTPValidationError, PolicyDeniedError) as exc:
+            logger.warning(
+                "PromiseToPayService rejected finalized commitment on call %s: %s",
+                turn.call_id,
+                exc,
+            )
+            return
+
+        _negotiation_outcome_total.labels(outcome="ptp_created").inc()
+        logger.info(
+            "Persisted PTP %s for call %s (%s minor %s by %s)",
+            ptp.ptp_id,
+            turn.call_id,
+            envelope.proposed_amount_minor,
+            currency,
+            envelope.proposed_date,
+        )
 
     def check_call_admission(
         self,

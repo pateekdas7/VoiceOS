@@ -15,6 +15,7 @@ Architecture: V1 Ch13 (LLM Runtime); V7 Ch6 (GPU fleet).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections.abc import AsyncIterator, Mapping
@@ -73,15 +74,23 @@ class vLLMAdapter:  # noqa: N801
         prompt: str,
         response_plan: ResponsePlan,
         max_tokens: int,
+        cancel_event: asyncio.Event | None = None,
     ) -> AsyncIterator[TokenChunk]:
-        """Stream tokens from vLLM, enforcing RI-7 and GPU Scheduler."""
-        return self._generate_gen(prompt, response_plan, max_tokens)
+        """Stream tokens from vLLM, enforcing RI-7 and GPU Scheduler.
+
+        When cancel_event is set mid-stream, the SSE loop exits at the next
+        yield boundary and the HTTP response is closed cleanly — vLLM's
+        server-side aborts the generation on client disconnect, so no
+        server-side cancel API is required.
+        """
+        return self._generate_gen(prompt, response_plan, max_tokens, cancel_event)
 
     async def _generate_gen(
         self,
         prompt: str,
         response_plan: ResponsePlan,
         max_tokens: int,
+        cancel_event: asyncio.Event | None = None,
     ) -> AsyncIterator[TokenChunk]:
         from src.services.llm_runtime.metrics import (
             llm_completion_latency_ms,
@@ -111,7 +120,7 @@ class vLLMAdapter:  # noqa: N801
             raise RuntimeError(f"GPU Scheduler rejected VRAM for {self._model_name} ({self._vram_mb} MB)")
 
         try:
-            async for chunk in self._stream_vllm(prompt, max_tokens, llm_ttft_ms, llm_completion_latency_ms):
+            async for chunk in self._stream_vllm(prompt, max_tokens, llm_ttft_ms, llm_completion_latency_ms, cancel_event):
                 yield chunk
             llm_requests_total.labels(status="success").inc()
         except Exception:
@@ -126,6 +135,7 @@ class vLLMAdapter:  # noqa: N801
         max_tokens: int,
         ttft_histogram: object,
         completion_histogram: object,
+        cancel_event: asyncio.Event | None = None,
     ) -> AsyncIterator[TokenChunk]:
         import httpx
 
@@ -154,6 +164,11 @@ class vLLMAdapter:  # noqa: N801
                 resp = await self._open_stream(client, url, payload)
             try:
                 async for line in resp.aiter_lines():
+                    # Cancel-token check BEFORE processing each SSE line —
+                    # if the orchestrator flipped the event while we were
+                    # blocked awaiting the next chunk, bail out immediately.
+                    if cancel_event is not None and cancel_event.is_set():
+                        break
                     if not line.startswith("data: "):
                         continue
                     data = line[6:].strip()
@@ -181,7 +196,17 @@ class vLLMAdapter:  # noqa: N801
                             token_id=0,
                             finish_reason=finish_reason,
                         )
+                        # Cancel-token check AFTER yielding — if the
+                        # consumer set the event synchronously during the
+                        # yield (e.g. downstream noticed the prefix
+                        # extended materially), stop before draining the
+                        # next SSE line.
+                        if cancel_event is not None and cancel_event.is_set():
+                            break
             finally:
+                # aclose() ends the HTTP stream cleanly; vLLM's server
+                # aborts the in-flight generation on client disconnect, so
+                # no explicit server-side cancel RPC is required.
                 await resp.aclose()
 
         elapsed = (time.monotonic() - start) * 1000

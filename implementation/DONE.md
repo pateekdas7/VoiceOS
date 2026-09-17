@@ -1,11 +1,213 @@
 # VoiceOS v2 — Completed Sprints
 
-**Last Updated:** 2026-07-08  
-**Completed Sprints:** 27 / 34 (plus TT-002 infrastructure hardening task, resolved 2026-07-04; plus TT-009 reproducibility audit, resolved 2026-07-06) — **Milestone M-6 (SaaS Platform Complete) reached; Epic E6 (SaaS Platform) closed; Epic E7 (Production Alpha) in progress with Sprint-027 complete**
+**Last Updated:** 2026-07-25  
+**Completed Sprints:** 27 / 34 complete (Sprint-028 PARTIAL — see below); Sprint-029 Phase 1 complete, Phase 2 Call-001 PASSED — **Milestone M-6 (SaaS Platform Complete) reached; Epic E6 (SaaS Platform) closed; Epic E7 (Production Alpha) in progress; M-7 NOT yet achieved. Path-A Runtime Consolidation Phases 1-8 complete 2026-07-25 (pre-Call-002 gate, real GPU/Postgres dry-run PASSED, `conv_server.py` retired) — Call-002 formally proposed, pending authorization — see entry below.**
 
 ---
 
 ## Completed Sprint Log
+
+## Path-A Runtime Consolidation — Phases 1-8 (pre-Call-002 gate)
+
+**Completed:** 2026-07-25 (Phases 1-8, all complete)
+**Epic:** E8 — Founder Validation (Sprint-029), pre-Call-002 gate
+**Trigger:** explicit user directive to verify the runtime reflects the intended production architecture
+before preparing Call-002 — not a numbered sprint, but full-weight implementation work gated the same way.
+
+### What Was Found
+
+A full architecture audit (inventory, implementation status, live-execution-flow participation, the
+call-to-CRM connection map, and a search for missing integrations/duplicate logic/dead code) found **two
+disconnected implementations**: the designed architecture (`src/services/conversation_engine` +
+`src/engines/*`) — fully built and unit-tested but unreachable by any live call — and
+`evaluation/founder-validation/conv_server.py` — a standalone script with its own duplicated
+intent/negotiation/safety/dialogue logic that is what actually took the founder-approved Call-001,
+including a deterministic template/FSM golden path with no equivalent anywhere in `src/`.
+
+### What Was Built
+
+- **Phase 1:** 5 parameter-threading fixes in `ResponsePlanningEngine` making `NegotiationEngine`'s full
+  move set (ACCEPT/COUNTER/DECLINE/PROPOSE_PTP) reachable, not just OFFER. 13 tests.
+- **Phase 2:** `deployment/cpu/app.py` composition root — every real dependency wired exactly once.
+- **Phase 3:** `WhisperHTTPAdapter` (STT), live-validated against the real GPU node.
+- **Phase 4:** `src/services/media_gateway/twilio_ws_entrypoint.py` — the Twilio Media Streams WebSocket
+  transport layer that never existed in this repo. Found and fixed a real protocol bug:
+  `TwilioWebSocketAdapter.send_frame()` omitted the required `streamSid` field.
+- **Phase 5:** `PromiseToPayService` persistence wired into `ConversationEngine`, synchronous and
+  idempotent, before any TTS confirmation (RI-4). Verified against real Postgres.
+- **Phase 6a-6g:** ported/redesigned `conv_server.py`'s proven persona/FSM/guard logic into `src/` as
+  first-class Path A code, consuming real engine outputs instead of a second parallel parser:
+  `EntityExtractor` date enrichment (6a), `ConversationSessionState` FSM fields (6b), `RegisterGuard`
+  (6c), `EmpathyDirectiveComposer` (6d), the Kavya persona module (6e), the new `DialogueResponseEngine`
+  scripted-reply FSM reading real `IntentEngine`/`EntityExtractor` output (6f), and wiring all of it —
+  plus the call-open greeting — into `ConversationEngine` as the PRIMARY reply path and into the
+  composition root (6g).
+
+### Test Results
+
+- 113 new tests across Phase 6a-6g (23 register_guard, 24 empathy_directive, 10 kavya_persona, 22
+  dialogue_response, 4 session_state, 6 conversation_engine wiring, 12 empathy/entity-extraction/greeting
+  additions, 12 twilio_ws_entrypoint greeting tests — see CHANGELOG.md for the exact per-phase counts)
+- Full regression after Phase 6g: 2194 passed / 73 skipped / 0 failed (unit + e2e + integration)
+- `check_boundaries.py`: 0 violations, every sub-phase
+- Composition-root `--smoke-test`: PASS against real Postgres (peer auth) + real password-authenticated
+  Redis + GPU_NODE_HOST wired
+
+### Phase 7 — COMPLETE
+
+`scripts/path_a_phase7_dry_run.py` ran a real greeting + 5-turn conversation end to end through real GPU
+TTS, real AIGovernanceService/OutputValidator gates, and real Postgres — zero exceptions, 67.6s of real
+synthesized audio. Getting there required diagnosing and fixing two real, independent defects:
+
+1. **Path MTU black-hole on the CPU→GPU network path.** TCP connected fine and returned HTTP 200, but
+   sustained streamed responses (TTS synthesis, a real LLM completion) never delivered any body bytes even
+   after a 5-minute timeout, while same-host and small/instant cross-host responses worked. Root-caused via
+   `tcpdump` and direct comparison, not guessed at. This is the first code path in this project's history
+   to ever exercise sustained CPU→GPU streaming inference traffic — verified in `conv_server.py`'s own code
+   that Call-001 ran entirely on the GPU node itself (`LLM_URL` defaults to `localhost:8000`; `uvicorn.run
+   (host="0.0.0.0", port=8400)`) using Twilio-native `<Gather>`/`<Say>` for STT/TTS, never touching the CPU
+   node or our Whisper/Veena services at all — so this black-hole could not have manifested before now.
+   Fixed via client-side TCP MSS clamping on the CPU node, persisted via a self-contained systemd oneshot
+   unit and verified across a real CPU node reboot (TT-028, resolved same day).
+2. **A real pre-existing RI-3 crash risk in `CallOrchestrator`.** `PlaybackScheduler`'s queue was populated
+   by `TrueStreamingPipeline` every turn but never drained — any real call with >~43s of cumulative AI
+   speech would have crashed outright with `InvariantViolationError`. Pre-existing since Phase 4; never
+   caught because no prior test drove enough turns to reach the 512-clause bound. Fixed with a new
+   non-blocking `PlaybackScheduler.dequeue_nowait()` + draining it in `_send_clauses()`. 4 new regression
+   tests (20 turns × 30 clauses, well past the bound).
+
+### Phase 8 — COMPLETE
+
+Before touching anything: a dedicated read-only audit confirmed no live traffic could reach
+`conv_server.py` — no systemd unit, Docker/Compose service, or CI/cron job ever started it; the GPU node
+that hosted Call-001's actual `conv_server.py` process was fully rebuilt from scratch since, without
+conv_server ever being part of the reproducible deployment; its Call-001 Twilio webhook was an ephemeral
+`trycloudflare.com` tunnel URL, not a persisted config; and no test in `tests/` imports it. The only
+filesystem dependency is its sibling `empathy_directive.py` (imported by `conv_server.py` alone) — the
+dependency arrow only ever points from `conv_server.py` into `src/`, never the reverse, so retiring it
+could not break anything under `src/`.
+
+Both files moved to `evaluation/founder-validation/archive/` via `git mv` (history preserved), each with a
+prominent "ARCHIVED — RETIRED FROM PRODUCTION, DO NOT DEPLOY" header explaining what superseded them
+module-by-module. Full regression after the move: 2197 passed / 73 skipped / 0 failed (unchanged),
+`check_boundaries.py` clean — confirming the audit's "nothing depends on the old path" finding.
+
+**`ConversationEngine` is now the sole production runtime.** Path-A Runtime Consolidation Phases 1-8 are
+complete. Call-002 is formally proposed to the user in this session, pending explicit authorization.
+
+### Definition of Done
+
+- [x] Phases 1-8 acceptance criteria met (real infra validation throughout)
+- [x] All new tests passing; full regression green (2197 passed / 73 skipped / 0 failed, unchanged after
+  the Phase 8 file move)
+- [x] CHANGELOG.md updated
+- [x] CURRENT_SPRINT.md updated
+- [x] PROJECT_STATUS.md updated
+- [x] Phase 7 (full pipeline dry-run) — PASSED against real GPU/Postgres infra
+- [x] Phase 8 (retire `conv_server.py`) — COMPLETE; audited (no live traffic reachable), archived to
+  `evaluation/founder-validation/archive/` with its sibling `empathy_directive.py`
+- [x] Call-002 — formally proposed to the user; pending authorization
+- [x] TT-028 (unpersisted MSS clamp) — fully resolved via a systemd unit, verified across a real reboot
+- [x] Real, live LLM-fallback trigger condition built and validated (`needs_llm_fallback`, real GPU/LLM
+  infra) — three real defects found and fixed in the process (RegisterGuard missing from the LLM path,
+  Devanagari-only masculine-grammar detection replaced with systematic suffix rules, both system-wide
+  safe-fallback constants themselves grammatically masculine); 19 new tests, full regression 2223
+  passed/73 skipped/0 failed
+- [ ] Live, free-form Call-002 with full production instrumentation + dual (engineering + independent
+  Qwen2.5-Omni evaluator) acceptance report — user-requested follow-up, scoping in progress; requires real
+  Twilio credentials, an actual live call, and the user's direct participation
+
+### Notes
+
+Not a numbered sprint — this work sits inside Sprint-029 Phase 2 as an explicit pre-Call-002 gate the
+user required after the architecture audit. `implementation/BACKLOG.md` should get a tracked ticket for
+the TCP MSS clamp fix's lack of persistence across a CPU node reboot (`iptables -t mangle -A OUTPUT -p tcp
+-d 62.169.159.20 --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1360` — re-apply, or install
+`iptables-persistent`, if GPU calls start hanging again with the "connects fine, response never arrives"
+signature after a restart).
+
+---
+
+## Sprint-028 — Performance Validation, Load Testing, Pen Test & Production Alpha Deploy
+
+**Executed:** 2026-07-11 (original); 2026-07-12 (Phase 2 updates)  
+**Epic:** E7 — Production Alpha  
+**Verdict:** PARTIAL — M-7 Production Alpha milestone not achieved. AC-8 (BenchmarkSuite) PASS, AC-5 (Compliance) PASS, AC-4 security CONDITIONAL PASS after fixes. AC-1 (latency gate) still FAIL on sustained load. See updated evaluation reports.
+
+### What Was Delivered
+
+**Phase 1 — Code:**
+- `src/libs/performance_engineering/` — `profiler.py` (`Profiler`/`ProfilerContext`/`LatencySummary`), `benchmarks.py` (`BenchmarkSuite`/`BenchmarkResult`/`BenchmarkConfig`), `regression_gate.py` (`RegressionGate`/`RegressionResult`), `optimization.py` (`OptimizationEngine`/`OptimizationOpportunity`). 38 tests, 100% module coverage.
+- `docs/security/threat-model.md` — 6 STRIDE categories (Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, Elevation of Privilege).
+- `docs/security/threat-registry.md` — 32 entries (≥22 required).
+- `.github/workflows/ci.yml` Stage 7 — performance regression gate.
+
+**Phase 2 — Evaluation Reports (all committed to `evaluation/`):**
+- `evaluation/latency-validation/latency-report.md` — 3 measurement runs; GATE FAIL (p95=1950ms intra-DC, limit 1500ms); thermal throttling root-caused; cold-GPU path (p95=933ms) passes but not sustained.
+- `evaluation/load-testing/load-test-report.md` — 10-user first_audio p95=16,524ms (TTS serialization); 500-user NOT EXECUTED (GPU fleet required).
+- `evaluation/chaos/chaos-engineering-report.md` — 2/5 PASS; 1/5 PARTIAL; 2/5 BLOCKED.
+- `evaluation/security/pen-test-report.md` — 0 critical; 3 HIGH (PEN-001/002/003: unauthenticated inference endpoints).
+- `evaluation/security/remediation-log.md` — 5 medium findings with remediation plans.
+- `evaluation/compliance/compliance-validation-report.md` — 15/15 pass; CONDITIONAL (audit infrastructure gaps).
+- `evaluation/production-alpha-report.md` — canary NOT EXECUTED (no Argo Rollouts); 7 blocking gaps for M-7 documented.
+
+### What Was Found and Fixed
+
+1. **TTS sliding window 28→21 tokens** — TTFA 856ms → 640ms (`deployment/gpu/services/tts/server.py:80`).
+2. **`torch.compile` removed** — prevented catastrophic 856ms → 15,544ms regression (CUDA graph shape mismatch per autoregressive step).
+3. **CUDA JIT warm-up in `_load_model()`** — prevents 1,610ms first-call spike; `_model_ready = True` set only after warm-up completes.
+4. **Orphaned synthesis thread drain** — prevents 3-5 concurrent orphaned threads from causing 15-17s TTFA under sequential test load.
+5. **STT CUDA OOM (two-part)** — vLLM `--gpu-memory-utilization 0.55 → 0.45` (frees 2,263 MiB; VRAM budget: 20,289 MiB used / 2,745 MiB free) + mandatory warmup transcription in `_load_model()` (323ms; forces ctranslate2 to pre-allocate its ~600 MiB CUDA workspace before first real call).
+6. **httpx keepalive stale socket** — 1-retry on `httpx.RemoteProtocolError` in `measure_llm_ttft()` (prevents "Server disconnected" errors when LLM keepalive connection expires during TTS drain).
+
+### GPU Deployment Documentation Updated
+
+- `deployment/GPU_NODE_STATE.md` — §18 Sprint-028 Changes (VRAM budget, STT warmup, thermal findings, validated performance table)
+- `deployment/gpu/restore.sh` — `GPU_MEMORY_FRACTION` default 0.55 → 0.45
+- `deployment/gpu/systemd/voiceos-llm.service` — `--gpu-memory-utilization 0.45`; VRAM budget comment
+- `deployment/gpu/systemd/voiceos-stt.service` — warmup requirement and ordering dependency documented
+- `deployment/gpu/services/stt/server.py` — mandatory warmup transcription in `_load_model()`
+
+### New Tracking Issues Filed
+
+- **TT-024**: STT CUDA kernel hang — `async def transcribe()` runs blocking ctranslate2 directly in event loop; when client is killed mid-kernel, CUDA context enters unrecoverable deadlock; `nvidia-smi --gpu-reset` not supported on L4; server reboot required. Action (Sprint-029): run in `ThreadPoolExecutor` + timeout + circuit breaker.
+
+### Phase 2 Updates (2026-07-12)
+
+**GPU Node Restoration:**
+- New server: 217.18.55.120 (fresh L4 24GB); all models downloaded; all 3 services healthy
+- `deployment/gpu/bootstrap.sh`: `ffmpeg` added (fixes torchcodec/libavutil.so.56 crash)
+
+**ADR-004 APPROVED — TTS Budget Revision:**
+- V1 Ch23 TTS budget: 250ms → 750ms (engineering lead sign-off 2026-07-12)
+- `src/libs/performance_engineering/benchmarks.py`: `tts_first_clause` 250 → 750ms
+- `deployment/gpu/model_manifest.yaml`: `first_clause_p95` 300 → 750ms
+- `BenchmarkSuite.run_benchmarks()`: PASS on TTS gate (AC-8 CLOSED)
+
+**Security Fixes Deployed:**
+- PEN-005/006/007 FIXED: `_ALLOWED_SPEAKERS = frozenset({"kavya"})` in TTS server; HTTP 422 on unknown speaker
+- PEN-009 FIXED: `_MAX_TEXT_CHARS = 2000` in TTS server; HTTP 422 on oversize text
+
+**Compliance Code Audit:**
+- AUD-002: Hash chain correctly computed in `AuditRepository.append()` (pre-migration NULLs only, not live writes)
+- AUD-003: Policy logging wired in `PolicyEngine._audit()` when `audit_repository` is passed; test-setup issue only
+- Both gaps RESOLVED — code is correct; compliance report updated
+
+**Latency Run D (contaminated, 2026-07-12, 86 valid/100):**
+- first_audio p95=1556ms — FAIL (LLM TTFT p50=549ms, spikes to 688ms push first_audio > 1500ms)
+- Run E (clean) in progress at time of commit
+
+### Remaining Blocking Gaps for M-7 (Production Alpha)
+
+1. GPU fleet (V7 Ch6) — single L4 thermal throttling + LLM TTFT variability prevent sustained p95 ≤ 1.5s
+2. ~~TTS architecture budget ADR~~ — ✅ RESOLVED: ADR-004 approved, V1 Ch23 revised to 750ms
+3. RI-8 unblocked (TT-015) — cross-provider NAT prevents GPU node K8s join
+4. API gateway with auth — PEN-001/002/003 HIGH findings; inference endpoints open (staging-only constraint)
+5. K8s canary mechanism — Argo Rollouts or Flagger required for traffic splitting
+6. ~~Audit durability~~ — ✅ RESOLVED: code audit confirms correct implementation in production code
+7. Load test at 500 concurrent — blocked by GPU fleet requirement
+
+---
 
 ## Sprint-027 — Monitoring, Alerting, Logging, Tracing & Disaster Recovery
 
