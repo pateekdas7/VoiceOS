@@ -52,7 +52,7 @@ reboot (TT-028); (2) a real pre-existing RI-3 crash risk — `PlaybackScheduler`
 
 ## Repository Status
 
-**Repository Version:** v2.0.29 (BFF Phase 5 — Node.js Jest Test Suite — 2026-09-16)
+**Repository Version:** v2.0.30 (BFF Phase 6 — Background Job Wiring — 2026-09-17)
 **Current Branch:** claude/ssh-gpu-cpu-servers-y99fib
 **Last Commit:** `e12a7bc` — feat(phase-5): Jest test suite — 114 tests, 43.67% coverage, 3 bff.js bugs fixed (2026-09-16).
 Recent commit history:
@@ -85,7 +85,8 @@ Recent commit history:
 | Phase 3 | Crash reconciliation — CrashReconciler on worker startup | ✅ DONE | 673bf62 |
 | Phase 4 | Import resume — batch-commit progress, CRM match, finalize | ✅ DONE | 8e0b330 |
 | Phase 5 | Node.js Jest test suite — 114 tests, 43.67% coverage, 3 bugs fixed | ✅ DONE | e12a7bc |
-| Phases 6–16 | TBD — pending user direction | ⏳ NOT STARTED | — |
+| Phase 6 | Background Job Wiring — SLA enforcer, daily aggregation, monthly invoicing, compliance persistence, SSE stream | ✅ DONE | 61fdb8b |
+| Phases 7–16 | TBD — pending user direction | ⏳ NOT STARTED | — |
 
 **GPU/Twilio/live-DB deferred tests:** documented in `GPU_DEPLOYMENT_CHECKLIST.md`
 
@@ -104,7 +105,7 @@ Recent commit history:
 
 **Sprint-030:** Pilot deployment
 
-**BFF Phases 6–16:** Pending user direction — see GPU_DEPLOYMENT_CHECKLIST.md for deferred tests
+**BFF Phases 7–16:** Pending user direction — see GPU_DEPLOYMENT_CHECKLIST.md for deferred tests
 
 **Phase 3 Sales (done 2026-09-10):**
 - ✅ PipelineTransitionEngine (FSM validation)

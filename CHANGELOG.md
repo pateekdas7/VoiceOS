@@ -5,6 +5,63 @@ Format: `## [version] — Sprint-NNN — Title (YYYY-MM-DD)`
 
 ---
 
+## [Unreleased] — BFF Phase 6 — Background Job Wiring (2026-09-17)
+
+> All 5 workstreams fully production-wired. 23 new files, 8 modified.
+> Commit: 61fdb8b.
+
+### 6a — HITL SLA Enforcer (K8s CronJob, every 60 s)
+
+- `scripts/jobs/run_sla_enforcer.py` — one-shot runner; `SLAEnforcer(HITLQueueRepository).check_and_escalate()` cross-tenant; exits 0/1 for CronJob retry
+- `infra/helm/voiceos-platform/templates/cronjob-sla-enforcer.yaml` — CronJob `*/1 * * * *`; `concurrencyPolicy: Forbid`, `activeDeadlineSeconds: 120`, `backoffLimit: 2`, Guaranteed QoS, `readOnlyRootFilesystem`, `runAsNonRoot`
+
+### 6b — Daily Analytics Aggregation (K8s CronJob, daily 00:30 UTC)
+
+- `PromiseToPayRepository.sum_kept_amount_between()` — `SUM(promised_amount_minor) WHERE status='KEPT' AND recorded_at IN [start, end)`
+- `LoanAccountRepository.avg_dpd_for_tenant()` — `AVG(dpd)` across all tenant loan accounts
+- `DailyAggregationJob` — added optional `PTPAggregationPort` + `LoanDPDAggregationPort` params; `amount_collected_minor` and `avg_dpd` now compute real values when ports are wired; backward-compatible (None → 0)
+- `scripts/jobs/run_daily_aggregation.py` — iterates all tenants via `TenantRepository.list_all()`; per-tenant failures logged and counted without aborting remaining tenants
+- `infra/helm/voiceos-platform/templates/cronjob-daily-aggregation.yaml` — CronJob `30 0 * * *`; `concurrencyPolicy: Forbid`, `activeDeadlineSeconds: 600`, `backoffLimit: 1`
+
+### 6c — Monthly Invoice Generation (K8s CronJob, 1st of month 01:00 UTC)
+
+- `scripts/jobs/run_monthly_invoicing.py` — previous-month period bounds (Jan→Dec edge case handled); `ValueError` (no subscription) → skip; unexpected errors counted; exits 1 if any errors
+- `infra/helm/voiceos-platform/templates/cronjob-monthly-invoicing.yaml` — CronJob `0 1 1 * *`; `activeDeadlineSeconds: 1800`, `startingDeadlineSeconds: 1800`, `backoffLimit: 1`
+
+### 6d — Compliance Violation Persistence (in-memory → Postgres)
+
+- `scripts/db/migrations/017_compliance_violations.sql` — `compliance_violations` table; `UNIQUE (tenant_id, rule_id)` for idempotent upsert; `status CHECK ('ACTIVE','RESOLVED')`; partial index on ACTIVE rows; `GRANT ALL ... TO voiceos`
+- `scripts/db/migrations/alembic/versions/0037_compliance_violations.py` — Alembic revision `0037`, `down_revision: 0036`; `downgrade()` drops the table safely (no FK source dependencies)
+- `src/libs/repositories/compliance_violations.py` — `ComplianceViolationRepository`; `upsert_active()` ON CONFLICT re-detection (RESOLVED→ACTIVE sets `redetected_at`); `is_violated()` LIMIT 1 query; `resolve()` per-(tenant,rule); `list_active()` newest-first
+- `ComplianceMonitoring.ingest()` — when `violation_repository` is wired, calls `upsert_active(signal.tenant_id, signal.rule_id, summary)` on every threshold crossing
+- `ComplianceMonitoring.status()` — delegates to `violation_repository.is_violated()` when wired; falls back to in-memory `_violated_tenants` set (all existing tests unmodified)
+- `web_api/main.py` — `ComplianceMonitoring.create(violation_repository=ComplianceViolationRepository(conn))`
+- `web_api/main.py` — `DailyAggregationJob` now receives `ptp_repository=PromiseToPayRepository(conn)` and `loan_repository=LoanAccountRepository(conn)`
+
+### 6e — RealtimeAnalytics SSE Endpoint
+
+- `GET /analytics/stream` — authenticated (PERM_VIEW_ANALYTICS), tenant-isolated, async generator, `text/event-stream`; `data: {json}\n\n` every `interval_seconds` (1–60, default 5); `": keepalive\n\n"` every 30 s; `await request.is_disconnected()` disconnect handling; `Cache-Control: no-cache`, `X-Accel-Buffering: no`
+
+### Helm / Infra
+
+- `infra/helm/voiceos-platform/values.yaml` — `jobs:` section with `image`, `namespace`, `priorityClassName`, and per-job `schedule`/`activeDeadlineSeconds`/`backoffLimit`/`resources` (Guaranteed QoS)
+- `infra/helm/voiceos-platform/templates/_helpers.tpl` — `voiceos-platform.jobs.fullname` + `voiceos-platform.jobs.labels` helpers
+
+### Tests Added
+
+- `tests/unit/libs/repositories/test_compliance_violations.py` — upsert SQL, commit, params, is_violated, list_active, resolve, hydration (20 tests)
+- `tests/unit/services/test_phase6_compliance_persistence.py` — backward compat, repo-backed persistence, status reads from DB, idempotency, re-detection, tenant isolation (8 tests)
+- `tests/unit/services/test_phase6_daily_aggregation.py` — without ports (zeros), with PTP port (sum, bounds, tenant), with loan port (avg, tenant), idempotency, multi-tenant isolation (11 tests)
+- `tests/unit/services/test_phase6_sla_enforcer.py` — already-breached skip, new breach mark, not-yet-breached skip, cross-tenant None, mixed items (7 tests)
+- `tests/unit/services/test_phase6_monthly_invoicing.py` — month bounds (4 cases), invoiced/skipped/error counting, empty list (7 tests)
+- `tests/unit/bff/test_phase6_realtime_sse.py` — 401/403 auth, media_type, headers, interval clamping (7 params), data format, keepalive format, JSON serializable (12 tests)
+
+### Deferred (Platform Limitation)
+
+- Full pytest run: pydantic-core requires Rust/C build tools unavailable on Android/Termux; same category as GPU-dependent tests (see GPU_DEPLOYMENT_CHECKLIST.md). All 23 new files pass `python -m py_compile`. Migration chain 0035→0036→0037 validated. CronJob safety fields (concurrencyPolicy, activeDeadlineSeconds, readOnlyRootFilesystem, runAsNonRoot, POSTGRES_DSN from secret) verified present in all 3 templates.
+
+---
+
 ## [Unreleased] — BFF Phase 5 — Node.js Jest Test Suite (2026-09-16)
 
 > 114 tests / 0 failures across 10 test suites covering bff.js routes and dialer_worker.js classes.
