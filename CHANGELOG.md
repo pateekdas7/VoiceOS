@@ -5,6 +5,45 @@ Format: `## [version] — Sprint-NNN — Title (YYYY-MM-DD)`
 
 ---
 
+## [Unreleased] — BFF Phase 9 — RBAC, Rate Limiting & Security Headers (2026-09-17)
+
+> Defense-in-depth: role enforcement, brute-force protection, API throttling, and secure-by-default response headers.
+
+### 9a — Role-Based Access Control (`bff.js`)
+- Added `requireRole(...roles)` middleware factory — returns 403 with `{ error: 'forbidden' }` when `req.user.role` is not in the allowed list; logs denial as WARN with trace_id
+- Locked `GET /admin/clients` and `GET /admin/clients/:tenantId` to `PLATFORM_ADMIN` role — previously any authenticated user (including tenant users) could enumerate all tenants
+
+### 9b — Login Rate Limiting (`bff.js`)
+- Added Redis-backed `checkLoginRateLimit(ip)` / `recordLoginFailure(ip)` / `clearLoginRateLimit(ip)` helpers using sliding-window counters with automatic TTL
+- Login route now checks rate limit **before** any DB query; returns 429 + `Retry-After` header when limit exceeded
+- On successful authentication the counter is cleared; on failure it is incremented
+- Configurable via `LOGIN_MAX_FAILURES` (default 5) and `LOGIN_RATE_WINDOW_S` (default 900 = 15 min) env vars
+
+### 9c — API Rate Limiting (`bff.js`)
+- Global `app.use` middleware applies sliding-window per-tenant (authenticated) or per-IP (unauthenticated) rate limiting via Redis
+- Bypasses Twilio webhook paths (`/dialer/twiml`, `/dialer/callback`) and health check (`/system/health`) — these must never be throttled
+- Sets `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `Retry-After` headers on every response
+- Fails open: Redis errors are swallowed and `next()` is called so requests are never blocked by an infrastructure outage
+- Configurable via `API_RATE_MAX_REQUESTS` (default 300/min) and `API_RATE_WINDOW_S` (default 60 s) env vars
+
+### 9d — Security Response Headers (`bff.js`)
+- Registered global `app.use` middleware that sets: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `X-XSS-Protection: 0` (deprecated; CSP supersedes it), `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: geolocation=(), microphone=(), camera=()`
+- `Strict-Transport-Security` (HSTS, `max-age=31536000; includeSubDomains`) added only when `NODE_ENV=production` to avoid breaking local HTTP dev
+- No new dependency — headers set via `res.set()` directly
+
+### 9e — Input Validation (`bff.js`)
+- Added `validateBody(schema)` middleware factory supporting `required`, `type`, `minLength`, `maxLength`, and `pattern` rules per field; returns 400 `{ error: 'validation_error', details: [...] }` with field-level error messages
+- Applied to `POST /campaigns` (`name` required ≤255, `description` optional ≤2000), `PUT /campaigns/:id` (same), `POST /campaigns/:id/pipelines` (`name` required ≤255), `PATCH /campaigns/:id/pipelines/:pipelineId` (`name` optional ≤255)
+- Validation failures logged as WARN with path and error detail
+
+### Infrastructure
+- Soft JWT parse global middleware replaces per-`requireAuth` parse; `requireAuth` now just asserts `req.user` is set — avoids duplicate `jwt.verify()` calls and enables RBAC/rate-limiting middlewares to use tenant identity before per-route auth runs
+
+### Tests
+- `tests/unit/bff/test_phase9_security.js` — 40 tests, all passing; pure source inspection (no `eval`/`new Function`)
+
+---
+
 ## [Unreleased] — BFF Phase 8 — Observability Hardening (2026-09-17)
 
 > Every critical event is now logged, metered, and alertable.

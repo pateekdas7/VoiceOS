@@ -92,6 +92,53 @@ app.use(express.urlencoded({ extended: false })); // Twilio webhooks send form-e
 app.use(cookieParser());
 app.use(cors({ origin: process.env.FRONTEND_BASE_URL || 'http://localhost:3000', credentials: true }));
 
+// ─── Phase 9d: Security headers ───────────────────────────────────────────────
+app.use((_req, res, next) => {
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('X-Frame-Options', 'DENY');
+  res.set('X-XSS-Protection', '0');
+  res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+  if (process.env.NODE_ENV === 'production') {
+    res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+  next();
+});
+
+// ─── Phase 9 soft JWT parse — enables RBAC + per-tenant rate-limiting globally
+app.use((req, _res, next) => {
+  const token = req.cookies?.[SESSION_COOKIE];
+  if (token) {
+    try { req.user = jwt.verify(token, JWT_SECRET); } catch {}
+  }
+  next();
+});
+
+// ─── Phase 9c: API rate limiting (per-tenant or per-IP, sliding window) ───────
+const API_RATE_WINDOW_S   = parseInt(process.env.API_RATE_WINDOW_S    || '60');
+const API_RATE_MAX        = parseInt(process.env.API_RATE_MAX_REQUESTS || '300');
+const _RL_BYPASS_PATHS    = new Set(['/dialer/twiml', '/dialer/callback', '/system/health']);
+
+app.use(async (req, res, next) => {
+  if (_RL_BYPASS_PATHS.has(req.path)) return next();
+  const key = req.user?.tenant_id
+    ? `voiceos:api_rl:t:${req.user.tenant_id}`
+    : `voiceos:api_rl:ip:${req.ip}`;
+  try {
+    const count = await redis.incr(key);
+    if (count === 1) await redis.expire(key, API_RATE_WINDOW_S);
+    res.set('X-RateLimit-Limit',     String(API_RATE_MAX));
+    res.set('X-RateLimit-Remaining', String(Math.max(0, API_RATE_MAX - count)));
+    if (count > API_RATE_MAX) {
+      const ttl = await redis.ttl(key);
+      res.set('Retry-After', String(ttl > 0 ? ttl : API_RATE_WINDOW_S));
+      log.warn('api.rate_limited', { key, count, trace_id: req.traceId });
+      return res.status(429).json({ error: 'rate_limit_exceeded' });
+    }
+  } catch { /* Redis unavailable — fail open */ }
+  next();
+});
+
 // ─── Auth helpers ─────────────────────────────────────────────────────────────
 function makeToken(payload) {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
@@ -103,10 +150,72 @@ function setCookies(res, token, actorKind) {
   res.cookie(ACTOR_KIND_COOKIE, actorKind, opts);
 }
 function requireAuth(req, res, next) {
-  const token = req.cookies[SESSION_COOKIE];
-  if (!token) return res.status(401).json({ error: 'unauthorized' });
-  try { req.user = jwt.verify(token, JWT_SECRET); next(); }
-  catch { res.status(401).json({ error: 'invalid_session' }); }
+  if (!req.user) return res.status(401).json({ error: 'unauthorized' });
+  next();
+}
+
+// ─── Phase 9a: Role-based access control ──────────────────────────────────────
+function requireRole(...roles) {
+  return (req, res, next) => {
+    if (!roles.includes(req.user?.role)) {
+      log.warn('authz.forbidden', { required: roles, actual: req.user?.role, trace_id: req.traceId });
+      return res.status(403).json({ error: 'forbidden' });
+    }
+    next();
+  };
+}
+
+// ─── Phase 9b: Login rate limiting ────────────────────────────────────────────
+const LOGIN_WINDOW_S  = parseInt(process.env.LOGIN_RATE_WINDOW_S || '900');
+const LOGIN_MAX_FAILS = parseInt(process.env.LOGIN_MAX_FAILURES   || '5');
+
+async function checkLoginRateLimit(ip) {
+  try {
+    const count = parseInt(await redis.get(`voiceos:login_rl:${ip}`) || '0');
+    if (count >= LOGIN_MAX_FAILS) {
+      const ttl = await redis.ttl(`voiceos:login_rl:${ip}`);
+      return { allowed: false, retryAfter: ttl > 0 ? ttl : LOGIN_WINDOW_S };
+    }
+  } catch {}
+  return { allowed: true };
+}
+async function recordLoginFailure(ip) {
+  try {
+    const key   = `voiceos:login_rl:${ip}`;
+    const count = await redis.incr(key);
+    if (count === 1) await redis.expire(key, LOGIN_WINDOW_S);
+  } catch {}
+}
+async function clearLoginRateLimit(ip) {
+  try { await redis.del(`voiceos:login_rl:${ip}`); } catch {}
+}
+
+// ─── Phase 9e: Input validation ───────────────────────────────────────────────
+function validateBody(schema) {
+  return (req, res, next) => {
+    const errors = [];
+    for (const [field, rules] of Object.entries(schema)) {
+      const val     = req.body?.[field];
+      const present = val !== undefined && val !== null && val !== '';
+      if (rules.required && !present) { errors.push(`${field} is required`); continue; }
+      if (!present) continue;
+      if (rules.type === 'string' && typeof val !== 'string') {
+        errors.push(`${field} must be a string`);
+        continue;
+      }
+      if (rules.maxLength && String(val).length > rules.maxLength)
+        errors.push(`${field} exceeds maximum length of ${rules.maxLength}`);
+      if (rules.minLength && String(val).trim().length < rules.minLength)
+        errors.push(`${field} must be at least ${rules.minLength} characters`);
+      if (rules.pattern && !rules.pattern.test(String(val)))
+        errors.push(`${field} has invalid format`);
+    }
+    if (errors.length) {
+      log.warn('validation.rejected', { path: req.path, errors, trace_id: req.traceId });
+      return res.status(400).json({ error: 'validation_error', details: errors });
+    }
+    next();
+  };
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -553,6 +662,14 @@ app.post('/auth/password/login', async (req, res) => {
     if (!email || !password) return res.status(400).json({ error: 'missing_fields' });
     const em = email.trim().toLowerCase();
 
+    // Phase 9b: brute-force protection
+    const rl = await checkLoginRateLimit(req.ip);
+    if (!rl.allowed) {
+      res.set('Retry-After', String(rl.retryAfter));
+      log.warn('auth.login_rate_limited', { ip: req.ip, trace_id: req.traceId });
+      return res.status(429).json({ error: 'too_many_attempts', retry_after: rl.retryAfter });
+    }
+
     const pu = await pool.query(
       'SELECT platform_user_id, name, platform_role, password_hash FROM platform_users WHERE email=$1 AND is_active=TRUE',
       [em]
@@ -562,6 +679,7 @@ app.post('/auth/password/login', async (req, res) => {
       const token = makeToken({ actor_kind: 'platform', sub: platform_user_id, email: em, role: platform_role });
       setCookies(res, token, 'platform');
       req.user = { sub: platform_user_id, actor_kind: 'platform' };
+      await clearLoginRateLimit(req.ip);
       await bffAudit(pool, { req, action: 'auth.login', resourceType: 'user', resourceId: em, outcome: 'SUCCESS' });
       log.info('auth.login', { actor_kind: 'platform', trace_id: req.traceId });
       return res.json({ ok: true, name, role: platform_role, actor_kind: 'platform' });
@@ -576,11 +694,13 @@ app.post('/auth/password/login', async (req, res) => {
       const token = makeToken({ actor_kind: 'tenant', sub: user_id, email: em, role: 'TENANT_ADMIN', tenant_id });
       setCookies(res, token, 'tenant');
       req.user = { sub: user_id, tenant_id, actor_kind: 'tenant' };
+      await clearLoginRateLimit(req.ip);
       await bffAudit(pool, { req, action: 'auth.login', resourceType: 'user', resourceId: em, outcome: 'SUCCESS' });
       log.info('auth.login', { actor_kind: 'tenant', trace_id: req.traceId });
       return res.json({ ok: true, name, role: 'TENANT_ADMIN', actor_kind: 'tenant' });
     }
 
+    await recordLoginFailure(req.ip);
     await bffAudit(pool, { req, action: 'auth.login', resourceType: 'user', resourceId: em || 'unknown', outcome: 'FAILURE' });
     log.warn('auth.login_failed', { trace_id: req.traceId });
     return res.status(401).json({ error: 'invalid_credentials' });
@@ -678,7 +798,10 @@ app.get('/campaigns', requireAuth, async (req, res) => {
   } catch (e) { log.error('route.error', { error: e.message }); res.status(500).json({ error: 'server_error' }); }
 });
 
-app.post('/campaigns', requireAuth, async (req, res) => {
+app.post('/campaigns', requireAuth, validateBody({
+  name:        { required: true, type: 'string', minLength: 1, maxLength: 255 },
+  description: { type: 'string', maxLength: 2000 },
+}), async (req, res) => {
   try {
     const { name, description = '' } = req.body;
     if (!name) return res.status(400).json({ error: 'name_required' });
@@ -706,7 +829,10 @@ app.get('/campaigns/:id', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'server_error' }); }
 });
 
-app.put('/campaigns/:id', requireAuth, async (req, res) => {
+app.put('/campaigns/:id', requireAuth, validateBody({
+  name:        { type: 'string', minLength: 1, maxLength: 255 },
+  description: { type: 'string', maxLength: 2000 },
+}), async (req, res) => {
   try {
     const {
       name, description, target_call_count,
@@ -868,7 +994,9 @@ app.get('/campaigns/:id/pipelines', requireAuth, async (req, res) => {
   } catch (e) { log.error('pipeline.list_error', { error: e.message }); res.status(500).json({ error: 'server_error' }); }
 });
 
-app.post('/campaigns/:id/pipelines', requireAuth, async (req, res) => {
+app.post('/campaigns/:id/pipelines', requireAuth, validateBody({
+  name: { required: true, type: 'string', minLength: 1, maxLength: 255 },
+}), async (req, res) => {
   try {
     const { name } = req.body || {};
     if (!name || !String(name).trim()) return res.status(400).json({ error: 'missing_name' });
@@ -904,7 +1032,9 @@ app.get('/campaigns/:id/pipelines/:pipelineId', requireAuth, async (req, res) =>
   } catch (e) { log.error('pipeline.get_error', { error: e.message }); res.status(500).json({ error: 'server_error' }); }
 });
 
-app.patch('/campaigns/:id/pipelines/:pipelineId', requireAuth, async (req, res) => {
+app.patch('/campaigns/:id/pipelines/:pipelineId', requireAuth, validateBody({
+  name: { type: 'string', minLength: 1, maxLength: 255 },
+}), async (req, res) => {
   try {
     const { name, status } = req.body || {};
     const set = [], vals = [];
@@ -1449,14 +1579,14 @@ app.get('/pipelines/:pipelineId/leads/stats', requireAuth, async (req, res) => {
 // ═════════════════════════════════════════════════════════════════════════════
 // ADMIN / TEAM / USER ROUTES
 // ═════════════════════════════════════════════════════════════════════════════
-app.get('/admin/clients', requireAuth, async (req, res) => {
+app.get('/admin/clients', requireAuth, requireRole('PLATFORM_ADMIN'), async (req, res) => {
   try {
     const r = await pool.query('SELECT * FROM tenants ORDER BY created_at DESC');
     res.json(r.rows);
   } catch (e) { res.status(500).json({ error: 'server_error' }); }
 });
 
-app.get('/admin/clients/:tenantId', requireAuth, async (req, res) => {
+app.get('/admin/clients/:tenantId', requireAuth, requireRole('PLATFORM_ADMIN'), async (req, res) => {
   try {
     const r = await pool.query('SELECT * FROM tenants WHERE tenant_id=$1', [req.params.tenantId]);
     if (!r.rows.length) return res.status(404).json({ error: 'not_found' });
