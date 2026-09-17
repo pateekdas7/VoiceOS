@@ -1,44 +1,12 @@
 // Typed client for the Client -> CRM / Collections / Leads / Reports / Analytics
 // BFF routes (ADR-005 §6.4/6.5/6.7/6.9).
+//
+// CRM routes use the Python web_api (/webapi) — the BFF has no /crm/* routes.
+// Analytics dashboard uses the Python web_api — the BFF has no /analytics/dashboard route.
+// All other client-ops routes use the BFF (/bff).
 
-export class ApiError extends Error {
-  status: number;
-  code: string;
-  constructor(status: number, code: string, message: string) {
-    super(message);
-    this.status = status;
-    this.code = code;
-  }
-}
-
-function bffUrl(): string {
-  const url = process.env.NEXT_PUBLIC_BFF_URL;
-  if (!url) throw new ApiError(0, "NO_BFF_URL", "NEXT_PUBLIC_BFF_URL is not configured");
-  return url;
-}
-
-async function handle<T>(res: Response): Promise<T> {
-  if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    throw new ApiError(res.status, body?.error?.code ?? "UNKNOWN", body?.error?.message ?? res.statusText);
-  }
-  return res.json() as Promise<T>;
-}
-
-async function get<T>(path: string): Promise<T> {
-  return handle<T>(await fetch(`${bffUrl()}${path}`, { credentials: "include" }));
-}
-
-async function post<T>(path: string, body?: unknown): Promise<T> {
-  return handle<T>(
-    await fetch(`${bffUrl()}${path}`, {
-      method: "POST",
-      credentials: "include",
-      headers: body ? { "Content-Type": "application/json" } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
-    }),
-  );
-}
+import { ApiError, bffGet, bffPost, webapiGet, webapiPost } from "@/lib/api/fetch-client";
+export { ApiError };
 
 // -- CRM ----------------------------------------------------------------
 
@@ -55,13 +23,14 @@ export type Customer = {
   updated_at: string;
 };
 
-export const listCustomers = () => get<Customer[]>("/crm/customers");
+// CRM customers live in the Python web_api — route to /webapi/crm/customers.
+export const listCustomers = () => webapiGet<Customer[]>("/crm/customers");
 export const createCustomer = (input: {
   crm_id: string;
   name: string;
   preferred_language?: string;
   contacts?: { contact_type: string; value: string; is_primary?: boolean }[];
-}) => post<Customer>("/crm/customers", input);
+}) => webapiPost<Customer>("/crm/customers", input);
 
 // -- Collections ----------------------------------------------------------
 
@@ -77,9 +46,9 @@ export type Escalation = {
   resolution_notes: string | null;
 };
 
-export const listEscalations = () => get<Escalation[]>("/collections/escalations");
+export const listEscalations = () => bffGet<Escalation[]>("/collections/escalations");
 export const resolveEscalation = (id: string, resolutionNotes: string) =>
-  post(`/collections/escalations/${encodeURIComponent(id)}/resolve`, { resolution_notes: resolutionNotes });
+  bffPost(`/collections/escalations/${encodeURIComponent(id)}/resolve`, { resolution_notes: resolutionNotes });
 
 // -- Leads ------------------------------------------------------------------
 
@@ -94,15 +63,16 @@ export type Lead = {
   excluded_reason: string;
 };
 
-export const listLeads = (campaignId: string) => get<Lead[]>(`/leads?campaign_id=${encodeURIComponent(campaignId)}`);
+export const listLeads = (campaignId: string) =>
+  bffGet<Lead[]>(`/leads?campaign_id=${encodeURIComponent(campaignId)}`);
 
 // -- Reports ------------------------------------------------------------------
 
 export type ReportRun = { tenant_id: string; campaign_id: string | null; day: string; ran_at: string };
 
-export const listReportRuns = () => get<ReportRun[]>("/reports/runs");
+export const listReportRuns = () => bffGet<ReportRun[]>("/reports/runs");
 export const triggerReportRun = (day: string, campaignId?: string) =>
-  post("/reports/runs", { day, campaign_id: campaignId });
+  bffPost("/reports/runs", { day, campaign_id: campaignId });
 
 // -- Analytics ----------------------------------------------------------------
 
@@ -114,12 +84,18 @@ export type DashboardSnapshot = {
   average_duration_ms: number;
   contactability_rate: number;
   recovery_rate: number;
+  // Populated after Phase 10 backend fix (amount_collected_minor in settlement join)
+  amount_collected_minor?: number;
 };
 
+// Dashboard snapshot lives in web_api — route to /webapi/analytics/dashboard.
 export const getDashboardSnapshot = (campaignId?: string) =>
-  get<DashboardSnapshot>(`/analytics/dashboard${campaignId ? `?campaign_id=${encodeURIComponent(campaignId)}` : ""}`);
+  webapiGet<DashboardSnapshot>(
+    `/analytics/dashboard${campaignId ? `?campaign_id=${encodeURIComponent(campaignId)}` : ""}`,
+  );
 
+// Campaign-level summary lives in bff.js at /analytics/campaigns/:id/summary.
 export const getCampaignAnalyticsSummary = (campaignId: string) =>
-  get<{ ptp_rate: number; contactability_rate: number; conversion_rate: number }>(
+  bffGet<{ ptp_rate: number; contactability_rate: number; conversion_rate: number }>(
     `/analytics/campaigns/${encodeURIComponent(campaignId)}/summary`,
   );

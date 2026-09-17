@@ -131,7 +131,17 @@ function UploadWizard({
   const [file, setFile] = useState<{ name: string; headers: string[]; rows: Record<string, string>[] } | null>(null);
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [uploading, setUploading] = useState(false);
-  const [result, setResult] = useState<{ total: number; valid: number; invalid: number; duplicates: number } | null>(null);
+  const [result, setResult] = useState<{
+    import_id: string;
+    total: number;
+    valid: number;
+    invalid: number;
+    duplicates: number;
+    crm_matched: number;
+    crm_unmatched: number;
+    crm_ambiguous: number;
+  } | null>(null);
+  const [importProgress, setImportProgress] = useState<{ processed: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -178,7 +188,16 @@ function UploadWizard({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Upload failed");
-      setResult({ total: data.total, valid: data.valid, invalid: data.invalid, duplicates: data.duplicates });
+      setResult({
+        import_id: data.import_id,
+        total: data.total,
+        valid: data.valid,
+        invalid: data.invalid,
+        duplicates: data.duplicates,
+        crm_matched: data.crm_matched ?? 0,
+        crm_unmatched: data.crm_unmatched ?? 0,
+        crm_ambiguous: data.crm_ambiguous ?? 0,
+      });
       setStep("result");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");
@@ -283,6 +302,7 @@ function UploadWizard({
   }
 
   if (step === "result" && result) {
+    const crmTotal = result.crm_matched + result.crm_unmatched + result.crm_ambiguous;
     return (
       <Card>
         <CardHeader><CardTitle>Import Complete</CardTitle></CardHeader>
@@ -293,6 +313,35 @@ function UploadWizard({
             <StatTile label="Invalid" value={String(result.invalid)} hint="Failed validation" />
             <StatTile label="Duplicates" value={String(result.duplicates)} hint="Phone already in campaign" />
           </div>
+
+          {crmTotal > 0 && (
+            <div className="rounded-lg border border-border bg-background p-4">
+              <p className="text-sm font-medium mb-2">CRM Match Summary</p>
+              <div className="flex flex-wrap gap-4 text-sm">
+                <span className="text-green-600">✓ {result.crm_matched} matched</span>
+                <span className="text-red-500">
+                  ✗ {result.crm_unmatched} unmatched
+                  <span
+                    className="ml-1 cursor-help text-muted underline decoration-dotted"
+                    title="Calls to these leads will hear 'account not found' — upload customer records to the CRM first."
+                  >
+                    (?)
+                  </span>
+                </span>
+                {result.crm_ambiguous > 0 && (
+                  <span className="text-yellow-600">
+                    ~ {result.crm_ambiguous} ambiguous
+                    <span
+                      className="ml-1 cursor-help text-muted underline decoration-dotted"
+                      title="Multiple CRM customers share this phone number. Review duplicates in the CRM."
+                    >
+                      (?)
+                    </span>
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
 
           <div className="rounded-lg border border-border bg-background p-4 text-sm">
             <p className="font-medium mb-1">Processing pipeline applied:</p>
@@ -306,7 +355,7 @@ function UploadWizard({
           </div>
 
           <div className="flex gap-3">
-            <button onClick={() => { setStep("select"); setFile(null); setResult(null); }} className="rounded-md border border-border px-4 py-2 text-sm">Import Another</button>
+            <button onClick={() => { setStep("select"); setFile(null); setResult(null); setImportProgress(null); }} className="rounded-md border border-border px-4 py-2 text-sm">Import Another</button>
             <button onClick={onDone} className="rounded-md bg-brand px-4 py-2 text-sm font-medium text-brand-foreground">View Leads</button>
           </div>
         </CardContent>
@@ -328,8 +377,49 @@ export function CampaignLeadsView({ campaignId, pipelines = [] }: { campaignId: 
   const [filterPipeline, setFilterPipeline] = useState("");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
+  const [resumingId, setResumingId] = useState<string | null>(null);
+  const [resumeProgress, setResumeProgress] = useState<Record<string, { processed: number; total: number }>>({});
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const bff = process.env.NEXT_PUBLIC_BFF_URL || "/bff";
+
+  async function handleResume(importId: string) {
+    setResumingId(importId);
+    setResumeProgress(prev => ({ ...prev, [importId]: { processed: 0, total: 0 } }));
+
+    // Poll progress while the resume request is in-flight.
+    pollRef.current = setInterval(async () => {
+      try {
+        const r = await fetch(`${bff}/campaigns/${campaignId}/leads/imports/${importId}`, { credentials: "include" });
+        if (r.ok) {
+          const data = await r.json();
+          setResumeProgress(prev => ({
+            ...prev,
+            [importId]: { processed: data.last_processed_row ?? 0, total: data.total_rows ?? 0 },
+          }));
+          if (data.status === "DONE" || data.status === "FAILED") {
+            clearInterval(pollRef.current!);
+            pollRef.current = null;
+          }
+        }
+      } catch { /* ignore poll errors */ }
+    }, 2000);
+
+    try {
+      await fetch(`${bff}/campaigns/${campaignId}/leads/imports/${importId}/resume`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+    } finally {
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      setResumingId(null);
+      loadLeads();
+    }
+  }
+
+  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
   const loadLeads = useCallback(async () => {
     setLoading(true);
@@ -424,20 +514,52 @@ export function CampaignLeadsView({ campaignId, pipelines = [] }: { campaignId: 
                   <TableHeaderCell>Invalid</TableHeaderCell>
                   <TableHeaderCell>Duplicates</TableHeaderCell>
                   <TableHeaderCell>Date</TableHeaderCell>
+                  <TableHeaderCell></TableHeaderCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {imports.map(imp => (
+                {imports.map(imp => {
+                  const prog = resumeProgress[imp.import_id];
+                  const pct = prog && prog.total > 0 ? Math.round((prog.processed / prog.total) * 100) : null;
+                  return (
                   <TableRow key={imp.import_id}>
                     <TableCell className="font-medium">{imp.filename}</TableCell>
-                    <TableCell><Badge tone={imp.status === "DONE" ? "healthy" : "neutral"}>{imp.status}</Badge></TableCell>
+                    <TableCell>
+                      <div className="flex flex-col gap-1">
+                        <Badge
+                          tone={imp.status === "DONE" ? "healthy" : imp.status === "FAILED" ? "critical" : "neutral"}
+                        >
+                          {imp.status}
+                        </Badge>
+                        {pct !== null && (
+                          <div className="flex items-center gap-1.5">
+                            <div className="h-1.5 w-24 rounded-full bg-border overflow-hidden">
+                              <div className="h-full rounded-full bg-brand transition-all" style={{ width: `${pct}%` }} />
+                            </div>
+                            <span className="text-xs text-muted">{pct}%</span>
+                          </div>
+                        )}
+                      </div>
+                    </TableCell>
                     <TableCell>{imp.total_rows}</TableCell>
                     <TableCell className="text-green-600">{imp.valid_rows}</TableCell>
                     <TableCell className="text-red-500">{imp.invalid_rows}</TableCell>
                     <TableCell className="text-muted">{imp.duplicate_rows}</TableCell>
                     <TableCell className="text-muted">{new Date(imp.created_at).toLocaleDateString()}</TableCell>
+                    <TableCell>
+                      {(imp.status === "FAILED" || (imp.status === "PROCESSING" && resumingId !== imp.import_id)) && (
+                        <button
+                          onClick={() => handleResume(imp.import_id)}
+                          disabled={resumingId !== null}
+                          className="rounded-md border border-border px-2 py-1 text-xs hover:bg-background disabled:opacity-50"
+                        >
+                          {resumingId === imp.import_id ? "Resuming…" : "Resume"}
+                        </button>
+                      )}
+                    </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
           )}

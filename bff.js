@@ -1555,6 +1555,19 @@ app.get('/campaigns/:id/leads/imports', requireAuth, requireUUID('id'), async (r
   } catch (e) { throw e; }
 });
 
+app.get('/campaigns/:id/leads/imports/:importId', requireAuth, requireUUID('id', 'importId'), async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT import_id, campaign_id, filename, status, total_rows, valid_rows, invalid_rows,
+              duplicate_rows, last_processed_row, created_at, completed_at
+       FROM lead_imports WHERE import_id=$1 AND campaign_id=$2 AND tenant_id=$3`,
+      [req.params.importId, req.params.id, req.user.tenant_id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Import not found' } });
+    res.json(r.rows[0]);
+  } catch (e) { throw e; }
+});
+
 app.get('/campaigns/:id/leads', requireAuth, requireUUID('id'), async (req, res) => {
   try {
     const { status, pipeline_id, search } = req.query;

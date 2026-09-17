@@ -1,6 +1,9 @@
 // Typed client for the Client -> Campaigns BFF routes (ADR-005 §6.2).
 // Every call sends credentials so the voiceos_session cookie reaches the BFF.
 
+import { ApiError, bffGet, bffPost } from "@/lib/api/fetch-client";
+export { ApiError };
+
 export type Campaign = {
   campaign_id: string;
   tenant_id: string;
@@ -17,50 +20,27 @@ export type Campaign = {
   created_by: string;
 };
 
-export class ApiError extends Error {
-  status: number;
-  code: string;
+export type ImportStatus = {
+  import_id: string;
+  campaign_id: string;
+  filename: string;
+  status: "PROCESSING" | "DONE" | "FAILED";
+  total_rows: number;
+  valid_rows: number;
+  invalid_rows: number;
+  duplicate_rows: number;
+  last_processed_row: number;
+  created_at: string;
+  completed_at: string | null;
+};
 
-  constructor(status: number, code: string, message: string) {
-    super(message);
-    this.status = status;
-    this.code = code;
-  }
-}
+export const listCampaigns = () => bffGet<Campaign[]>("/campaigns");
 
-function bffUrl(): string {
-  const url = process.env.NEXT_PUBLIC_BFF_URL;
-  if (!url) throw new ApiError(0, "NO_BFF_URL", "NEXT_PUBLIC_BFF_URL is not configured");
-  return url;
-}
+export const getCampaign = (campaignId: string) =>
+  bffGet<Campaign>(`/campaigns/${encodeURIComponent(campaignId)}`);
 
-async function handle<T>(res: Response): Promise<T> {
-  if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    throw new ApiError(res.status, body?.error?.code ?? "UNKNOWN", body?.error?.message ?? res.statusText);
-  }
-  return res.json() as Promise<T>;
-}
-
-export async function listCampaigns(): Promise<Campaign[]> {
-  const res = await fetch(`${bffUrl()}/campaigns`, { credentials: "include" });
-  return handle<Campaign[]>(res);
-}
-
-export async function getCampaign(campaignId: string): Promise<Campaign> {
-  const res = await fetch(`${bffUrl()}/campaigns/${encodeURIComponent(campaignId)}`, { credentials: "include" });
-  return handle<Campaign>(res);
-}
-
-export async function createCampaign(input: { name: string; description?: string }): Promise<Campaign> {
-  const res = await fetch(`${bffUrl()}/campaigns`, {
-    method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  return handle<Campaign>(res);
-}
+export const createCampaign = (input: { name: string; description?: string }) =>
+  bffPost<Campaign>("/campaigns", input);
 
 export const LIFECYCLE_ACTIONS = [
   "submit-for-review",
@@ -73,16 +53,11 @@ export const LIFECYCLE_ACTIONS = [
 ] as const;
 export type LifecycleAction = (typeof LIFECYCLE_ACTIONS)[number];
 
-export async function runLifecycleAction(
+export const runLifecycleAction = (
   campaignId: string,
   action: LifecycleAction,
   body?: { target_call_count?: number },
-): Promise<Campaign> {
-  const res = await fetch(`${bffUrl()}/campaigns/${encodeURIComponent(campaignId)}/${action}`, {
-    method: "POST",
-    credentials: "include",
-    headers: body ? { "Content-Type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  return handle<Campaign>(res);
-}
+) => bffPost<Campaign>(`/campaigns/${encodeURIComponent(campaignId)}/${action}`, body);
+
+export const getImportStatus = (campaignId: string, importId: string) =>
+  bffGet<ImportStatus>(`/campaigns/${encodeURIComponent(campaignId)}/leads/imports/${encodeURIComponent(importId)}`);

@@ -6,42 +6,8 @@
 // (next.config.ts), NOT the Node.js BFF /bff rewrite. The two servers handle
 // different concerns: bff.js → campaigns/leads/dialer; web_api → admin/monitoring.
 
-export class ApiError extends Error {
-  status: number;
-  code: string;
-  constructor(status: number, code: string, message: string) {
-    super(message);
-    this.status = status;
-    this.code = code;
-  }
-}
-
-function webapiUrl(): string {
-  return process.env.NEXT_PUBLIC_WEBAPI_URL ?? "/webapi";
-}
-
-async function handle<T>(res: Response): Promise<T> {
-  if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    throw new ApiError(res.status, body?.error?.code ?? "UNKNOWN", body?.error?.message ?? res.statusText);
-  }
-  return res.json() as Promise<T>;
-}
-
-async function get<T>(path: string): Promise<T> {
-  return handle<T>(await fetch(`${webapiUrl()}${path}`, { credentials: "include" }));
-}
-
-async function post<T>(path: string, body?: unknown): Promise<T> {
-  return handle<T>(
-    await fetch(`${webapiUrl()}${path}`, {
-      method: "POST",
-      credentials: "include",
-      headers: body ? { "Content-Type": "application/json" } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
-    }),
-  );
-}
+import { ApiError, webapiGet as get, webapiPost as post } from "@/lib/api/fetch-client";
+export { ApiError };
 
 // -- Users & Roles --------------------------------------------------------
 

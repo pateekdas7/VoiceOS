@@ -5,6 +5,41 @@ Format: `## [version] — Sprint-NNN — Title (YYYY-MM-DD)`
 
 ---
 
+## [v2.0.40] — Phase 13 — Frontend Hardening (2026-09-17)
+
+> Session expiry redirects to login, React error boundaries on all page segments, CRM route fixed to web_api, import progress polling with CRM match counts, and analytics revenue display.
+
+### 13a — Shared fetch-client with 401 redirect
+- Created `frontend/lib/api/fetch-client.ts`: shared `ApiError`, `handleResponse()` (redirects `window.location` to `/login?returnUrl=…` on 401), and typed `bffGet/bffPost/bffPut/bffDel/webapiGet/webapiPost/webapiPut/webapiDel` helpers
+- All 6 API files (`campaigns.ts`, `client-ops.ts`, `clients.ts`, `hitl.ts`, `team.ts`, `admin-ops.ts`) refactored to import from fetch-client — removed duplicate `ApiError` class and local helper functions from each
+
+### 13b — React Error Boundaries
+- Added `app/error.tsx` (root), `app/admin/error.tsx`, `app/client/error.tsx` as `"use client"` components
+- Each renders "Something went wrong — please refresh" with a reset button; Next.js App Router auto-wraps all child segments
+
+### 13c — CRM Route Fix
+- `client-ops.ts`: `listCustomers()` and `createCustomer()` now route to `webapiGet/webapiPost` at `/crm/customers` (Python web_api at :8001)
+- Fixed: previously routed to `/bff/crm/customers` which does not exist in bff.js, causing silent 404 errors on the CRM page
+
+### 13d — Import Progress UI
+- `bff.js`: added `GET /campaigns/:id/leads/imports/:importId` endpoint (tenant-scoped, returns `status`, `total_rows`, `last_processed_row`, etc.)
+- `campaigns.ts`: added `getImportStatus()` export and `ImportStatus` type
+- `campaign-leads-view.tsx`: Import History tab now shows a Resume button for FAILED/PROCESSING imports; polling via `setInterval` every 2s shows a live progress bar while resume is in-flight
+
+### 13e — CRM Match Indicator
+- `campaign-leads-view.tsx`: upload result now captures `crm_matched`, `crm_unmatched`, `crm_ambiguous` from upload response
+- Result step shows "N matched / N unmatched" with tooltip: "Calls to these leads will hear 'account not found'"
+
+### 13f — Analytics Revenue Display
+- `client-ops.ts`: `getDashboardSnapshot()` now routes to `webapiGet` at `/analytics/dashboard` (Python web_api) — was incorrectly routing to bff.js which has no such route
+- `DashboardSnapshot` type now includes optional `amount_collected_minor?: number`
+- `analytics-view.tsx`: new stat tile "Amount Collected" displays `₹{n/100}` in en-IN locale when field is present
+
+### Tests
+- `tests/unit/bff/test_phase13_frontend.js` — 24/24 passing (source-inspection only, no network required)
+
+---
+
 ## [v2.0.39] — Phase 12 — Auth Hardening (2026-09-17)
 
 > Login rate limiting, Vault credential loading, JWT JTI revocation, secure cookie flags, and cookie domain scoping are fully implemented and tested.
