@@ -101,3 +101,50 @@ plus repository lint/type/migration validation where configured.
 
 ### W2 continuation test evidence — 2026-09-25
 Added focused tests for recording lifecycle, callback timezone/DST, provider failure classification, canonical telephony events, and bounded telephony metrics. **NOT EXECUTED — ENVIRONMENT BLOCKED**: no repository checkout/executable test runtime is available. GitHub Actions returned no workflow runs for current W2 HEAD `6963d0411cd4569cfa1e7087d554ac6af14e59f3`.
+
+
+## W2 definitive acceptance-to-test inventory — 2026-09-25
+
+Only execution can produce PASS/FAIL. All rows below remain NOT EXECUTED or RUNTIME EVIDENCE REQUIRED until the command/action is actually run.
+
+| W2 requirement | Implementation location | Test location / action | Exact command/action | Execution status | Evidence | Remaining blocker |
+|---|---|---|---|---|---|---|
+| Tenant-owned phone registration/resolution | `src/services/telephony/phone_numbers.py`, migration 037 | `tests/unit/services/test_telephony_phone_numbers.py` | `pytest tests/unit/services/test_telephony_phone_numbers.py -q` | NOT EXECUTED | Source/test files only | Executable repo runtime unavailable |
+| Tenant-aware inbound /voice routing | `src/services/media_gateway/twilio_ws_entrypoint.py` | `tests/integration/services/test_twilio_tenant_routing.py` | `pytest tests/integration/services/test_twilio_tenant_routing.py -q` | NOT EXECUTED | Source/test files only | Executable repo runtime unavailable |
+| Signed Twilio admission | `src/services/media_gateway/twilio_ws_entrypoint.py` | `tests/unit/services/test_twilio_admission.py` | `pytest tests/unit/services/test_twilio_admission.py -q` | NOT EXECUTED | Source/test files only | Executable repo runtime unavailable |
+| Media Streams WSS lifecycle | `src/services/media_gateway/twilio_ws_entrypoint.py`, CPU composition root | `tests/integration/services/test_twilio_ws_entrypoint_integration.py` | `pytest tests/integration/services/test_twilio_ws_entrypoint_integration.py -q` | NOT EXECUTED | Source/test files only | No runtime / no Twilio |
+| Outbound dialer + caller ID | `dialer_worker.js` | `tests/unit/services/test_dialer.py`, dialer Jest tests | `pytest tests/unit/services/test_dialer.py -q` and targeted Jest | NOT EXECUTED | Source/test files only | No executable runtime |
+| Canonical call state transitions | `telephony_call_state.js` | `tests/jest/bff/telephony_call_state.test.js` | `npm test -- --runInBand tests/jest/bff/telephony_call_state.test.js` | NOT EXECUTED | Source/test files only | No Node checkout/runtime |
+| Webhook signature/auth boundary | `bff.js` | `tests/jest/bff/dialer.test.js`, provider boundary tests | `npm test -- --runInBand tests/jest/bff/dialer.test.js tests/jest/bff/telephony_provider_boundary.test.js` | NOT EXECUTED | Source/test files only | No executable runtime |
+| CallSID correlation / tenant mismatch | `bff.js` | targeted callback/security tests | `npm test -- --runInBand tests/jest/bff/dialer.test.js` plus DB-backed integration when available | NOT EXECUTED | Source/test files only | DB/test runtime unavailable |
+| Webhook idempotency / duplicate suppression | `bff.js`, `idempotency_keys` | callback regression tests + DB integration | targeted Jest + PostgreSQL integration | NOT EXECUTED | Source/test files only | PostgreSQL unavailable |
+| Provider failure classification | `telephony_provider_failure.js` | `tests/jest/bff/telephony_provider_failure.test.js` | `npm test -- --runInBand tests/jest/bff/telephony_provider_failure.test.js` | NOT EXECUTED | Source/test files only | No Node runtime |
+| Callback timezone / DST | `telephony_callback_policy.js` | `tests/jest/bff/telephony_callback_policy.test.js` | `npm test -- --runInBand tests/jest/bff/telephony_callback_policy.test.js` | NOT EXECUTED | Source/test files only | No Node runtime |
+| Tenant CPS limiting | `dialer_worker.js` | Redis-backed worker test still required | Start Redis and execute CPS/concurrency test | NOT EXECUTED | Source implementation only | Redis runtime/test harness unavailable |
+| Recording lifecycle | `src/services/media_gateway/recording_lifecycle.py`, migration 039 | `tests/unit/services/test_recording_lifecycle.py` | `pytest tests/unit/services/test_recording_lifecycle.py -q` | NOT EXECUTED | Source/test files only | No Python runtime |
+| Recording tenant/access security | BFF recording route + media gateway access boundary | targeted API/security integration | Valid/invalid tenant, signature, expiry and path traversal cases against running services | RUNTIME EVIDENCE REQUIRED | Source controls exist | No runtime |
+| Telephony metrics | `src/services/media_gateway/metrics.py`, BFF metrics | `tests/unit/services/test_telephony_metrics.py` | `pytest tests/unit/services/test_telephony_metrics.py -q` | NOT EXECUTED | Source/test files only | No Python runtime |
+| Canonical event construction | `telephony_call_event.js` | `tests/jest/bff/telephony_call_event.test.js` | `npm test -- --runInBand tests/jest/bff/telephony_call_event.test.js` | NOT EXECUTED | Source/test files only | No Node runtime |
+| Canonical event schema/serialization | `telephony_event_boundary.js` | `tests/jest/bff/telephony_event_boundary.test.js` | `npm test -- --runInBand tests/jest/bff/telephony_event_boundary.test.js` | NOT EXECUTED | Source/test files only | No Node runtime |
+| Event persistence + outbox | migration 042, `telephony_event_boundary.js` | DB-backed integration test required | Apply migration 042 and exercise transaction + duplicate event | NOT EXECUTED | Source implementation only | No authorized PostgreSQL runtime |
+| Event retry/backoff | `scripts/telephony/telephony_event_relay.js` | `tests/jest/bff/telephony_event_relay.test.js` + Redis integration | `npm test -- --runInBand tests/jest/bff/telephony_event_relay.test.js` | NOT EXECUTED | Source/test files only | No Node/Redis runtime |
+| Event DLQ | migration 042 + relay | relay failure injection | Exhaust attempts and inspect `telephony_event_dlq` | RUNTIME EVIDENCE REQUIRED | Source contract exists | No PostgreSQL/Redis runtime |
+| Downstream unavailable | relay | Redis outage integration test | Stop Redis during relay and verify bounded retry/DLQ behavior | RUNTIME EVIDENCE REQUIRED | Source failure path exists | No Redis runtime |
+| Migration ordering/safety | migrations 037–042 | `tests/unit/services/test_telephony_migrations.py` | `pytest tests/unit/services/test_telephony_migrations.py -q` | NOT EXECUTED | Static migration inventory only | No executable repo runtime |
+| Real Twilio outbound | Twilio provider + dialer | real provider call | Authorized Twilio credentials/number; execute outbound call | RUNTIME EVIDENCE REQUIRED | None | External Twilio infrastructure unavailable |
+| Real inbound | /voice + phone resolver | real provider call | Authorized Twilio number; execute inbound call | RUNTIME EVIDENCE REQUIRED | None | External Twilio infrastructure unavailable |
+| Real Media Streams | WSS + CallOrchestrator | real provider call | Verify stream start/audio/STT/TTS/disconnect | RUNTIME EVIDENCE REQUIRED | None | External runtime unavailable |
+| Prometheus scrape | metrics endpoints / Prometheus config | live scrape | Query telephony metrics from Prometheus | RUNTIME EVIDENCE REQUIRED | None | Monitoring runtime unavailable |
+
+### W2 full regression commands
+- `pytest -q`
+- `ruff check src/ tests/`
+- `ruff format --check src/ tests/`
+- `mypy --strict src/ tests/` if configured
+- `npm test -- --runInBand`
+- `docker compose config --quiet`
+- migration application/rollback validation for 037–042 against authorized PostgreSQL
+- Redis integration/chaos checks for CPS, callback idempotency, and event relay
+- authorized Twilio runtime checks where credentials and numbers exist
+
+No command above is marked PASS without execution evidence.
