@@ -63,3 +63,7 @@ L2-B007 implementation is resolved: the actual Jaeger Deployment now passes `--b
 | L2-W2-010 | Canonical event DB | HIGH | BLOCKED | Migration 041 is not applied to an authorized PostgreSQL runtime. | Apply migration 041 and verify durable event ordering/idempotency under duplicate callbacks. |
 | L2-W2-011 | Observability runtime | MEDIUM | BLOCKED | New telephony metrics are implemented but Prometheus scrape/query evidence is unavailable. | Scrape BFF metrics and verify lifecycle, webhook latency, setup latency, and failure signals. |
 | L2-W2-012 | Recording access API | MEDIUM | OPEN | Storage authorization/presigned URL logic exists in the recording boundary, but no user-facing recording access endpoint is yet wired through the existing authenticated BFF surface. | Add the authenticated access endpoint without exposing object keys or credentials; keep W4/W5 out of scope. |
+
+
+## Recording access endpoint resolution — 2026-09-25
+L2-W2-012 is RESOLVED at implementation level: the authenticated BFF recording-access endpoint verifies tenant ownership, creates a 5-minute HMAC-bound internal request, and returns only the media gateway's short-lived presigned object URL. Object keys and storage credentials are not returned. Automated/integration/runtime/production verification remains blocked.
