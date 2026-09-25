@@ -62,6 +62,7 @@ def test_valid_recording_lifecycle(tmp_path: Path):
     artifact.write_text('{"event":"call_start"}\n', encoding="utf-8")
     manager.finalize(tenant_id="tenant-a", call_sid="C1", artifacts=[artifact])
     assert list((tmp_path / "objects" / "tenant-a").rglob("*.zip"))
+    manager.mark_retained(recording_id="rid-1", tenant_id="tenant-a")
 
 
 def test_unknown_recording_access_is_denied():
