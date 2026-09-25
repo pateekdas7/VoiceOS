@@ -114,3 +114,11 @@ The previously identified W2 implementation gap — the canonical downstream tel
 **Integration/runtime/production:** RUNTIME EVIDENCE REQUIRED.
 
 The branch must not be promoted to VERIFIED until applicable PostgreSQL, Redis, S3, Prometheus, Twilio and Media Streams evidence is actually executed and recorded.
+
+
+### W2 canonical event delivery boundary — 2026-09-25
+The canonical telephony event boundary is implemented using the existing repository's documented Redis/PostgreSQL primitives rather than introducing a second event framework. Repository inspection did not find a separately addressable `src/libs/event_bus` or `src/services/event_bus` implementation on the target branch; the W2 boundary therefore uses PostgreSQL as the durable source of truth and the existing Redis dependency as the downstream transport.
+
+Contract: deterministic SHA-256 event identity, fixed schema version `1.0`, fixed lifecycle event types, tenant identity, safe JSON serialization, transactional event+outbox persistence, tenant-scoped Redis delivery, bounded exponential retry, stale-claim recovery, and durable DLQ. Downstream delivery is at-least-once; consumers must deduplicate by `event_id`. Billing and CRM business logic are excluded.
+
+Automated, integration, runtime, and production acceptance gates remain pending.
