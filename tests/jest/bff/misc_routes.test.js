@@ -58,6 +58,15 @@ const { app } = require('../../../bff');
 // /system/health performs real GPU probes and remains integration/runtime tested.
 // The lightweight liveness/readiness endpoints above are safe for unit tests.
 
+describe('BFF metrics endpoint', () => {
+  it('exposes Prometheus counters without authentication', async () => {
+    const res = await request(app).get('/metrics');
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('# TYPE voiceos_bff_http_requests_total counter');
+    expect(res.text).toContain('# TYPE voiceos_bff_http_errors_total counter');
+  });
+});
+
 describe('BFF health endpoints', () => {
   beforeEach(() => jest.clearAllMocks());
 
