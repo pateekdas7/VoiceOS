@@ -9,6 +9,7 @@ const Redis        = require('ioredis');
 const twilio       = require('twilio');
 const { randomUUID } = require('crypto');
 const { normalizeProviderStatus, canTransition } = require('./telephony_call_state');
+const { parseCallbackInstant, evaluateWorkingHours, validTimezone } = require('./telephony_callback_policy');
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const app          = express();
@@ -2202,39 +2203,65 @@ app.post('/dialer/callback', async (req, res) => {
 app.post('/campaigns/:id/leads/:leadId/schedule-callback', requireAuth, async (req, res) => {
   try {
     const tid = req.user.tenant_id;
-    const { callback_at } = req.body; // ISO datetime string
+    const { callback_at, callback_timezone } = req.body || {};
     if (!callback_at) return res.status(400).json({ error: 'callback_at required' });
 
-    const lr = await pool.query(
-      'SELECT * FROM leads WHERE lead_id=$1 AND tenant_id=$2',
-      [req.params.leadId, tid]
+    const { rows } = await pool.query(
+      `SELECT l.lead_id, l.campaign_id, l.pipeline_id, l.phone, l.name, l.language, l.score,
+              c.tenant_id AS campaign_tenant_id, c.timezone AS campaign_timezone,
+              c.daily_start_hour, c.daily_end_hour, c.allowed_weekdays, c.excluded_dates,
+              t.timezone AS tenant_timezone
+       FROM leads l
+       JOIN campaigns c ON c.campaign_id=l.campaign_id AND c.tenant_id=$1
+       JOIN tenants t ON t.tenant_id=$1
+       WHERE l.lead_id=$2 AND l.campaign_id=$3 AND l.tenant_id=$1`,
+      [tid, req.params.leadId, req.params.id]
     );
-    if (!lr.rows.length) return res.status(404).json({ error: 'not_found' });
-    const lead = lr.rows[0];
+    if (!rows.length) return res.status(404).json({ error: 'not_found' });
+    const lead = rows[0];
 
-    const callbackMs = new Date(callback_at).getTime();
-    if (isNaN(callbackMs) || callbackMs <= Date.now()) {
+    const timezone = callback_timezone || lead.campaign_timezone || lead.tenant_timezone;
+    if (!validTimezone(timezone)) {
+      return res.status(400).json({ error: 'invalid_or_missing_timezone' });
+    }
+
+    let callbackDate;
+    try {
+      callbackDate = parseCallbackInstant(callback_at, timezone);
+    } catch (e) {
+      return res.status(400).json({ error: 'invalid_callback_datetime', detail: e.message });
+    }
+    if (callbackDate.getTime() <= Date.now()) {
       return res.status(400).json({ error: 'callback_at must be a future datetime' });
     }
 
+    const working = evaluateWorkingHours(callbackDate, timezone, {
+      dailyStartHour: lead.daily_start_hour,
+      dailyEndHour: lead.daily_end_hour,
+      allowedWeekdays: lead.allowed_weekdays,
+      excludedDates: lead.excluded_dates,
+    });
+    if (!working.allowed) {
+      return res.status(400).json({ error: 'callback_outside_calling_window', reason: working.reason, timezone, local_date: working.localDate, local_hour: working.localHour });
+    }
+
+    const callbackMs = callbackDate.getTime();
     const payload = {
       lead_id: lead.lead_id, campaign_id: lead.campaign_id,
-      pipeline_id: lead.pipeline_id, tenant_id: lead.tenant_id,
+      pipeline_id: lead.pipeline_id, tenant_id: lead.campaign_tenant_id,
       phone: lead.phone, name: lead.name, language: lead.language,
       score: lead.score, queued_at: new Date().toISOString(),
-      _callback: true, _callback_at: new Date(callbackMs).toISOString(),
+      _callback: true, _callback_at: callbackDate.toISOString(),
+      _callback_timezone: timezone,
     };
     await redis.zadd(`voiceos:callback_calls:${tid}`, callbackMs, JSON.stringify(payload));
-
     await pool.query(
-      `UPDATE leads SET queue_status='CALLBACK', updated_at=now() WHERE lead_id=$1`,
-      [lead.lead_id]
+      `UPDATE leads SET queue_status='CALLBACK', updated_at=now() WHERE lead_id=$1 AND tenant_id=$2`,
+      [lead.lead_id, tid]
     );
-
-    res.json({ ok: true, scheduled_at: new Date(callbackMs).toISOString() });
+    res.json({ ok: true, scheduled_at: callbackDate.toISOString(), timezone, local_date: working.localDate, local_hour: working.localHour });
   } catch (e) { throw e; }
 });
-
 // ─── Catch-all ────────────────────────────────────────────────────────────────
 app.all('/{*path}', (req, res) => { res.status(404).json({ error: 'not_found' }); });
 
