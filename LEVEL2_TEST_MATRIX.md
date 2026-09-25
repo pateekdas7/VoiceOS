@@ -148,3 +148,20 @@ Only execution can produce PASS/FAIL. All rows below remain NOT EXECUTED or RUNT
 - authorized Twilio runtime checks where credentials and numbers exist
 
 No command above is marked PASS without execution evidence.
+
+
+## W2 definitive event-boundary inventory — 2026-09-25
+| Requirement | Implementation | Test location | Exact command/action | Execution status | Evidence | Remaining blocker |
+|---|---|---|---|---|---|---|
+| Event schema validation | `telephony_event_boundary.js` | `tests/jest/bff/telephony_event_boundary.test.js` | `npm test -- --runInBand tests/jest/bff/telephony_event_boundary.test.js` | NOT EXECUTED | Source/test files only | Node runtime unavailable |
+| Event identity / duplicate suppression | `telephony_event_boundary.js`, migration 041/042 | same Jest test + PostgreSQL integration | targeted Jest; DB duplicate insert | NOT EXECUTED | Source/test files only | PostgreSQL + Node unavailable |
+| Tenant isolation / serialization | `telephony_event_boundary.js`, relay | boundary/relay Jest tests | targeted Jest + Redis integration | NOT EXECUTED | Source/test files only | Node/Redis unavailable |
+| Durable persistence/outbox | migration 042 + `persistCanonicalCallEvent` | DB integration required | apply 037–042; insert event; inspect outbox | NOT EXECUTED | Source only | PostgreSQL unavailable |
+| Retry/backoff | `telephony_event_relay.js` | `tests/jest/bff/telephony_event_relay.test.js` | targeted Jest + Redis failure injection | NOT EXECUTED | Source/test files only | Node/Redis unavailable |
+| DLQ/failure visibility | migration 042 + relay | relay integration | exhaust max attempts; inspect DLQ | NOT EXECUTED | Source only | PostgreSQL/Redis unavailable |
+| Downstream unavailable | relay | Redis integration | make Redis unavailable during delivery | NOT EXECUTED | Source only | Redis runtime unavailable |
+| Unknown event/version | boundary + relay | boundary/relay Jest | targeted Jest | NOT EXECUTED | Source/test files only | Node runtime unavailable |
+| Migration 037–042 | SQL/Alembic | migration inventory test + DB | `pytest tests/unit/services/test_telephony_migrations.py -q` + real DB apply/rollback | NOT EXECUTED | Static file inspection only | Python/PostgreSQL unavailable |
+
+## W2 security test inventory
+Tenant phone/Caller-ID/recording/CallSID/lead/campaign/event isolation; Twilio signature/replay/duplicate/malformed/unknown status; recording access/path traversal/expiry; CPS burst and multi-tenant isolation are all mapped to existing source controls and targeted tests. No security test is marked PASS because no executable test runtime or production dependency runtime was attached.
