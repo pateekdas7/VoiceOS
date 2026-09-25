@@ -149,3 +149,9 @@ Automated execution remains blocked in this environment. Runtime and production 
 | Canonical Billing/CRM event boundary | IMPLEMENTED | BLOCKED | BLOCKED | BLOCKED | BLOCKED |
 
 W2 remains PARTIALLY IMPLEMENTED — REMAINING IMPLEMENTATION WORK because recording access is not yet wired through an authenticated public endpoint, and runtime/test execution remains unavailable.
+
+
+### W2 continuation update — 2026-09-25
+Current branch HEAD: `6963d0411cd4569cfa1e7087d554ac6af14e59f3`.
+
+W2 implementation slices now include durable recording metadata/object-storage boundary and authenticated-by-capability recording access, callback timezone/DST policy, canonical provider failure classification with persisted retryability, bounded webhook execution, canonical durable telephony events, and bounded telephony/media/recording/callback telemetry. These are **IMPLEMENTED** by source inspection. **TESTED / INTEGRATION VERIFIED / RUNTIME VERIFIED / PRODUCTION VERIFIED: BLOCKED** because no executable repository/runtime is available. W2 remains **PARTIALLY IMPLEMENTED — REMAINING IMPLEMENTATION WORK**.
