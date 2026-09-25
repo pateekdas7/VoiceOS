@@ -90,13 +90,13 @@ describe('W2 provider CPS limiter — real Redis integration', () => {
 
   test('Redis failure is fail-closed because limiter errors propagate', async () => {
     const broken = client();
-    await expect(broken.ping()).rejects.toBeTruthy();
+    await broken.ping();
+    broken.disconnect();
     await expect(acquireProviderRateSlot({
       redis: broken,
       tenantId: TEST_PREFIX + 'redis-failure',
       limit: 1,
       nowMs: 1_900_000_005_000,
     })).rejects.toBeTruthy();
-    broken.disconnect();
   });
 });
