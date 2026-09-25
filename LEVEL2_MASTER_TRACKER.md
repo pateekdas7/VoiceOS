@@ -240,3 +240,123 @@ This status must not be promoted to VERIFIED until the applicable test, integrat
 **Verification:** NOT EXECUTED. No local repository checkout/runtime was available, and no authorized PostgreSQL/Redis/Twilio/S3/Prometheus runtime was attached. Therefore no implementation-only evidence is promoted to TESTED, INTEGRATION VERIFIED, RUNTIME VERIFIED, or PRODUCTION VERIFIED.
 
 Overall W2 status remains **PARTIALLY IMPLEMENTED — REMAINING IMPLEMENTATION WORK** until all remaining W2 implementation gaps are closed. This event-boundary slice itself is implementation-complete.
+
+
+## W2 FINAL STATIC GAP AUDIT — 2026-09-25
+
+**Inspected branch/HEAD:** `claude/ssh-gpu-cpu-servers-y99fib` @ `6e42dce528b84728613c06e082b6983baaed2a52`.
+
+This is a source/tracking audit only. No repository-local test or runtime command was executed.
+
+### Acceptance classification
+
+| # | W2 item | Classification | Static finding |
+|---|---|---|---|
+| 1 | Phone-number lifecycle | IMPLEMENTED — awaiting verification | Tenant-scoped number table, ACTIVE/SUSPENDED/RELEASED state, inbound/outbound flags and resolver exist. Carrier provisioning itself remains external. |
+| 2 | Tenant inbound/outbound routing | IMPLEMENTED — awaiting verification | /voice resolves To for inbound and From for outbound; WSS receives resolved tenant. |
+| 3 | Twilio outbound creation | IMPLEMENTED — awaiting verification | Production dialer creates Twilio Calls with status callbacks and /voice URL. |
+| 4 | Caller ID selection | IMPLEMENTED — awaiting verification | Tenant-owned active Twilio number, campaign-specific first; global fallback requires explicit flag. |
+| 5 | /voice | IMPLEMENTED — awaiting verification | Signed Twilio request, AccountSid check, tenant resolution and admission-token issuance are wired. |
+| 6 | Media Streams WSS boundary | IMPLEMENTED — awaiting verification | Real Starlette WebSocketRoute and CPU serve path exist. |
+| 7 | Admission/authentication | IMPLEMENTED — awaiting verification | Single-use token is bound to CallSid/AccountSid/tenant and consumed before call resources are allocated. |
+| 8 | Webhook authentication | IMPLEMENTED — awaiting verification | /dialer/callback validates Twilio signature; production fails closed when auth token is absent. |
+| 9 | CallSID correlation | IMPLEMENTED — awaiting verification | Callback locks and resolves the durable call_attempts row by CallSid. |
+| 10 | Canonical call state machine | IMPLEMENTED — awaiting verification | Provider normalization plus explicit transition table/terminal states exist. |
+| 11 | Idempotency | IMPLEMENTED — awaiting verification | Existing idempotency_keys plus canonical event identity suppress duplicate effects. |
+| 12 | Duplicate/out-of-order callbacks | IMPLEMENTED — awaiting verification | Terminal duplicates are suppressed and backward transitions return 200 without mutation. |
+| 13 | Callback lifecycle | IMPLEMENTED — awaiting verification | Callback transaction updates call_attempts/active_calls and completion queue. |
+| 14 | Recording lifecycle | IMPLEMENTED — awaiting verification | CREATE/PROCESSING/AVAILABLE/RETAINED/FAILED/DELETED lifecycle is wired into call teardown. |
+| 15 | Recording storage abstraction | IMPLEMENTED — awaiting verification | Filesystem local/test and S3 production backends share RecordingStorage; production requires S3. |
+| 16 | Retention/deletion | IMPLEMENTED — awaiting verification | retention_until, cleanup worker, deletion attempts and durable failure state exist. |
+| 17 | Callback timezone policy | IMPLEMENTED — awaiting verification | IANA validation, explicit offsets, local wall time, DST nonexistent-time rejection and calling-window checks exist. |
+| 18 | Provider failure classification | IMPLEMENTED — awaiting verification | Bounded failure classes and retryability contract are persisted on call_attempts. |
+| 19 | Bounded provider retries | IMPLEMENTED — awaiting verification | MAX_RETRY_ATTEMPTS=3 with 60/300/900s scheduling plus classifier-driven retry on placement errors. |
+| 20 | Webhook timeout/retry behavior | IMPLEMENTED — awaiting verification | DB statement timeout and bounded Redis completion/expiry operations return non-2xx on failure so provider retry behavior can occur. |
+| 21 | CPS limiting | IMPLEMENTED — awaiting verification | Tenant-scoped Redis per-second limiter is invoked immediately before Twilio call creation. |
+| 22 | Carrier/provider failure handling | IMPLEMENTED — awaiting verification | Busy/no-answer/voicemail/timeout/provider/auth/destination classes have explicit actions. |
+| 23 | Telephony metrics | PARTIALLY IMPLEMENTED — code work remains | Core BFF/lifecycle/recording metrics exist, but media-failure, retry-attempt, callback-event and CPS wrapper functions in media_gateway/metrics.py have no live call sites found. |
+| 24 | Structured logging/tracing | PARTIALLY IMPLEMENTED — code work remains | BFF trace IDs/structured logs exist, but SharedCallDependencies exposes an optional OTel tracer and the CPU composition root does not wire a tracer into the live telephony path. |
+| 25 | Tenant isolation | IMPLEMENTED — awaiting verification | Phone resolution, caller ID selection, callback identity checks, active-call updates, recording access and event relay are tenant-scoped. |
+| 26 | Canonical telephony events | IMPLEMENTED — awaiting verification | Fixed v1.0 lifecycle schema and deterministic SHA-256 identity are implemented. |
+| 27 | PostgreSQL outbox | IMPLEMENTED — awaiting verification | Canonical event insert and outbox insert are performed through the callback transaction boundary. |
+| 28 | Event relay | IMPLEMENTED — awaiting verification | PostgreSQL claim/recovery plus tenant-scoped Redis delivery exists. |
+| 29 | Retry/backoff | IMPLEMENTED — awaiting verification | Bounded exponential retry with stale PROCESSING recovery exists. |
+| 30 | DLQ | IMPLEMENTED — awaiting verification | Exhausted events are durably written to telephony_event_dlq and outbox state becomes DLQ. |
+| 31 | Billing event boundary | IMPLEMENTED — awaiting verification | Canonical telephony event/outbox boundary is the W2 downstream contract; billing business logic/consumer remains outside W2. |
+| 32 | CRM event boundary | IMPLEMENTED — awaiting verification | Same canonical downstream contract carries tenant/campaign/lead/call identity; CRM business logic remains outside W2. |
+| 33 | Dialer interface boundary | IMPLEMENTED — awaiting verification | Live JS dialer/provider boundary plus durable call_attempt/callback/Redis completion contract are present. |
+| 34 | Configuration/secrets | IMPLEMENTED — awaiting verification | Twilio credentials/secrets are environment-backed; production webhook/auth paths fail closed when required secrets are absent. |
+| 35 | W2 documentation | IMPLEMENTED — awaiting verification | Six Level-2 tracking files and W2-specific architecture/verification notes exist. |
+| 36 | W2 tests | PARTIALLY IMPLEMENTED — code work remains | Focused tests exist, but the test matrix explicitly records the Redis-backed CPS concurrency/integration test as not yet added. |
+
+### Concrete implementation gaps
+
+1. **Alembic revision graph collision:** the branch contains both `0037_compliance_violations.py` and `0037_telephony_phone_numbers.py`, each declaring revision `0037`; it also contains both `0038_require_crm_match.py` and `0038_call_attempt_lifecycle.py`, each declaring revision `0038`. W2 revisions `0039`→`0042` point through the ambiguous `0038` revision. The raw SQL 037–042 sequence is present, but the Alembic graph is not unambiguous. This is an implementation/migration-graph gap, not runtime evidence.
+2. **Telephony tracing wiring:** `SharedCallDependencies.tracer` is optional, but `deployment/cpu/app.py::build_shared_call_dependencies()` does not construct/inject an OTel tracer. The W2 media path therefore has no source-level proof of active OTel spans.
+3. **Telemetry call-site coverage:** `record_media_failure`, `record_retry_attempt`, `record_callback_event`, and `record_cps_limit_event` are defined but no live call sites were found in the inspected W2 path. Core metrics are present, but the declared telemetry surface is incomplete.
+4. **CPS integration test:** the W2 test matrix explicitly says the Redis-backed provider-CPS integration/concurrency test is **NOT YET ADDED**. Source implementation exists, but the W2 test implementation is incomplete.
+
+These are the only concrete W2 implementation gaps found in this static pass. No new event bus, queue abstraction, state machine, storage abstraction, retry framework, or telemetry framework is proposed.
+
+### Verification-only blockers
+
+The following are **not implementation gaps**:
+- no repository checkout / no executable repo-local test environment
+- no PostgreSQL runtime
+- no Redis runtime
+- no S3/object-storage runtime
+- no Prometheus runtime
+- no Twilio/carrier runtime
+- no Media Streams runtime
+- no authorized downstream consumer runtime
+
+**Tests executed: 0.** Source/test-file existence is not execution evidence.
+
+### Exact W2 SQL migrations present
+
+- `scripts/db/migrations/037_telephony_phone_numbers.sql`
+- `scripts/db/migrations/038_call_attempt_lifecycle.sql`
+- `scripts/db/migrations/039_telephony_recordings.sql`
+- `scripts/db/migrations/040_provider_failure_contract.sql`
+- `scripts/db/migrations/041_telephony_call_events.sql`
+- `scripts/db/migrations/042_telephony_event_outbox.sql`
+
+W2 Alembic files present:
+- `0037_telephony_phone_numbers.py`
+- `0038_call_attempt_lifecycle.py`
+- `0039_telephony_recordings.py`
+- `0040_provider_failure_contract.py`
+- `0041_telephony_call_events.py`
+- `0042_telephony_event_outbox.py`
+
+Also present, but unrelated W2 Alembic files with colliding numeric revision IDs:
+- `0037_compliance_violations.py`
+- `0038_require_crm_match.py`
+
+### Tests present
+
+Relevant W2 tests include:
+- `tests/unit/services/test_telephony_phone_numbers.py`
+- `tests/integration/services/test_twilio_tenant_routing.py`
+- `tests/unit/services/test_twilio_admission.py`
+- `tests/integration/services/test_twilio_ws_entrypoint_integration.py`
+- `tests/unit/services/test_dialer.py`
+- `tests/jest/bff/dialer.test.js`
+- `tests/jest/bff/telephony_call_state.test.js`
+- `tests/jest/bff/telephony_provider_boundary.test.js`
+- `tests/jest/bff/telephony_callback_policy.test.js`
+- `tests/jest/bff/telephony_provider_failure.test.js`
+- `tests/jest/bff/telephony_call_event.test.js`
+- `tests/jest/bff/telephony_event_boundary.test.js`
+- `tests/jest/bff/telephony_event_relay.test.js`
+- `tests/unit/services/test_recording_lifecycle.py`
+- `tests/unit/services/test_telephony_metrics.py`
+- `tests/unit/services/test_telephony_migrations.py`
+
+### Final static-audit decision
+
+**WORKSTREAM 2 PARTIALLY IMPLEMENTED — REMAINING IMPLEMENTATION WORK**
+
+The canonical event boundary itself is implementation-complete. The overall W2 implementation gate cannot be marked complete because the four concrete gaps above remain. Runtime/test infrastructure gaps are tracked separately and do not substitute for these implementation findings.
+
+W3/W4/W5 and Level-3 remain frozen.
