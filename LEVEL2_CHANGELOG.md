@@ -91,3 +91,12 @@ Continued W2 only from the branch's moving HEAD. Added/retained durable recordin
 - Added focused event-boundary, relay, and migration-inventory tests.
 - No billing, CRM synchronization, invoice, payment, or commercial logic was added.
 - No runtime/test execution evidence was claimed.
+
+
+## 2026-09-25 — W2 event-boundary continuation
+- Audited for an existing reusable event bus before adding infrastructure; no addressable `src/libs/event_bus` / `src/services/event_bus` implementation was found on the target branch.
+- Added durable canonical-event outbox + DLQ migration 042 and Alembic 0042.
+- Added canonical event validation/serialization/persistence and bounded Redis relay.
+- Rewired the BFF callback path through the canonical persistence boundary.
+- Added event-boundary, relay, and migration-inventory tests.
+- Updated W2 acceptance/runtime/test tracking without claiming execution.
