@@ -651,6 +651,7 @@ def build_shared_call_dependencies() -> object:
     """
     from src.services.media_gateway.twilio_ws_entrypoint import SharedCallDependencies
     from src.services.telephony.phone_numbers import TelephonyNumberResolver
+    from src.services.media_gateway.recording_lifecycle import RecordingLifecycleManager, build_recording_storage
 
     gpu_scheduler = build_gpu_scheduler()
     # Fresh CustomerService reading from the same authoritative Postgres —
@@ -659,6 +660,13 @@ def build_shared_call_dependencies() -> object:
     # even though the client objects are constructed independently.
     customer_service = build_customer_service(build_postgres_connection())
     telephony_number_resolver = TelephonyNumberResolver(build_postgres_connection())
+    recording_manager = None
+    if _env("RECORDING_ENABLED", "false").lower() == "true":
+        recording_manager = RecordingLifecycleManager(
+            build_postgres_connection(),
+            build_recording_storage(),
+            retention_days=int(_env("RECORDING_RETENTION_DAYS", "30")),
+        )
     from src.services.tts.greeting_cache import GreetingCache
     greeting_cache = GreetingCache()
     return SharedCallDependencies(
@@ -672,6 +680,7 @@ def build_shared_call_dependencies() -> object:
         conversation_engine=build_conversation_engine(),
         customer_service=customer_service,
         telephony_number_resolver=telephony_number_resolver,
+        recording_manager=recording_manager,
         language=_env("STT_LANGUAGE", "hi"),
         # See SharedCallDependencies.public_ws_base_url's docstring — required
         # whenever this process runs behind a tunnel/reverse-proxy (e.g. a
