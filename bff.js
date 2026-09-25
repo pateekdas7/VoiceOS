@@ -7,7 +7,7 @@ const cookieParser = require('cookie-parser');
 const cors         = require('cors');
 const Redis        = require('ioredis');
 const twilio       = require('twilio');
-const { randomUUID } = require('crypto');
+const { randomUUID, createHmac } = require('crypto');
 const { normalizeProviderStatus, canTransition } = require('./telephony_call_state');
 const { parseCallbackInstant, evaluateWorkingHours, validTimezone } = require('./telephony_callback_policy');
 const { buildCanonicalCallEvent } = require('./telephony_call_event');
@@ -2049,6 +2049,42 @@ app.get('/dialer/call-history', requireAuth, async (req, res) => {
 });
 
 // ── Queue statistics for this tenant ──────────────────────────────────────────
+app.get('/recordings/:recordingId/access', requireAuth, async (req, res) => {
+  const tid = req.user.tenant_id;
+  const secret = process.env.RECORDING_INTERNAL_SECRET || '';
+  const mediaGateway = process.env.MEDIA_GATEWAY_HTTP_URL || '';
+  if (!secret || !mediaGateway) return res.status(503).json({ error: 'recording_access_unavailable' });
+  const { rows } = await pool.query(
+    `SELECT recording_id, state, retention_until
+     FROM telephony_recordings
+     WHERE recording_id=$1 AND tenant_id=$2 AND state IN ('AVAILABLE','RETAINED')`,
+    [req.params.recordingId, tid]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'not_found' });
+  const expires = Math.floor(Date.now()/1000) + 300;
+  const message = tid + ':' + req.params.recordingId + ':' + expires;
+  const signature = createHmac('sha256', secret).update(message).digest('hex');
+  const url = new URL('/recordings/' + encodeURIComponent(req.params.recordingId) + '/access', mediaGateway);
+  url.searchParams.set('tenant_id', tid);
+  try {
+    const upstream = await _withTimeout(fetch(url, {
+      method:'GET',
+      headers:{
+        'x-voiceos-recording-expires': String(expires),
+        'x-voiceos-recording-signature': signature,
+        'x-trace-id': req.traceId,
+      },
+      signal: AbortSignal.timeout(3000),
+    }), 3500, 'recording_access');
+    if (!upstream.ok) return res.status(upstream.status === 404 ? 404 : 502).json({ error:'recording_access_failed' });
+    const body = await upstream.json();
+    return res.json({ recording_id: body.recording_id, expires_at: body.expires_at, url: body.url });
+  } catch (e) {
+    log.warn('recording.access_failed', { recording_id:req.params.recordingId, trace_id:req.traceId, error:e.message });
+    return res.status(502).json({ error:'recording_access_failed', trace_id:req.traceId });
+  }
+});
+
 app.get('/dialer/queue-stats', requireAuth, async (req, res) => {
   try {
     const tid = req.user.tenant_id;
