@@ -120,3 +120,24 @@ Four concrete W2 implementation gaps remain:
 Verification remains separate: no repository-local tests or dependency/runtime drills were executed.
 
 Final status: **WORKSTREAM 2 PARTIALLY IMPLEMENTED — REMAINING IMPLEMENTATION WORK**.
+
+
+## 2026-09-25 — W2 four-gap implementation closure
+
+Fresh implementation pass limited to the four genuine gaps from the final static audit. No W3/W4/W5/Level-3 work was started.
+
+### Implementation status
+- Alembic revision collisions — FIXED. Pre-existing 0037 compliance and 0038 CRM revisions are preserved. W2 Alembic revisions now use 0043 through 0048, chained from 0038 through all six W2 migrations. No duplicate revision ID remains and no unrelated migration functionality was deleted.
+- OTel live W2 composition — FIXED. The CPU composition root now builds the existing OTelTracer from the configured OTLP endpoint and injects it into SharedCallDependencies.tracer. Existing W2 media spans are retained; a call-termination span was added.
+- Telemetry call sites — FIXED. Actual media pipeline failures, actual STT/TTS retry attempts, callback processing, CPS-limit rejection, and outbound retry execution now have bounded metric increments. No CallSID, phone number, raw error text, or other unbounded identifier is used as a metric label.
+- CPS Redis integration test — FIXED. A real-ioredis integration test now covers N/N+1 allowance, concurrent acquisition, tenant isolation, epoch-second rollover, and Redis failure/fail-closed behavior. The test requires a real Redis service.
+
+### Verification status
+- Static/source checks: IMPLEMENTATION EVIDENCE PRESENT; AUTOMATED EXECUTION NOT EXECUTED.
+- Migration application/rollback: NOT EXECUTED — POSTGRESQL RUNTIME UNAVAILABLE.
+- OTel runtime export/scrape: NOT EXECUTED — OTEL/PROMETHEUS RUNTIME UNAVAILABLE.
+- Telephony/Twilio/Media Streams: NOT EXECUTED — REAL TELEPHONY RUNTIME UNAVAILABLE.
+- CPS Redis integration: NOT EXECUTED — REDIS RUNTIME UNAVAILABLE.
+- S3 recording runtime: NOT EXECUTED — S3 RUNTIME UNAVAILABLE.
+
+CURRENT W2 STATUS: WORKSTREAM 2 IMPLEMENTATION COMPLETE — RUNTIME VERIFICATION REQUIRED.
