@@ -371,11 +371,26 @@ class TwilioDialer {
     if (!this._wsUrl) throw new Error('PUBLIC_WS_URL required (media stream endpoint)');
   }
 
+  async _acquireProviderRateSlot(tenantId) {
+    const limit = Math.max(1, parseInt(process.env.TWILIO_CALLS_PER_SECOND || '5', 10));
+    const windowMs = 1000;
+    const bucket = Math.floor(Date.now() / windowMs);
+    const key = `voiceos:twilio:cps:${tenantId}:${bucket}`;
+    const count = await redis.incr(key);
+    if (count === 1) await redis.pexpire(key, windowMs + 1000);
+    if (count > limit) {
+      log.warn(`[TWILIO] Provider CPS limit reached tenant=${tenantId} limit=${limit}`);
+      throw new Error('TWILIO_RATE_LIMIT');
+    }
+  }
+
   async initiate(lead) {
     // Point Twilio at media-gateway /voice so MG mints the admission_token itself.
     const mgHttp = this._wsUrl.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:');
     const twimlUrl = `${mgHttp}/voice`;
     const callbackUrl = `${this._bffUrl}/dialer/callback?pipeline_id=${encodeURIComponent(lead.pipeline_id)}&lead_id=${encodeURIComponent(lead.lead_id)}&tenant_id=${encodeURIComponent(lead.tenant_id)}`;
+
+    await this._acquireProviderRateSlot(lead.tenant_id);
 
     const { rows: numbers } = await this._pool.query(
       `SELECT e164_number FROM telephony_phone_numbers
