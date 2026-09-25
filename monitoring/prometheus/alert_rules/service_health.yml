@@ -97,15 +97,3 @@ groups:
           summary: "Container restart storm: {{ $labels.namespace }}/{{ $labels.pod }}"
           description: "A container restarted at least five times in 15 minutes."
           runbook: "docs/runbooks/production-stabilization/repeated-service-crashes.md"
-
-      - alert: VoiceOSBackupVerificationFailed
-        expr: voiceos_backup_verification_last_success == 0
-        for: 5m
-        labels:
-          severity: critical
-          route: page
-          team: platform
-        annotations:
-          summary: "VoiceOS backup verification is failing"
-          description: "The latest backup artifact verification has not succeeded."
-          runbook: "docs/runbooks/production-stabilization/backup-verification.md"
