@@ -26,7 +26,7 @@ class TelephonyNumberResolver:
         self._conn = conn
 
     def resolve_for_call(self, number: str, *, direction: str) -> TelephonyNumber | None:
-        if not number:
+        if not number or direction not in {"inbound", "outbound-api", "outbound-dial"}:
             return None
         inbound = direction == "inbound"
         cur = self._conn.cursor()
