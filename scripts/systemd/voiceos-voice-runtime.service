@@ -1,14 +1,17 @@
 [Unit]
 Description=VoiceOS Voice Runtime (Twilio Media Streams WS)
-After=network.target postgresql.service redis-server.service
+Wants=network-online.target
+After=network-online.target postgresql.service redis-server.service
 
 [Service]
 Type=simple
 WorkingDirectory=/opt/voiceos/app
 EnvironmentFile=/opt/voiceos/.env
 ExecStart=/opt/voiceos/venv/bin/python deployment/cpu/app.py --serve
-Restart=always
-RestartSec=10
+Restart=on-failure
+StartLimitIntervalSec=300
+StartLimitBurst=5
+RestartSec=5
 TimeoutStopSec=45
 StandardOutput=append:/opt/voiceos/logs/voice-runtime.log
 StandardError=append:/opt/voiceos/logs/voice-runtime.log
