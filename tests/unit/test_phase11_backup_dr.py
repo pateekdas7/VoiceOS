@@ -45,6 +45,7 @@ REDIS_SH       = (ROOT / "scripts/backup/redis_verify_persistence.sh").read_text
 MONGO_DUMP_SH  = (ROOT / "scripts/backup/mongodb_dump.sh").read_text()
 MONGO_REST_SH  = (ROOT / "scripts/backup/mongodb_restore.sh").read_text()
 VAULT_SNAP_SH  = (ROOT / "scripts/backup/vault_snapshot.sh").read_text()
+BACKUP_VERIFY_SH = (ROOT / "scripts/backup/verify_backup_artifacts.sh").read_text()
 RUNBOOK        = (ROOT / "docs/runbooks/database-failure-scenarios.md").read_text()
 
 # ---------------------------------------------------------------------------
@@ -152,6 +153,21 @@ def _(): assert "init.json" in VAULT_SNAP_SH
 # ---------------------------------------------------------------------------
 # 11e: Failure scenario runbooks
 # ---------------------------------------------------------------------------
+
+@test("11e: backup verification script exists")
+def _(): assert (ROOT / "scripts/backup/verify_backup_artifacts.sh").exists()
+
+@test("11e: backup verification checks MongoDB, Vault, Redis and PostgreSQL")
+def _():
+    assert "MongoDB" in BACKUP_VERIFY_SH
+    assert "Vault" in BACKUP_VERIFY_SH
+    assert "Redis" in BACKUP_VERIFY_SH
+    assert "PostgreSQL" in BACKUP_VERIFY_SH
+
+@test("11e: backup verification timer exists and is daily")
+def _():
+    timer = (ROOT / "scripts/systemd/voiceos-backup-verification.timer").read_text()
+    assert "OnCalendar" in timer and "Unit=voiceos-backup-verification.service" in timer
 
 @test("11e: database-failure-scenarios.md runbook exists")
 def _(): assert (ROOT / "docs/runbooks/database-failure-scenarios.md").exists()
