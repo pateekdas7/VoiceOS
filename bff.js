@@ -10,6 +10,7 @@ const twilio       = require('twilio');
 const { randomUUID } = require('crypto');
 const { normalizeProviderStatus, canTransition } = require('./telephony_call_state');
 const { parseCallbackInstant, evaluateWorkingHours, validTimezone } = require('./telephony_callback_policy');
+const { buildCanonicalCallEvent } = require('./telephony_call_event');
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const app          = express();
@@ -2175,6 +2176,33 @@ app.post('/dialer/callback', async (req, res) => {
        WHERE attempt_id=$1`,
       [attempt.attempt_id, dbStatus, terminal, duration]);
 
+    const canonicalEvent = buildCanonicalCallEvent({
+      tenantId: attempt.tenant_id,
+      campaignId: attempt.campaign_id,
+      leadId: attempt.lead_id,
+      callId: CallSid,
+      callAttemptId: attempt.attempt_id,
+      callSid: CallSid,
+      lifecycleState: next,
+      outcome: terminal ? next : null,
+      durationSeconds: duration,
+      eventTimestamp: new Date().toISOString(),
+      correlationId: req.traceId,
+    });
+    await client.query(
+      `INSERT INTO telephony_call_events
+       (event_id,tenant_id,event_type,schema_version,campaign_id,lead_id,call_id,call_attempt_id,
+        provider_call_sid,lifecycle_state,outcome,duration_seconds,recording_reference,callback_reference,
+        event_timestamp,correlation_id,sequence_no)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+       ON CONFLICT (event_id) DO NOTHING`,
+      [canonicalEvent.eventId, canonicalEvent.tenantId, canonicalEvent.eventType,
+       canonicalEvent.schemaVersion, canonicalEvent.campaignId, canonicalEvent.leadId,
+       canonicalEvent.callId, canonicalEvent.callAttemptId, canonicalEvent.providerCallSid,
+       canonicalEvent.lifecycleState, canonicalEvent.outcome, canonicalEvent.durationSeconds,
+       canonicalEvent.recordingReference, canonicalEvent.callbackReference,
+       canonicalEvent.eventTimestamp, canonicalEvent.correlationId, canonicalEvent.sequenceNo]
+    );
     await client.query(
       `UPDATE active_calls SET status=$2,
          answered_at=CASE WHEN $2='IN_PROGRESS' AND answered_at IS NULL THEN NOW() ELSE answered_at END,
