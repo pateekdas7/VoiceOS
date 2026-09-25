@@ -77,3 +77,24 @@ No Twilio, PostgreSQL, Redis, S3/object-storage, Media Streams, or production CP
 As of 2026-09-25, source implementation now includes a PostgreSQL transactional canonical-event outbox (`telephony_event_outbox`), durable DLQ (`telephony_event_dlq`), and a bounded Redis relay. No PostgreSQL or Redis runtime is attached to this coding session, so the following are explicitly **NOT EXECUTED**: migration 042 application, outbox persistence against a real DB, Redis delivery, retry/backoff, stale-lock recovery, DLQ transition, and downstream-unavailable recovery.
 
 No source-level event relay result is treated as runtime evidence. Real consumer/delivery verification remains required.
+
+
+## 2026-09-25 execution-environment probe — current session
+
+The available coding container was checked before declaring execution blocked:
+- repository checkout: NOT AVAILABLE
+- Python: 3.13.5
+- Node.js: v22.16.0
+- npm: 10.9.2
+- pytest: 9.0.2
+- Ruff: NOT INSTALLED
+- Mypy: NOT INSTALLED
+- PostgreSQL client (psql): NOT INSTALLED
+- Redis CLI: NOT INSTALLED
+- Mongo shell: NOT INSTALLED
+- Docker: NOT INSTALLED
+- Docker Compose: NOT INSTALLED
+- kubectl: NOT INSTALLED
+- git status --short: FAILED — fatal: not a git repository
+
+The repository cannot be cloned from this container because the earlier network probe failed resolving github.com. Therefore no local repository test or dependency runtime execution was performed. Tool availability alone is not treated as W2 execution evidence.
