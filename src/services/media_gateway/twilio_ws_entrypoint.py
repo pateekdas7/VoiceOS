@@ -1202,6 +1202,8 @@ class CallOrchestrator:
 
         tasks: list[asyncio.Task[None]] = []
         try:
+            from src.services.media_gateway.metrics import record_call_lifecycle
+            record_call_lifecycle("CONNECTED")
             if self._recorder is not None:
                 self._recorder.event("call_start", tenant_id=self._tenant_id)
 
@@ -1278,6 +1280,8 @@ class CallOrchestrator:
                             artifacts=self._recorder.artifact_paths(),
                         )
                     except Exception:
+                        from src.services.media_gateway.metrics import record_recording_failure
+                        record_recording_failure("finalize")
                         logger.exception("recording.finalize_failed call_sid=%s tenant_id=%s", self._call_id, self._tenant_id)
 
 
