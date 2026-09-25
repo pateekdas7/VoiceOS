@@ -232,3 +232,11 @@ Therefore the current final W2 status is:
 **WORKSTREAM 2 IMPLEMENTATION COMPLETE — RUNTIME VERIFICATION REQUIRED**
 
 This status must not be promoted to VERIFIED until the applicable test, integration, runtime and production evidence is actually executed.
+
+
+## W2 continuation — 2026-09-25 canonical event boundary
+**Implementation:** COMPLETE for the canonical event boundary slice. PostgreSQL canonical event persistence is coupled to a durable outbox row; a bounded relay publishes to tenant-scoped Redis queues with retry and DLQ states. Billing and CRM business logic remain outside this boundary.
+
+**Verification:** NOT EXECUTED. No local repository checkout/runtime was available, and no authorized PostgreSQL/Redis/Twilio/S3/Prometheus runtime was attached. Therefore no implementation-only evidence is promoted to TESTED, INTEGRATION VERIFIED, RUNTIME VERIFIED, or PRODUCTION VERIFIED.
+
+Overall W2 status remains **PARTIALLY IMPLEMENTED — REMAINING IMPLEMENTATION WORK** until all remaining W2 implementation gaps are closed. This event-boundary slice itself is implementation-complete.
