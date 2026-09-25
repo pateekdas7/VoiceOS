@@ -243,6 +243,8 @@ class VeenaAdapter:
                     break
                 except Exception as _tts_exc:
                     if _attempt == 0:
+                        from src.services.media_gateway.metrics import record_retry_attempt
+                        record_retry_attempt("tts_provider")
                         logger.warning(
                             "TTS connection failed on first attempt (%s: %s), "
                             "retrying after %.1fs",
