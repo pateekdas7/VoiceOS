@@ -40,9 +40,13 @@ const log = {
 
 // ─── Prometheus operational metrics ──────────────────────────────────────────
 const _metricCounters = new Map();
-function _incMetric(name, labels = {}) {
+function _incMetric(name, labels = {}, delta = 1) {
   const key = JSON.stringify([name, labels]);
-  _metricCounters.set(key, (_metricCounters.get(key) || 0) + 1);
+  _metricCounters.set(key, (_metricCounters.get(key) || 0) + delta);
+}
+function _withTimeout(promise, ms, label) {
+  let timer;
+  return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(label + '_timeout')), ms); })]).finally(() => clearTimeout(timer));
 }
 function _escapeProm(value) {
   return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\\"').replace(/\n/g, '\\n');
@@ -74,7 +78,12 @@ app.get('/metrics', (_req, res) => {
     _renderCounter('voiceos_bff_http_errors_total', 'Total HTTP 5xx responses emitted by the VoiceOS BFF.'),
     _renderCounter('voiceos_bff_pg_errors_total', 'Total PostgreSQL client or pool errors observed by the VoiceOS BFF.'),
     _renderCounter('voiceos_bff_redis_errors_total', 'Total Redis errors observed by the VoiceOS BFF.'),
-    _renderCounter('voiceos_bff_readiness_failures_total', 'Total BFF readiness checks with an unavailable dependency.')
+    _renderCounter('voiceos_bff_readiness_failures_total', 'Total BFF readiness checks with an unavailable dependency.'),
+    _renderCounter('voiceos_telephony_webhook_events_total', 'Telephony webhook events processed by outcome and lifecycle state.'),
+    _renderCounter('voiceos_telephony_webhook_duplicates_total', 'Duplicate telephony webhook deliveries suppressed.'),
+    _renderCounter('voiceos_telephony_webhook_failures_total', 'Telephony webhook processing failures.'),
+    _renderCounter('voiceos_telephony_webhook_processing_seconds_sum', 'Sum of telephony webhook processing latency in seconds.'),
+    _renderCounter('voiceos_telephony_webhook_processing_seconds_count', 'Count of telephony webhook processing observations.')
   ].join('\n') + '\n');
 });
 
@@ -2100,6 +2109,9 @@ app.post('/dialer/twiml', async (req, res) => {
 // ── Twilio status callback — Twilio POSTs call lifecycle events here ───────────
 // Forwards completion signal to the waiting Pipeline loop via Redis
 app.post('/dialer/callback', async (req, res) => {
+  const startedAt = process.hrtime.bigint();
+  let webhookOutcome = 'failure';
+  let webhookState = 'unknown';
   const client = await pool.connect();
   try {
     const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN;
@@ -2114,15 +2126,16 @@ app.post('/dialer/callback', async (req, res) => {
     }
 
     const { CallSid, CallStatus, Duration, AnsweredBy } = req.body || {};
-    if (!CallSid || !CallStatus) return res.sendStatus(400);
+    if (!CallSid || !CallStatus) { webhookOutcome='malformed'; return res.sendStatus(400); }
 
     await client.query('BEGIN');
+    await client.query("SET LOCAL statement_timeout='5000ms'");
     const result = await client.query(
       `SELECT attempt_id, tenant_id, campaign_id, lead_id, pipeline_id, status
        FROM call_attempts WHERE call_sid=$1 FOR UPDATE`, [CallSid]);
     if (!result.rows.length) {
       await client.query('ROLLBACK');
-      return res.sendStatus(404);
+      webhookOutcome='unknown_call'; return res.sendStatus(404);
     }
     const attempt = result.rows[0];
 
@@ -2130,24 +2143,26 @@ app.post('/dialer/callback', async (req, res) => {
         (req.query.lead_id && req.query.lead_id !== String(attempt.lead_id)) ||
         (req.query.pipeline_id && req.query.pipeline_id !== String(attempt.pipeline_id))) {
       await client.query('ROLLBACK');
-      return res.sendStatus(403);
+      webhookOutcome='tenant_mismatch'; return res.sendStatus(403);
     }
 
     const next = normalizeProviderStatus(CallStatus, AnsweredBy);
     if (!next) {
       await client.query('ROLLBACK');
-      return res.sendStatus(400);
+      webhookOutcome='unknown_status'; return res.sendStatus(400);
     }
 
     const current = attempt.status === 'IN_PROGRESS' ? 'CONNECTED' :
       attempt.status === 'INITIATED' ? 'DIALING' : attempt.status;
     if (!canTransition(current, next)) {
       await client.query('ROLLBACK');
-      log.info('dialer.callback.out_of_order_suppressed', { call_sid: CallSid, current_state: current, provider_status: CallStatus });
+      webhookOutcome='out_of_order'; webhookState=current;
+      log.info('dialer.callback.out_of_order_suppressed', { call_sid: CallSid, current_state: current, provider_status: CallStatus, trace_id:req.traceId });
       return res.sendStatus(200);
     }
 
     const terminal = ['COMPLETED','BUSY','NO_ANSWER','FAILED','CANCELLED','TIMEOUT','VOICEMAIL'].includes(next);
+    webhookState=next;
     const dbStatus = next === 'CONNECTED' ? 'IN_PROGRESS' : next;
     const duration = Duration == null ? null : Math.max(0, parseInt(Duration) || 0);
 
@@ -2183,18 +2198,26 @@ app.post('/dialer/callback', async (req, res) => {
           pipelineId: attempt.pipeline_id, tenantId: attempt.tenant_id,
           leadId: attempt.lead_id, answeredBy: AnsweredBy,
         });
-        await redis.lpush(`voiceos:pipeline:completed:${attempt.pipeline_id}`, payload);
-        await redis.expire(`voiceos:pipeline:completed:${attempt.pipeline_id}`, 120);
+        await _withTimeout(redis.lpush(`voiceos:pipeline:completed:${attempt.pipeline_id}`, payload), 3000, 'redis_completion');
+        await _withTimeout(redis.expire(`voiceos:pipeline:completed:${attempt.pipeline_id}`, 120), 3000, 'redis_expiry');
       }
     }
 
     await client.query('COMMIT');
+    if (webhookOutcome === 'failure') webhookOutcome='processed';
     return res.sendStatus(200);
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
-    log.error('dialer.callback_error', { error: e.message });
+    webhookOutcome='failure';
+    _incMetric('voiceos_telephony_webhook_failures_total', { reason: e.message.includes('timeout') ? 'timeout' : 'processing' });
+    log.error('dialer.callback_error', { error: e.message, trace_id:req.traceId });
     return res.sendStatus(500);
   } finally {
+    const latencySeconds=Number(process.hrtime.bigint()-startedAt)/1e9;
+    _incMetric('voiceos_telephony_webhook_events_total',{outcome:webhookOutcome,state:webhookState});
+    _incMetric('voiceos_telephony_webhook_processing_seconds_sum',{},latencySeconds);
+    _incMetric('voiceos_telephony_webhook_processing_seconds_count');
+    log.info('dialer.callback.completed',{outcome:webhookOutcome,state:webhookState,latency_ms:Math.round(latencySeconds*1000),trace_id:req.traceId});
     client.release();
   }
 });
