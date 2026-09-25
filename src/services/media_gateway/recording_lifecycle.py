@@ -148,6 +148,14 @@ class RecordingLifecycleManager:
             size = self.storage.put(key, bundle, "application/zip")
             cur = self.conn.cursor()
             cur.execute(
+                """UPDATE telephony_recordings r
+                   SET campaign_id=ca.campaign_id, lead_id=ca.lead_id, call_attempt_id=ca.attempt_id
+                   FROM call_attempts ca
+                   WHERE r.recording_id=%s AND r.tenant_id=%s AND ca.call_sid=%s
+                     AND ca.tenant_id=%s""",
+                (recording_id, tenant_id, call_sid, tenant_id),
+            )
+            cur.execute(
                 """UPDATE telephony_recordings
                    SET state='RETAINED', object_key=%s, content_type='application/zip',
                        byte_size=%s, completed_at=NOW(), updated_at=NOW(), last_error=NULL
