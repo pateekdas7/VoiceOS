@@ -37,6 +37,8 @@ rule_files:
   - "alert_rules/slo_alerts.yml"
   - "alert_rules/infrastructure.yml"
   - "alert_rules/application.yml"
+  - "alert_rules/voiceos_bff_dialer.yml"
+  - "alert_rules/service_health.yml"
   - "alert_rules/business.yml"
   - "alert_rules/ai_services.yml"
 
