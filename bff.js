@@ -11,6 +11,7 @@ const { randomUUID, createHmac } = require('crypto');
 const { normalizeProviderStatus, canTransition } = require('./telephony_call_state');
 const { parseCallbackInstant, evaluateWorkingHours, validTimezone } = require('./telephony_callback_policy');
 const { buildCanonicalCallEvent } = require('./telephony_call_event');
+const { persistCanonicalCallEvent } = require('./telephony_event_boundary');
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const app          = express();
@@ -87,7 +88,9 @@ app.get('/metrics', (_req, res) => {
     _renderCounter('voiceos_telephony_webhook_processing_seconds_count', 'Count of telephony webhook processing observations.'),
     _renderCounter('voiceos_telephony_calls_by_state_total', 'Telephony lifecycle transitions observed by canonical state.'),
     _renderCounter('voiceos_telephony_call_setup_seconds_sum', 'Sum of call setup latency from initiation to connection.'),
-    _renderCounter('voiceos_telephony_call_setup_seconds_count', 'Count of call setup latency observations.')
+    _renderCounter('voiceos_telephony_call_setup_seconds_count', 'Count of call setup latency observations.'),
+    _renderCounter('voiceos_telephony_canonical_events_created_total', 'Canonical telephony events durably created.'),
+    _renderCounter('voiceos_telephony_canonical_event_duplicates_total', 'Duplicate canonical telephony events suppressed.')
   ].join('\n') + '\n');
 });
 
@@ -2236,20 +2239,15 @@ app.post('/dialer/callback', async (req, res) => {
       eventTimestamp: new Date().toISOString(),
       correlationId: req.traceId,
     });
-    await client.query(
-      `INSERT INTO telephony_call_events
-       (event_id,tenant_id,event_type,schema_version,campaign_id,lead_id,call_id,call_attempt_id,
-        provider_call_sid,lifecycle_state,outcome,duration_seconds,recording_reference,callback_reference,
-        event_timestamp,correlation_id,sequence_no)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
-       ON CONFLICT (event_id) DO NOTHING`,
-      [canonicalEvent.eventId, canonicalEvent.tenantId, canonicalEvent.eventType,
-       canonicalEvent.schemaVersion, canonicalEvent.campaignId, canonicalEvent.leadId,
-       canonicalEvent.callId, canonicalEvent.callAttemptId, canonicalEvent.providerCallSid,
-       canonicalEvent.lifecycleState, canonicalEvent.outcome, canonicalEvent.durationSeconds,
-       canonicalEvent.recordingReference, canonicalEvent.callbackReference,
-       canonicalEvent.eventTimestamp, canonicalEvent.correlationId, canonicalEvent.sequenceNo]
-    );
+    const canonicalPersist = await persistCanonicalCallEvent(client, {
+      ...canonicalEvent,
+      provider: 'twilio',
+    });
+    if (canonicalPersist.duplicate) {
+      _incMetric('voiceos_telephony_canonical_event_duplicates_total');
+    } else {
+      _incMetric('voiceos_telephony_canonical_events_created_total', { event_type: canonicalEvent.eventType });
+    }
     await client.query(
       `UPDATE active_calls SET status=$2,
          answered_at=CASE WHEN $2='IN_PROGRESS' AND answered_at IS NULL THEN NOW() ELSE answered_at END,
