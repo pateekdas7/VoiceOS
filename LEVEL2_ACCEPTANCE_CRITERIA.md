@@ -93,3 +93,11 @@ W2 is not promoted to COMPLETE by source inspection or test-file existence.
 
 ### W2 continuation verification state — 2026-09-25
 Recording lifecycle, callback timezone policy, provider failure classification, webhook hardening, telephony observability, and canonical call-event boundary are **IMPLEMENTED**. Their automated, integration, runtime, and production gates remain **NOT EXECUTED — ENVIRONMENT BLOCKED / RUNTIME EVIDENCE REQUIRED**. No implementation-only result is promoted to a verification gate.
+
+
+### W2 canonical telephony event boundary — 2026-09-25
+The canonical event boundary is now implemented as a PostgreSQL transactional event + outbox contract, with Redis tenant-scoped downstream delivery and a bounded retry/DLQ relay. The contract enforces schema version `1.0`, deterministic event identity, fixed lifecycle event types, tenant identity, safe JSON serialization, and one outbox row per canonical event. Delivery is at-least-once; downstream consumers must deduplicate by `event_id`. Billing and CRM business logic are explicitly excluded.
+
+New implementation: `telephony_event_boundary.js`, migration `042_telephony_event_outbox.sql` / Alembic `0042_telephony_event_outbox.py`, and `scripts/telephony/telephony_event_relay.js`.
+
+Automated, integration, Redis/PostgreSQL runtime, DLQ, and downstream-unavailable verification remain NOT EXECUTED — ENVIRONMENT BLOCKED.
