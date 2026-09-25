@@ -100,3 +100,27 @@ L2-W2-012 is RESOLVED at implementation level: the authenticated BFF recording-a
 | L2-W2-023 | Twilio runtime | BLOCKED | No authorized Twilio credentials/number/public WSS runtime. |
 | L2-W2-024 | S3 recording runtime | BLOCKED | No authorized S3-compatible production storage runtime. |
 | L2-W2-025 | Prometheus runtime | BLOCKED | No authorized monitoring runtime for scrape/telemetry verification. |
+
+
+## W2 FINAL STATIC GAP AUDIT — 2026-09-25
+
+Current branch/HEAD: `claude/ssh-gpu-cpu-servers-y99fib` @ `6e42dce528b84728613c06e082b6983baaed2a52`.
+
+### Implementation gaps
+- Alembic revision IDs `0037` and `0038` collide with unrelated migrations; the W2 Alembic graph is ambiguous.
+- Live W2 OTel tracing is not wired from the CPU composition root into `SharedCallDependencies.tracer`.
+- Several telephony metric wrappers are defined without live call sites.
+- Redis-backed CPS concurrency/integration test is not implemented.
+
+### Verification-only blockers
+No repository checkout/executable test environment, PostgreSQL, Redis, S3, Prometheus, Twilio, Media Streams, or downstream consumer runtime is attached. These remain BLOCKED verification items, not implementation gaps.
+
+### Migration inventory
+SQL W2 migrations: 037, 038, 039, 040, 041, 042 are all present. W2 Alembic migrations 0037–0042 are present; additionally unrelated `0037_compliance_violations.py` and `0038_require_crm_match.py` declare the same revision IDs.
+
+### Test inventory
+W2-focused tests are present across phone routing, tenant routing, admission, WSS, dialer, callback/state/provider boundaries, timezone, failure classification, recording, metrics, canonical event/outbox/relay, and migrations. CPS Redis integration/concurrency test is the identified missing test implementation.
+
+**Tests executed: 0.**
+
+**Final W2 status: WORKSTREAM 2 PARTIALLY IMPLEMENTED — REMAINING IMPLEMENTATION WORK.**
