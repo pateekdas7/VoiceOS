@@ -89,3 +89,13 @@ def test_filesystem_storage_blocks_path_escape(tmp_path: Path):
     storage = FilesystemRecordingStorage(str(tmp_path))
     with pytest.raises(ValueError):
         storage._path("../other")
+
+
+def test_unknown_provider_recording_callsid_is_rejected():
+    conn = FakeConn()
+    manager = RecordingLifecycleManager(conn, FilesystemRecordingStorage("/tmp/voiceos-test"), 7)
+    with pytest.raises(LookupError, match="unknown recording"):
+        manager.process_provider_event(
+            tenant_id="tenant-a", provider="twilio", provider_event_id="evt-unknown",
+            event_type="completed", provider_recording_id="RE1", payload={"CallSid":"UNKNOWN"}
+        )
