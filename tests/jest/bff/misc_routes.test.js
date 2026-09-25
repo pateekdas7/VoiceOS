@@ -55,8 +55,35 @@ Pool.mockImplementation(() => mockPool);
 
 const { app } = require('../../../bff');
 
-// GET /system/health is intentionally not unit-tested: it probes real GPU endpoints
-// (STT/LLM/TTS via WireGuard) that are unavailable in CI. Covered by integration tests.
+// /system/health performs real GPU probes and remains integration/runtime tested.
+// The lightweight liveness/readiness endpoints above are safe for unit tests.
+
+describe('BFF health endpoints', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('GET /health/live reports process liveness without dependency checks', async () => {
+    const res = await request(app).get('/health/live');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ status: 'healthy', service: 'voiceos-bff' });
+    expect(mockPool.query).not.toHaveBeenCalled();
+    expect(mockRedis.ping).not.toHaveBeenCalled();
+  });
+
+  it('GET /health/ready reports healthy when Postgres and Redis are reachable', async () => {
+    const res = await request(app).get('/health/ready');
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('healthy');
+    expect(res.body.dependencies).toEqual({ postgresql: 'healthy', redis: 'healthy' });
+  });
+
+  it('GET /health/ready returns 503 when Redis is unavailable', async () => {
+    mockRedis.ping.mockRejectedValueOnce(new Error('redis unavailable'));
+    const res = await request(app).get('/health/ready');
+    expect(res.status).toBe(503);
+    expect(res.body.status).toBe('unhealthy');
+    expect(res.body.dependencies.redis).toBe('unhealthy');
+  });
+});
 
 describe('GET /team', () => {
   beforeEach(() => jest.clearAllMocks());
