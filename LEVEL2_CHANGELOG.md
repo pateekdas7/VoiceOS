@@ -100,3 +100,23 @@ Continued W2 only from the branch's moving HEAD. Added/retained durable recordin
 - Rewired the BFF callback path through the canonical persistence boundary.
 - Added event-boundary, relay, and migration-inventory tests.
 - Updated W2 acceptance/runtime/test tracking without claiming execution.
+
+
+## 2026-09-25 — W2 FINAL STATIC GAP AUDIT
+
+Performed a fresh source audit of the actual branch HEAD `6e42dce528b84728613c06e082b6983baaed2a52` plus all six Level-2 tracking files.
+
+The canonical telephony event path is confirmed in source:
+`/dialer/callback` → canonical event construction → `telephony_call_events` → `telephony_event_outbox` → bounded PostgreSQL relay → tenant-scoped Redis queue.
+
+The audit did **not** find another event-bus/queue/state/storage/retry framework that should replace this boundary.
+
+Four concrete W2 implementation gaps remain:
+- duplicate Alembic revision IDs `0037`/`0038` across unrelated migrations;
+- OTel tracer not injected into the live W2 media-gateway composition root;
+- declared telephony metric wrappers lacking live call sites for several failure/retry/CPS/callback signals;
+- Redis-backed CPS concurrency/integration test not yet implemented.
+
+Verification remains separate: no repository-local tests or dependency/runtime drills were executed.
+
+Final status: **WORKSTREAM 2 PARTIALLY IMPLEMENTED — REMAINING IMPLEMENTATION WORK**.
