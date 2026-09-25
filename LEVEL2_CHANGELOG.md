@@ -81,3 +81,13 @@ Verification state: implementation is source-complete for these slices, but auto
 ## 2026-09-25 — W2 production-boundary continuation (follow-up)
 
 Continued W2 only from the branch's moving HEAD. Added/retained durable recording lifecycle integration, callback timezone policy, canonical provider failure contract, bounded webhook processing, durable canonical call events, and bounded telephony lifecycle/media/recording/callback telemetry. Added focused tests for these contracts. No W3/W4/W5/Level-3 changes were introduced. Automated execution remains blocked.
+
+
+## 2026-09-25 — W2 canonical event delivery boundary
+- Added `telephony_event_boundary.js` with deterministic schema validation, safe serialization, transactional canonical-event persistence and outbox creation.
+- Added migration 042 / Alembic 0042 for `telephony_event_outbox` and `telephony_event_dlq`; added provider to the canonical event record.
+- Added `scripts/telephony/telephony_event_relay.js` with tenant-scoped Redis delivery, bounded exponential retry, stale-claim recovery, and durable DLQ transition.
+- Rewired `/dialer/callback` to persist canonical events through the outbox boundary.
+- Added focused event-boundary, relay, and migration-inventory tests.
+- No billing, CRM synchronization, invoice, payment, or commercial logic was added.
+- No runtime/test execution evidence was claimed.
