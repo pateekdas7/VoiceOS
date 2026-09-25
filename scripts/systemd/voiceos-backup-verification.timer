@@ -1,0 +1,11 @@
+[Unit]
+Description=VoiceOS daily backup artifact verification
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 UTC
+Persistent=true
+RandomizedDelaySec=300
+Unit=voiceos-backup-verification.service
+
+[Install]
+WantedBy=timers.target
