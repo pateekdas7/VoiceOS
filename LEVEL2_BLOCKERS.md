@@ -87,3 +87,16 @@ L2-W2-012 is RESOLVED at implementation level: the authenticated BFF recording-a
 | L2-W2-020 | Redis event delivery | BLOCKED | No authorized Redis runtime; tenant queue delivery, retry/backoff, stale-lock recovery and downstream-unavailable behavior are not executed. |
 | L2-W2-021 | Event DLQ | BLOCKED | No runtime failure injection has exercised max-attempt transition into `telephony_event_dlq`. |
 | L2-W2-022 | Downstream consumer | BLOCKED | No authorized downstream consumer/runtime is attached; at-least-once delivery and consumer-side event-id deduplication remain unverified. |
+
+
+## W2 continuation blockers — 2026-09-25
+| ID | Area | State | Exact blocker / required evidence |
+|---|---|---|---|
+| L2-W2-018 | W2 test execution | BLOCKED | No executable repository checkout/runtime in this session; Jest/pytest/ruff/mypy cannot be executed. |
+| L2-W2-019 | PostgreSQL migrations 037–042 | BLOCKED | No authorized PostgreSQL runtime; ordering/syntax can be inspected but application/rollback cannot be claimed. |
+| L2-W2-020 | Redis event relay | BLOCKED | No authorized Redis runtime; delivery/retry/stale-lock/DLQ behavior not executed. |
+| L2-W2-021 | Canonical event DLQ | BLOCKED | No failure-injection runtime to exhaust attempts and inspect durable DLQ. |
+| L2-W2-022 | Downstream consumer | BLOCKED | No authorized consumer/runtime; delivery and consumer-side idempotency remain unverified. |
+| L2-W2-023 | Twilio runtime | BLOCKED | No authorized Twilio credentials/number/public WSS runtime. |
+| L2-W2-024 | S3 recording runtime | BLOCKED | No authorized S3-compatible production storage runtime. |
+| L2-W2-025 | Prometheus runtime | BLOCKED | No authorized monitoring runtime for scrape/telemetry verification. |
