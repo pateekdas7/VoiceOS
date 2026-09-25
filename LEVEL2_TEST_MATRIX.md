@@ -53,3 +53,10 @@ Because the repository checkout failed, no pytest, Jest, Ruff, Mypy, frontend bu
 | MongoDB monitoring configuration tests | unit/config | `pytest tests/unit/monitoring/test_mongodb_monitoring.py -q` | Configuration assertions pass | Repository checkout unavailable; command could not execute | NOT EXECUTED — ENVIRONMENT BLOCKED |
 | MongoDB runtime monitoring | runtime | Prometheus scrape + controlled MongoDB failure/recovery | `up` and `mongodb_up` reflect state and recover | No authorized runtime environment attached | RUNTIME EVIDENCE REQUIRED |
 | MongoDB Alertmanager drill | runtime/alerting | Controlled alert fire → route → resolve | Alert fires, routes and resolves | No authorized Alertmanager environment attached | RUNTIME EVIDENCE REQUIRED |
+
+
+## Jaeger/OTel retention enforcement tests
+| Test | Category | Exact command | Expected | Actual | Status |
+|---|---|---|---|---|---|
+| Jaeger retention configuration | unit/config | `pytest tests/unit/monitoring/test_jaeger_retention.py -q` | 7-day Badger TTL is present on the actual Jaeger Deployment and storage wiring is consistent | Repository checkout unavailable in execution environment | NOT EXECUTED — ENVIRONMENT BLOCKED |
+| Jaeger runtime retention | runtime | Deploy Jaeger, write timestamped traces, verify traces older than 7 days are no longer queryable/storage-retained while current traces remain queryable | 7-day retention enforced by deployed instance | No authorized Jaeger runtime environment attached | RUNTIME EVIDENCE REQUIRED |

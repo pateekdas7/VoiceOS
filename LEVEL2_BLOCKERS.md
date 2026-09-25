@@ -15,7 +15,7 @@ Implementation gaps that do not have an external dependency are tracked in LEVEL
 |---|---|---|---|---|---|---|
 | L2-B005 | W1 / automated testing | HIGH | Coding container cannot clone the designated branch because github.com DNS resolution fails. | Prevents execution of the actual pytest/Jest/Ruff/mypy/coverage suites. | BLOCKED | Provide a repository-mounted or network-enabled execution environment and run the Workstream-1 test matrix. |
 | L2-B006 | W1 / runtime | HIGH | No authorized CPU/GPU/DB/Redis/Mongo/Vault/Prometheus runtime is attached to this session. | Service recovery, dependency failure, GPU and alert tests cannot be marked verified. | BLOCKED | Execute the runtime acceptance matrix on the authorized staging environment. |
-| L2-B007 | W1 / tracing | MEDIUM | Jaeger configuration documents a 7-day retention intent, but no actual purge job/mechanism was found in the repository. | Traces can grow without a proven retention enforcement path. | BLOCKED | Establish and runtime-verify an actual Jaeger retention mechanism supported by the deployed Jaeger version. |
+| L2-B007 | W1 / tracing | MEDIUM | The deployed Jaeger 1.60 all-in-one previously did not consume the documented 7-day retention field. | Traces could grow without an enforceable retention path. | IMPLEMENTATION RESOLVED; RUNTIME BLOCKED | Runtime-verify the deployed Badger TTL with controlled aged traces. |
 | L2-B008 | W1 / backup verification | MEDIUM | Backup verifier is scheduled, but its systemd timer and real artifact checks have not executed in this environment. | Backup validity is not proven by source/configuration alone. | BLOCKED | Run the timer and verifier on the CPU node, then perform authorized restore drills separately. |
 | L2-B009 | W1 / alerting | MEDIUM | Alertmanager routing configuration exists, but no live firing/resolution test was executed. | Alert definitions alone do not prove an on-call notification path. | BLOCKED | Fire a controlled staging alert and record Alertmanager/receiver evidence. |
 
@@ -28,3 +28,7 @@ The execution-environment blocker was reproduced, not merely carried forward: a 
 | ID | Workstream | Severity | Description | Status | Exact next action |
 |---|---|---|---|---|---|
 | L2-B010 | W1 / MongoDB runtime monitoring | HIGH | MongoDB exporter and alerts are source/configuration verified, but no authorized Prometheus/MongoDB/Alertmanager runtime is attached. | BLOCKED | Execute exporter scrape, MongoDB failure/recovery, exporter failure, and Alertmanager fire → route → resolve drills on authorized staging infrastructure. |
+
+
+### 2026-09-25 — Jaeger retention implementation status
+L2-B007 implementation is resolved: the actual Jaeger Deployment now passes `--badger.span-store-ttl=168h0m0s`. Automated tests are **NOT EXECUTED — ENVIRONMENT BLOCKED** and runtime retention remains **RUNTIME EVIDENCE REQUIRED**. No additional W1 implementation work is planned after this task unless runtime evidence exposes a genuine defect.

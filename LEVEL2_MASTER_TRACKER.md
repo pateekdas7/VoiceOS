@@ -112,3 +112,9 @@ MongoDB remains PARTIAL for an implementation reason: the repository has a Docke
 
 ### MongoDB monitoring remediation — source/configuration verification
 MongoDB monitoring implementation is **VERIFIED BY SOURCE/CONFIGURATION**. A dedicated Percona MongoDB exporter, Prometheus scrape target, separate exporter-down and MongoDB-unavailable alerts, deploy-time secret injection, and Kubernetes network-policy paths are now wired into the existing observability architecture. MongoDB runtime monitoring remains **RUNTIME EVIDENCE REQUIRED**. Alertmanager fire → route → resolve remains **RUNTIME EVIDENCE REQUIRED**.
+
+
+### 2026-09-25 — Workstream 1 Jaeger/OTel retention enforcement
+The Jaeger retention gap was corrected without changing the 7-day policy. The deployed architecture is Jaeger 1.60 all-in-one with Badger local storage. The previous `retention.max_age: 168h` YAML was documentation/config intent only; it was not consumed by the actual Jaeger Deployment. The Deployment now explicitly passes `--badger.span-store-ttl=168h0m0s`, which is the native Jaeger/Badger retention mechanism for this architecture. The prior documentation claim of a `jaeger-badger-purge` CronJob was removed because no such job exists.
+
+Jaeger retention implementation is **VERIFIED BY SOURCE/CONFIGURATION**. Automated execution is **NOT EXECUTED — ENVIRONMENT BLOCKED**. Runtime retention behavior is **RUNTIME EVIDENCE REQUIRED**; YAML inspection is not treated as runtime evidence. Workstream 2 remains untouched.

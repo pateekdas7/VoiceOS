@@ -51,3 +51,7 @@ No acceptance gate was promoted by source inspection. The execution environment 
 
 ### MongoDB monitoring remediation
 The MongoDB W1 implementation gate is **VERIFIED BY SOURCE/CONFIGURATION**. Automated execution remains **NOT EXECUTED — ENVIRONMENT BLOCKED**. MongoDB runtime monitoring remains **RUNTIME EVIDENCE REQUIRED**. Alertmanager fire → route → resolve remains **RUNTIME EVIDENCE REQUIRED**.
+
+
+### 2026-09-25 — Jaeger retention enforcement
+The W1 tracing implementation gate now includes an explicit 7-day Jaeger retention requirement. The deployed Jaeger 1.60 all-in-one uses Badger storage and passes `--badger.span-store-ttl=168h0m0s` directly to the Jaeger process. This is the enforceable mechanism for the existing architecture. Automated configuration tests were added but are **NOT EXECUTED — ENVIRONMENT BLOCKED**. Runtime retention verification remains **RUNTIME EVIDENCE REQUIRED**.

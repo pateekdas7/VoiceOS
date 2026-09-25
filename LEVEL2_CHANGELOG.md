@@ -42,3 +42,9 @@ Additional inspection clarified the MongoDB PARTIAL status: Docker Compose provi
 
 ## 2026-09-25 — Workstream 1 MongoDB monitoring remediation
 Fixed the MongoDB monitoring implementation gap: added Percona exporter wiring for Compose and Kubernetes, Prometheus scraping, exporter-down and database-unavailable alerts, deploy-time secret injection, network-policy paths, and configuration tests. Implementation is VERIFIED BY SOURCE/CONFIGURATION. Tests are NOT EXECUTED — ENVIRONMENT BLOCKED. Runtime monitoring and Alertmanager fire → route → resolve remain RUNTIME EVIDENCE REQUIRED.
+
+
+## 2026-09-25 — Workstream 1 Jaeger/OTel retention enforcement
+Inspected the actual Jaeger deployment and found a real implementation gap: `monitoring/tracing/jaeger.yml` documented `retention.max_age: 168h`, but the deployed `jaegertracing/all-in-one:1.60` Deployment did not consume that YAML retention field. The documented `jaeger-badger-purge` CronJob also did not exist. The existing architecture was retained and corrected by passing Jaeger's native Badger TTL flag `--badger.span-store-ttl=168h0m0s` directly to the deployed Jaeger process. The reference configuration was updated to document this authoritative enforcement path.
+
+Added `tests/unit/monitoring/test_jaeger_retention.py` covering the 7-day value, actual Deployment attachment, Badger storage paths, ConfigMap wiring, and removal of the nonexistent purge-job claim. Tests: **NOT EXECUTED — ENVIRONMENT BLOCKED**. Runtime retention: **RUNTIME EVIDENCE REQUIRED**.

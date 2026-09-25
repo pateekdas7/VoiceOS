@@ -39,3 +39,9 @@ This execution attempt produced no application/runtime evidence. No CPU/GPU/depe
 
 ## MongoDB monitoring remediation
 No MongoDB runtime action was executed. Required evidence: exporter scrape with observed `mongodb_up`; controlled MongoDB failure/recovery; controlled exporter failure with `up{job="mongodb-exporter"}` transition; and Alertmanager fire → route → resolve. All remain **RUNTIME EVIDENCE REQUIRED**.
+
+
+## Jaeger/OTel retention
+Implementation evidence: the Jaeger Deployment now explicitly passes `--badger.span-store-ttl=168h0m0s` with `SPAN_STORAGE_TYPE=badger`. This is source/configuration evidence only.
+
+Runtime evidence required: deploy the actual Jaeger 1.60 instance, ingest controlled traces with timestamps that straddle the 7-day boundary, verify query/storage behavior, and capture Jaeger/Badger logs or metrics showing expiry/compaction. No such runtime action was executed in this session. Status: **RUNTIME EVIDENCE REQUIRED**.
