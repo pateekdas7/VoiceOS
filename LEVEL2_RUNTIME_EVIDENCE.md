@@ -67,3 +67,7 @@ No authorized Postgres/Redis/Twilio runtime is attached. Therefore canonical cal
 | Canonical call event boundary | IMPLEMENTED | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
 
 Execution rule: source inspection is not runtime evidence. No PostgreSQL migration, Redis behavior, Prometheus scrape, Twilio call, Media Stream, S3 object, signed URL, or provider failure behavior has been executed in this environment.
+
+
+### W2 continuation runtime evidence — 2026-09-25
+No Twilio, PostgreSQL, Redis, S3/object-storage, Media Streams, or production CPU runtime was attached. Recording upload/presign/retention/deletion, callback timezone behavior against real scheduling, provider failure injection, webhook replay storms, media lifecycle telemetry, canonical event persistence, and CPS behavior are **RUNTIME EVIDENCE REQUIRED**. No source inspection is treated as runtime verification.
