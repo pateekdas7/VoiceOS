@@ -67,3 +67,12 @@ L2-B007 implementation is resolved: the actual Jaeger Deployment now passes `--b
 
 ## Recording access endpoint resolution — 2026-09-25
 L2-W2-012 is RESOLVED at implementation level: the authenticated BFF recording-access endpoint verifies tenant ownership, creates a 5-minute HMAC-bound internal request, and returns only the media gateway's short-lived presigned object URL. Object keys and storage credentials are not returned. Automated/integration/runtime/production verification remains blocked.
+
+
+## 2026-09-25 — W2 continuation blockers
+
+- **L2-W2-013 TEST EXECUTION:** BLOCKED — no executable repository checkout/runtime; all new W2 tests are NOT EXECUTED.
+- **L2-W2-014 DATABASE:** BLOCKED — migrations 039–041 have not been applied against an authorized PostgreSQL runtime.
+- **L2-W2-015 TELEPHONY RUNTIME:** BLOCKED — no authorized Twilio credentials/carrier runtime/Media Streams endpoint for real call and failure drills.
+- **L2-W2-016 OBJECT STORAGE:** BLOCKED — production S3 upload/presigned access/retention/deletion has not been executed.
+- **L2-W2-017 OBSERVABILITY:** BLOCKED — Prometheus scrape/query evidence for the new W2 telemetry is unavailable.
