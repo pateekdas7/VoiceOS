@@ -48,3 +48,9 @@ Fixed the MongoDB monitoring implementation gap: added Percona exporter wiring f
 Inspected the actual Jaeger deployment and found a real implementation gap: `monitoring/tracing/jaeger.yml` documented `retention.max_age: 168h`, but the deployed `jaegertracing/all-in-one:1.60` Deployment did not consume that YAML retention field. The documented `jaeger-badger-purge` CronJob also did not exist. The existing architecture was retained and corrected by passing Jaeger's native Badger TTL flag `--badger.span-store-ttl=168h0m0s` directly to the deployed Jaeger process. The reference configuration was updated to document this authoritative enforcement path.
 
 Added `tests/unit/monitoring/test_jaeger_retention.py` covering the 7-day value, actual Deployment attachment, Badger storage paths, ConfigMap wiring, and removal of the nonexistent purge-job claim. Tests: **NOT EXECUTED — ENVIRONMENT BLOCKED**. Runtime retention: **RUNTIME EVIDENCE REQUIRED**.
+
+
+## Workstream 2 — initial production telephony boundary implementation
+Inspected the actual Twilio live path and corrected a genuine tenant-isolation gap: the media gateway previously carried a process-wide DEFAULT_TENANT_ID. Added migration 037 and TelephonyNumberResolver; signed /voice resolves the owning tenant from the provider number (From for outbound, To for inbound), fails closed for unassigned/inactive numbers, binds the resolved tenant into the single-use WSS admission ticket, and uses that tenant for CRM/context/session allocation. The production dialer now selects an active tenant-owned caller ID, with campaign-specific precedence; the legacy global caller ID requires explicit ALLOW_GLOBAL_TWILIO_FROM=true.
+
+Added unit and integration tests. Tests are NOT EXECUTED — ENVIRONMENT BLOCKED.

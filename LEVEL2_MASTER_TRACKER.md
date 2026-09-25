@@ -118,3 +118,13 @@ MongoDB monitoring implementation is **VERIFIED BY SOURCE/CONFIGURATION**. A ded
 The Jaeger retention gap was corrected without changing the 7-day policy. The deployed architecture is Jaeger 1.60 all-in-one with Badger local storage. The previous `retention.max_age: 168h` YAML was documentation/config intent only; it was not consumed by the actual Jaeger Deployment. The Deployment now explicitly passes `--badger.span-store-ttl=168h0m0s`, which is the native Jaeger/Badger retention mechanism for this architecture. The prior documentation claim of a `jaeger-badger-purge` CronJob was removed because no such job exists.
 
 Jaeger retention implementation is **VERIFIED BY SOURCE/CONFIGURATION**. Automated execution is **NOT EXECUTED — ENVIRONMENT BLOCKED**. Runtime retention behavior is **RUNTIME EVIDENCE REQUIRED**; YAML inspection is not treated as runtime evidence. Workstream 2 remains untouched.
+
+
+## Workstream 2 — Real Telephony Production Layer
+**Status: PARTIALLY IMPLEMENTED — REMAINING IMPLEMENTATION WORK**
+
+Actual path: tenant/campaign/lead → Redis tenant queue → dialer_worker.js → Twilio REST → Python /voice → signed admission token → Twilio Media Streams WSS → CallOrchestrator → audio/VAD/STT/ConversationEngine/TTS → Twilio media. Status callbacks reach BFF /dialer/callback. Durable call_attempts are written before provider initiation.
+
+Phone-number tenant routing is now implemented through migration 037, TelephonyNumberResolver, signed /voice routing, WSS ticket tenant binding, and tenant-scoped outbound caller-ID selection. SIP remains adapter-level and is not wired into the live listener. Webhook ordering/state, recording lifecycle, provider rate limiting, callback timezone enforcement, and canonical billing/CRM event contracts remain partial.
+
+Workstream 1 remains frozen. Workstreams 3/4/5 and Level-3 remain untouched.

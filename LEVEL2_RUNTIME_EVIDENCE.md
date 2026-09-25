@@ -45,3 +45,7 @@ No MongoDB runtime action was executed. Required evidence: exporter scrape with 
 Implementation evidence: the Jaeger Deployment now explicitly passes `--badger.span-store-ttl=168h0m0s` with `SPAN_STORAGE_TYPE=badger`. This is source/configuration evidence only.
 
 Runtime evidence required: deploy the actual Jaeger 1.60 instance, ingest controlled traces with timestamps that straddle the 7-day boundary, verify query/storage behavior, and capture Jaeger/Badger logs or metrics showing expiry/compaction. No such runtime action was executed in this session. Status: **RUNTIME EVIDENCE REQUIRED**.
+
+
+## Workstream 2 runtime evidence
+No authorized Twilio/SIP carrier environment or production credentials are attached. Real outbound/inbound calls, real provider signatures, real Media Streams audio, caller-ID verification, carrier outcome drills, duplicate/out-of-order webhook drills, recording lifecycle, tenant-isolation runtime drills and provider rate-limit behavior all remain **RUNTIME EVIDENCE REQUIRED**. The new phone-number routing implementation is source/configuration evidence only.

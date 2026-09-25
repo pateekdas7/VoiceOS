@@ -60,3 +60,14 @@ Because the repository checkout failed, no pytest, Jest, Ruff, Mypy, frontend bu
 |---|---|---|---|---|---|
 | Jaeger retention configuration | unit/config | `pytest tests/unit/monitoring/test_jaeger_retention.py -q` | 7-day Badger TTL is present on the actual Jaeger Deployment and storage wiring is consistent | Repository checkout unavailable in execution environment | NOT EXECUTED — ENVIRONMENT BLOCKED |
 | Jaeger runtime retention | runtime | Deploy Jaeger, write timestamped traces, verify traces older than 7 days are no longer queryable/storage-retained while current traces remain queryable | 7-day retention enforced by deployed instance | No authorized Jaeger runtime environment attached | RUNTIME EVIDENCE REQUIRED |
+
+
+## Workstream 2 tests
+| Test | Category | Command | Status |
+|---|---|---|---|
+| Tenant phone resolver | unit | `pytest tests/unit/services/test_telephony_phone_numbers.py -q` | NOT EXECUTED — ENVIRONMENT BLOCKED |
+| Twilio tenant routing | integration | `pytest tests/integration/services/test_twilio_tenant_routing.py -q` | NOT EXECUTED — ENVIRONMENT BLOCKED |
+| Twilio admission regression | regression | `pytest tests/unit/services/test_twilio_admission.py -q` | NOT EXECUTED — ENVIRONMENT BLOCKED |
+| Twilio WSS regression | integration | `pytest tests/integration/services/test_twilio_ws_entrypoint_integration.py -q` | NOT EXECUTED — ENVIRONMENT BLOCKED |
+| Dialer regression | unit | `pytest tests/unit/services/test_dialer.py -q` | NOT EXECUTED — ENVIRONMENT BLOCKED |
+| BFF callback regression | unit/integration | `npm test -- --runInBand tests/jest/bff/dialer.test.js` | NOT EXECUTED — ENVIRONMENT BLOCKED |

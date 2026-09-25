@@ -32,3 +32,14 @@ The execution-environment blocker was reproduced, not merely carried forward: a 
 
 ### 2026-09-25 — Jaeger retention implementation status
 L2-B007 implementation is resolved: the actual Jaeger Deployment now passes `--badger.span-store-ttl=168h0m0s`. Automated tests are **NOT EXECUTED — ENVIRONMENT BLOCKED** and runtime retention remains **RUNTIME EVIDENCE REQUIRED**. No additional W1 implementation work is planned after this task unless runtime evidence exposes a genuine defect.
+
+
+## Workstream 2 blockers
+| ID | Area | Severity | Status | Description | Next action |
+|---|---|---|---|---|---|
+| L2-W2-001 | Telephony tests | HIGH | BLOCKED | No repository checkout/network-enabled execution environment; github.com DNS fails. | Execute W2 test suites in authorized checkout. |
+| L2-W2-002 | Twilio runtime | HIGH | BLOCKED | No authorized Twilio account/phone-number/callback/WSS runtime attached. | Run real outbound/inbound/media/webhook drills. |
+| L2-W2-003 | Webhook/state ordering | HIGH | OPEN | BFF callback deduplicates terminal events but no single authoritative transition guard exists for all out-of-order events. | Implement canonical transition guard. |
+| L2-W2-004 | Recording lifecycle | MEDIUM | OPEN | CallRecorder uses local files; production storage, signed access and deletion lifecycle are not established. | Add configurable production storage lifecycle. |
+| L2-W2-005 | Provider rate limiting | MEDIUM | OPEN | Worker tracks calls/minute but does not enforce provider CPS/tenant burst limits authoritatively. | Add bounded limiter at call creation boundary. |
+| L2-W2-006 | Callback scheduling | MEDIUM | OPEN | Callback timestamp lacks a canonical tenant/campaign timezone/no-call-window validation boundary. | Add timezone-aware callback validation. |
