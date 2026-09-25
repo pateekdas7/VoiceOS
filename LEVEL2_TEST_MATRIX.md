@@ -97,3 +97,7 @@ pytest tests/unit/services/test_recording_lifecycle.py -q
 pytest tests/unit/services/test_telephony_phone_numbers.py -q
 npm test -- --runInBand tests/jest/bff/telephony_call_state.test.js tests/jest/bff/telephony_provider_boundary.test.js tests/jest/bff/telephony_callback_policy.test.js tests/jest/bff/telephony_provider_failure.test.js tests/jest/bff/telephony_call_event.test.js tests/jest/bff/dialer.test.js
 plus repository lint/type/migration validation where configured.
+
+
+### W2 continuation test evidence — 2026-09-25
+Added focused tests for recording lifecycle, callback timezone/DST, provider failure classification, canonical telephony events, and bounded telephony metrics. **NOT EXECUTED — ENVIRONMENT BLOCKED**: no repository checkout/executable test runtime is available. GitHub Actions returned no workflow runs for current W2 HEAD `6963d0411cd4569cfa1e7087d554ac6af14e59f3`.
