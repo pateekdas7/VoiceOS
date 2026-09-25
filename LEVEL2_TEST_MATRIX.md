@@ -165,3 +165,22 @@ No command above is marked PASS without execution evidence.
 
 ## W2 security test inventory
 Tenant phone/Caller-ID/recording/CallSID/lead/campaign/event isolation; Twilio signature/replay/duplicate/malformed/unknown status; recording access/path traversal/expiry; CPS burst and multi-tenant isolation are all mapped to existing source controls and targeted tests. No security test is marked PASS because no executable test runtime or production dependency runtime was attached.
+
+
+## W2 FINAL STATIC GAP AUDIT — 2026-09-25
+
+Current branch/HEAD: `claude/ssh-gpu-cpu-servers-y99fib` @ `6e42dce528b84728613c06e082b6983baaed2a52`.
+
+### Test implementation inventory
+
+W2-focused test files are present for phone routing, tenant routing, admission, Media Streams entrypoint, dialer, callback/state/provider boundaries, timezone/DST, provider failure, canonical events, event relay, recording lifecycle, metrics, and migration inventory.
+
+**Concrete test implementation gap:** the W2 matrix explicitly records the Redis-backed CPS concurrency/integration test as **NOT YET ADDED**. Therefore W2 tests are **PARTIALLY IMPLEMENTED — code work remains**.
+
+All existing W2 tests remain **NOT EXECUTED** in this environment. Test-file existence is not a PASS.
+
+### Migration-test caveat
+
+Static inspection found duplicate Alembic revision IDs `0037` and `0038` across unrelated files. The migration inventory test can confirm file presence/declared chain for the W2 files, but only an executable Alembic environment can establish that the repository migration graph is actually loadable.
+
+**Tests executed: 0.**
