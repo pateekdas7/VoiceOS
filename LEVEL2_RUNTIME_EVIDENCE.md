@@ -27,3 +27,11 @@ Required before RUNTIME VERIFIED:
 - Staging rollback/recovery drill.
 
 All remain **RUNTIME EVIDENCE REQUIRED**.
+
+
+| Environment | Service/test | Action | Result | Evidence |
+|---|---|---|---|---|
+| Coding container | Repository execution environment | `git clone --branch claude/ssh-gpu-cpu-servers-y99fib --depth 1 https://github.com/pateekdas7/VoiceOS.git /tmp/VoiceOS` at 2026-09-25T07:51:30Z UTC | BLOCKED | Exit 128: `Could not resolve host: github.com` |
+| Coding container | Git working-tree status | `git status --short` at 2026-09-25T07:51:30Z UTC | BLOCKED | Exit 128: `fatal: not a git repository` |
+
+This execution attempt produced no application/runtime evidence. No CPU/GPU/dependency/Prometheus/Alertmanager/backup/restore/recovery drill was executed.

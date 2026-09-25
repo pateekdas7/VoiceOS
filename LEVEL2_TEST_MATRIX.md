@@ -36,3 +36,12 @@ Required categories across Level-2: unit, integration, API, contract, regression
 | Dependency drill | runtime | Stop Redis/Postgres safely, probe ready, restore | Ready 503 then 200 | CPU node unavailable | RUNTIME EVIDENCE REQUIRED |
 | Alert drill | runtime | Fire controlled Prometheus alert; inspect Alertmanager | Fire/route/resolve | Monitoring environment unavailable | RUNTIME EVIDENCE REQUIRED |
 | Restore drill | runtime | Existing Postgres/Mongo/Vault non-destructive DR drills | Restore + integrity pass | DR environment unavailable | RUNTIME EVIDENCE REQUIRED |
+
+
+## 2026-09-25 execution attempt — 2026-09-25T07:51:30Z UTC
+| Test | Category | Exact command/action | Expected | Actual | Status |
+|---|---|---|---|---|---|
+| Repository execution-environment probe | environment | `git clone --branch claude/ssh-gpu-cpu-servers-y99fib --depth 1 https://github.com/pateekdas7/VoiceOS.git /tmp/VoiceOS` | Repository checkout succeeds | Exit 128: `Could not resolve host: github.com` | NOT EXECUTED — ENVIRONMENT BLOCKED |
+| Local git working-tree status | environment | `git status --short` | Run inside repository checkout | Exit 128: `fatal: not a git repository` | NOT EXECUTED — ENVIRONMENT BLOCKED |
+
+Because the repository checkout failed, no pytest, Jest, Ruff, Mypy, frontend build, Compose, integration, or runtime command was executed in this environment. No test is marked PASS on source inspection alone.

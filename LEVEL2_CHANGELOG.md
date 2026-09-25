@@ -31,3 +31,10 @@ Implemented: BFF metrics/error tracking, BFF health truthfulness, Vault file-bac
 Tests: no local commands executed. Runtime/production evidence remains pending.
 
 Commits: `a8b33f676c80d8ba2b12207e2954a4a800308af0`, `9b4d4b8d14234ee01874d2996340b0d0880b6e21`, `3f66005768a1dd01903cac8218f7257089df7ade`, final tracking commit `ad864c62d22e99ce84553b3d187ebd7db8857a3b`, Vault path correction `2bcf6b62f4cb4f48216deb31ce22b6a8e05bc2d4`, final tracker commit `d97b1d42c1f7cfad45d9d421b0f571482bcb33c1`.
+
+
+## 2026-09-25 — Workstream 1 execution-environment re-check (2026-09-25T07:51:30Z UTC)
+
+Attempted to establish an executable repository environment before running the W1 matrix. A fresh clone of `claude/ssh-gpu-cpu-servers-y99fib` failed with exit 128 because `github.com` could not be resolved. A direct `git status --short` also confirmed there is no local repository checkout. No test or runtime result was fabricated or promoted to PASS. W1 remains open.
+
+Additional inspection clarified the MongoDB PARTIAL status: Docker Compose provides a MongoDB healthcheck and DR tooling, but the inspected Prometheus configuration has no MongoDB-specific exporter/scrape target or MongoDB-specific service-health alert. Runtime verification remains unavailable.
