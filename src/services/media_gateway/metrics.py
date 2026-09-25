@@ -61,6 +61,16 @@ the upstream consent surface (CRM/self-service) is producing revocations
 faster than the scheduler notices — normal for the first minute after a
 bulk import, alertable if it stays elevated."""
 
+
+CALL_LIFECYCLE: Counter = Counter("voiceos_telephony_calls_total","Telephony calls observed by canonical lifecycle state.",labelnames=["state"])
+WEBHOOK_FAILURES: Counter = Counter("voiceos_telephony_webhook_failures_total","Telephony webhook failures by bounded reason.",labelnames=["reason"])
+WEBHOOK_DUPLICATES: Counter = Counter("voiceos_telephony_webhook_duplicates_total","Duplicate telephony webhook deliveries suppressed.")
+MEDIA_FAILURES: Counter = Counter("voiceos_telephony_media_failures_total","Media establishment/disconnect failures by bounded reason.",labelnames=["reason"])
+RECORDING_FAILURES: Counter = Counter("voiceos_telephony_recording_failures_total","Recording capture/finalization failures by bounded reason.",labelnames=["reason"])
+RETRY_ATTEMPTS: Counter = Counter("voiceos_telephony_retry_attempts_total","Bounded telephony retry attempts by bounded reason.",labelnames=["reason"])
+CALLBACK_EVENTS: Counter = Counter("voiceos_telephony_callback_events_total","Callback scheduling/processing events by bounded outcome.",labelnames=["outcome"])
+CPS_LIMIT_EVENTS: Counter = Counter("voiceos_telephony_cps_limit_events_total","Provider CPS/rate-limit events.")
+
 GREETING_OUTCOMES: Counter = Counter(
     "voiceos_media_gateway_greeting_outcomes_total",
     "Terminal outcome of the call-open greeting (per call).",
@@ -101,3 +111,28 @@ def record_bytes_received(byte_count: int, adapter_type: str) -> None:
 def record_call_blocked_consent_revoked(tenant_id: str) -> None:
     """Increment the consent-revoked block counter for ``tenant_id``."""
     CALLS_BLOCKED_CONSENT_REVOKED.labels(tenant_id=tenant_id).inc()
+
+
+def record_call_lifecycle(state: str) -> None:
+    CALL_LIFECYCLE.labels(state=state).inc()
+
+def record_webhook_failure(reason: str) -> None:
+    WEBHOOK_FAILURES.labels(reason=reason).inc()
+
+def record_webhook_duplicate() -> None:
+    WEBHOOK_DUPLICATES.inc()
+
+def record_media_failure(reason: str) -> None:
+    MEDIA_FAILURES.labels(reason=reason).inc()
+
+def record_recording_failure(reason: str) -> None:
+    RECORDING_FAILURES.labels(reason=reason).inc()
+
+def record_retry_attempt(reason: str) -> None:
+    RETRY_ATTEMPTS.labels(reason=reason).inc()
+
+def record_callback_event(outcome: str) -> None:
+    CALLBACK_EVENTS.labels(outcome=outcome).inc()
+
+def record_cps_limit_event() -> None:
+    CPS_LIMIT_EVENTS.inc()
