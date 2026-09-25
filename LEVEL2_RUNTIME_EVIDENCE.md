@@ -52,3 +52,18 @@ No authorized Twilio/SIP carrier environment or production credentials are attac
 
 ## Workstream 2 — latest runtime evidence
 No authorized Postgres/Redis/Twilio runtime is attached. Therefore canonical callback transition behavior, migration 038 application, provider CPS enforcement, real carrier callbacks, and real media calls remain **RUNTIME EVIDENCE REQUIRED**.
+
+
+## W2 continuation evidence — 2026-09-25
+
+| Area | Implementation | Automated test | Integration | Runtime | Production |
+|---|---|---|---|---|---|
+| Recording lifecycle | IMPLEMENTED | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+| Recording storage/access | IMPLEMENTED | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+| Callback timezone policy | IMPLEMENTED | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+| Provider failure classification | IMPLEMENTED | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+| Webhook timeout/retry hardening | IMPLEMENTED | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+| Telephony lifecycle metrics | IMPLEMENTED/PARTIAL | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+| Canonical call event boundary | IMPLEMENTED | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+
+Execution rule: source inspection is not runtime evidence. No PostgreSQL migration, Redis behavior, Prometheus scrape, Twilio call, Media Stream, S3 object, signed URL, or provider failure behavior has been executed in this environment.
