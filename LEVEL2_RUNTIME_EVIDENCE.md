@@ -71,3 +71,9 @@ Execution rule: source inspection is not runtime evidence. No PostgreSQL migrati
 
 ### W2 continuation runtime evidence — 2026-09-25
 No Twilio, PostgreSQL, Redis, S3/object-storage, Media Streams, or production CPU runtime was attached. Recording upload/presign/retention/deletion, callback timezone behavior against real scheduling, provider failure injection, webhook replay storms, media lifecycle telemetry, canonical event persistence, and CPS behavior are **RUNTIME EVIDENCE REQUIRED**. No source inspection is treated as runtime verification.
+
+
+## W2 continuation — canonical event boundary
+As of 2026-09-25, source implementation now includes a PostgreSQL transactional canonical-event outbox (`telephony_event_outbox`), durable DLQ (`telephony_event_dlq`), and a bounded Redis relay. No PostgreSQL or Redis runtime is attached to this coding session, so the following are explicitly **NOT EXECUTED**: migration 042 application, outbox persistence against a real DB, Redis delivery, retry/backoff, stale-lock recovery, DLQ transition, and downstream-unavailable recovery.
+
+No source-level event relay result is treated as runtime evidence. Real consumer/delivery verification remains required.
