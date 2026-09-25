@@ -83,3 +83,9 @@ Each gate is independent: Implementation / Automated Testing / Integration Testi
 - **Tenant mismatch rejection:** IMPLEMENTED; automated/integration/runtime/production verification pending.
 - **Expanded call-attempt lifecycle:** IMPLEMENTED via migration 038; migration execution pending in runtime DB.
 - **Tenant-scoped provider CPS guard:** IMPLEMENTED; automated/integration/runtime/production verification pending.
+
+
+## Workstream 2 continuation acceptance update — 2026-09-25
+Recording lifecycle, callback timezone handling, provider failure classification, webhook timeout/retry hardening, bounded telephony observability, and the canonical downstream call-event boundary are IMPLEMENTED. The recording access surface is now also IMPLEMENTED through the authenticated BFF → HMAC internal media-gateway → private object storage boundary. Automated and integration tests remain NOT EXECUTED — ENVIRONMENT BLOCKED; runtime and production gates remain RUNTIME EVIDENCE REQUIRED.
+
+W2 is not promoted to COMPLETE by source inspection or test-file existence.
