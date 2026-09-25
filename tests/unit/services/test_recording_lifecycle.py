@@ -91,6 +91,22 @@ def test_filesystem_storage_blocks_path_escape(tmp_path: Path):
         storage._path("../other")
 
 
+class FailingStorage(FilesystemRecordingStorage):
+    def put(self, key, source, content_type):
+        raise OSError("storage unavailable")
+
+
+def test_provider_storage_failure_marks_recording_failed(tmp_path: Path):
+    conn = FakeConn()
+    manager = RecordingLifecycleManager(conn, FailingStorage(str(tmp_path / "objects")), 7)
+    manager.start(tenant_id="tenant-a", call_sid="C2")
+    artifact = tmp_path / "C2_events.jsonl"
+    artifact.write_text("event\\n", encoding="utf-8")
+    with pytest.raises(OSError, match="storage unavailable"):
+        manager.finalize(tenant_id="tenant-a", call_sid="C2", artifacts=[artifact])
+    assert any("SET state='FAILED'" in sql for sql, _ in conn.sql)
+
+
 def test_unknown_provider_recording_callsid_is_rejected():
     conn = FakeConn()
     manager = RecordingLifecycleManager(conn, FilesystemRecordingStorage("/tmp/voiceos-test"), 7)
