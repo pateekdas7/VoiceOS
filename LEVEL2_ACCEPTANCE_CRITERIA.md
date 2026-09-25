@@ -122,3 +122,20 @@ The canonical telephony event boundary is implemented using the existing reposit
 Contract: deterministic SHA-256 event identity, fixed schema version `1.0`, fixed lifecycle event types, tenant identity, safe JSON serialization, transactional event+outbox persistence, tenant-scoped Redis delivery, bounded exponential retry, stale-claim recovery, and durable DLQ. Downstream delivery is at-least-once; consumers must deduplicate by `event_id`. Billing and CRM business logic are excluded.
 
 Automated, integration, runtime, and production acceptance gates remain pending.
+
+
+## W2 FINAL STATIC GAP AUDIT — 2026-09-25
+
+Inspected current branch `claude/ssh-gpu-cpu-servers-y99fib` @ `6e42dce528b84728613c06e082b6983baaed2a52`. This audit separates source-level implementation from execution/runtime evidence.
+
+### W2 implementation classification
+
+- **IMPLEMENTED — awaiting verification:** phone routing, outbound creation, caller ID, /voice, WSS, admission, webhook authentication, CallSID correlation, state transitions, idempotency, duplicate/out-of-order handling, callback lifecycle, recording lifecycle/storage/retention, timezone policy, provider failure classification, bounded retries, webhook timeout bounds, CPS limiter, carrier-failure actions, tenant isolation, canonical events, PostgreSQL outbox, relay, backoff, DLQ, billing/CRM boundary contract, dialer boundary, configuration/secrets, documentation.
+- **PARTIALLY IMPLEMENTED — code work remains:** telephony metrics call-site coverage; live OTel tracing injection; W2 CPS integration/concurrency test coverage.
+- **MIGRATION IMPLEMENTATION GAP:** Alembic revision IDs `0037` and `0038` are duplicated by unrelated migration files, making the Alembic graph ambiguous even though raw SQL migrations 037–042 exist.
+
+No runtime blocker is being counted as an implementation gap.
+
+**Final W2 implementation status:** **WORKSTREAM 2 PARTIALLY IMPLEMENTED — REMAINING IMPLEMENTATION WORK**.
+
+W3/W4/W5 and Level-3 remain out of scope.
