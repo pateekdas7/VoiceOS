@@ -61,3 +61,18 @@ Added unit and integration tests. Tests are NOT EXECUTED — ENVIRONMENT BLOCKED
 - Added migration 038 for RINGING/CANCELLED/VOICEMAIL lifecycle states.
 - Added bounded tenant-scoped Redis CPS protection before Twilio call creation.
 - No Level-3 AI intelligence changes.
+
+
+## 2026-09-25 — Workstream 2 production-boundary continuation
+
+Implemented W2-only production boundary slices:
+- Added migrations 039–041 for recording lifecycle metadata/events, provider failure persistence, and durable canonical telephony call events.
+- Added tenant-scoped recording lifecycle manager with filesystem test/local storage and S3 production storage, private objects, server-side encryption, presigned access, retention, deletion retry state, provider-event idempotency, and unknown-CallSID rejection.
+- Wired recording lifecycle start/finalization into the Twilio media call path and added a retention cleanup script.
+- Added canonical callback timezone policy with campaign-over-tenant precedence, explicit timezone/offset handling, UTC persistence, working-hour/no-call checks, and DST nonexistent-wall-time rejection.
+- Added canonical provider failure classification and persisted retryability/reason codes on call attempts.
+- Hardened the Twilio callback with bounded DB/Redis operations and telephony lifecycle/webhook latency metrics.
+- Added durable canonical telephony lifecycle events at the webhook transaction boundary.
+- Added focused recording, timezone, provider-failure, canonical-event, and observability contract tests.
+
+Verification state: implementation is source-complete for these slices, but automated execution, migration application, integration execution, real Twilio/provider behavior, and production storage verification remain blocked.
