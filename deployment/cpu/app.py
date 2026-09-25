@@ -681,6 +681,7 @@ def build_shared_call_dependencies() -> object:
         customer_service=customer_service,
         telephony_number_resolver=telephony_number_resolver,
         recording_manager=recording_manager,
+        recording_access_secret=_env("RECORDING_INTERNAL_SECRET", ""),
         language=_env("STT_LANGUAGE", "hi"),
         # See SharedCallDependencies.public_ws_base_url's docstring — required
         # whenever this process runs behind a tunnel/reverse-proxy (e.g. a
