@@ -1,0 +1,111 @@
+# VoiceOS Level-2 production stabilization alerts.
+# These alerts consume metrics already exposed by node-exporter, kube-state-metrics
+# and the existing static service scrape inventory. No new exporter is assumed.
+
+groups:
+  - name: voiceos_service_health
+    rules:
+      - alert: VoiceOSTargetDown
+        expr: up{job="voiceos-services-static"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          route: page
+          team: platform
+        annotations:
+          summary: "VoiceOS service target down: {{ $labels.service }}"
+          description: "Prometheus has been unable to scrape {{ $labels.service }} for 2 minutes."
+          runbook: "docs/runbooks/production-stabilization/service-down.md"
+
+      - alert: VoiceOSGPUServiceDown
+        expr: up{job="gpu-node"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          route: page
+          team: platform
+        annotations:
+          summary: "GPU inference service target down: {{ $labels.instance }}"
+          description: "The GPU STT/LLM/TTS endpoint has failed Prometheus scraping for 1 minute."
+          runbook: "docs/runbooks/production-stabilization/gpu-service-failure.md"
+
+      - alert: VoiceOSHighCPU
+        expr: 100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m]))) > 85
+        for: 10m
+        labels:
+          severity: warning
+          route: ticket
+          team: platform
+        annotations:
+          summary: "CPU utilization above 85% on {{ $labels.instance }}"
+          description: "Node CPU has remained above 85% for 10 minutes."
+
+      - alert: VoiceOSHighMemory
+        expr: 100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 90
+        for: 10m
+        labels:
+          severity: warning
+          route: ticket
+          team: platform
+        annotations:
+          summary: "Memory utilization above 90% on {{ $labels.instance }}"
+          description: "Node memory utilization has remained above 90% for 10 minutes."
+          runbook: "docs/runbooks/production-stabilization/memory-exhaustion.md"
+
+      - alert: VoiceOSMemoryCritical
+        expr: 100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 95
+        for: 3m
+        labels:
+          severity: critical
+          route: page
+          team: platform
+        annotations:
+          summary: "Memory utilization above 95% on {{ $labels.instance }}"
+          description: "Node memory exhaustion risk is critical."
+          runbook: "docs/runbooks/production-stabilization/memory-exhaustion.md"
+
+      - alert: VoiceOSNetworkReceiveErrors
+        expr: sum by (instance) (rate(node_network_receive_errs_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+          route: ticket
+          team: platform
+        annotations:
+          summary: "Network receive errors on {{ $labels.instance }}"
+          description: "A node interface has reported receive errors for 5 minutes."
+
+      - alert: VoiceOSNetworkTransmitErrors
+        expr: sum by (instance) (rate(node_network_transmit_errs_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+          route: ticket
+          team: platform
+        annotations:
+          summary: "Network transmit errors on {{ $labels.instance }}"
+          description: "A node interface has reported transmit errors for 5 minutes."
+
+      - alert: VoiceOSContainerRestartStorm
+        expr: increase(kube_pod_container_status_restarts_total[15m]) >= 5
+        for: 0m
+        labels:
+          severity: critical
+          route: page
+          team: platform
+        annotations:
+          summary: "Container restart storm: {{ $labels.namespace }}/{{ $labels.pod }}"
+          description: "A container restarted at least five times in 15 minutes."
+          runbook: "docs/runbooks/production-stabilization/repeated-service-crashes.md"
+
+      - alert: VoiceOSBackupVerificationFailed
+        expr: voiceos_backup_verification_last_success == 0
+        for: 5m
+        labels:
+          severity: critical
+          route: page
+          team: platform
+        annotations:
+          summary: "VoiceOS backup verification is failing"
+          description: "The latest backup artifact verification has not succeeded."
+          runbook: "docs/runbooks/production-stabilization/backup-verification.md"
