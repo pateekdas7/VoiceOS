@@ -43,3 +43,11 @@ L2-B007 implementation is resolved: the actual Jaeger Deployment now passes `--b
 | L2-W2-004 | Recording lifecycle | MEDIUM | OPEN | CallRecorder uses local files; production storage, signed access and deletion lifecycle are not established. | Add configurable production storage lifecycle. |
 | L2-W2-005 | Provider rate limiting | MEDIUM | OPEN | Worker tracks calls/minute but does not enforce provider CPS/tenant burst limits authoritatively. | Add bounded limiter at call creation boundary. |
 | L2-W2-006 | Callback scheduling | MEDIUM | OPEN | Callback timestamp lacks a canonical tenant/campaign timezone/no-call-window validation boundary. | Add timezone-aware callback validation. |
+
+## Workstream 2 — current blockers
+- **L2-W2-001 TEST EXECUTION:** no executable repository checkout/runtime; tests cannot be honestly marked PASS.
+- **L2-W2-002 DB MIGRATION:** migration 038 not applied/verified against authorized PostgreSQL.
+- **L2-W2-003 PROVIDER CPS:** limiter implemented but Redis-backed concurrent behavior not executed.
+- **L2-W2-004 REAL TELEPHONY:** real Twilio outbound/inbound/webhook/media/recording/caller-ID drills remain RUNTIME EVIDENCE REQUIRED.
+- **L2-W2-005 RECORDING:** production object-storage retention/deletion lifecycle remains open.
+- **L2-W2-006 CALLBACK TIMEZONE:** campaign/tenant timezone-aware callback policy remains open.

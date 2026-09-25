@@ -71,3 +71,9 @@ Because the repository checkout failed, no pytest, Jest, Ruff, Mypy, frontend bu
 | Twilio WSS regression | integration | `pytest tests/integration/services/test_twilio_ws_entrypoint_integration.py -q` | NOT EXECUTED — ENVIRONMENT BLOCKED |
 | Dialer regression | unit | `pytest tests/unit/services/test_dialer.py -q` | NOT EXECUTED — ENVIRONMENT BLOCKED |
 | BFF callback regression | unit/integration | `npm test -- --runInBand tests/jest/bff/dialer.test.js` | NOT EXECUTED — ENVIRONMENT BLOCKED |
+
+## Workstream 2 — latest tests
+- `tests/jest/bff/telephony_call_state.test.js` — state normalization, forward transitions, backward-event rejection, terminal idempotency — **NOT EXECUTED — ENVIRONMENT BLOCKED**.
+- Existing `tests/jest/bff/dialer.test.js` — webhook signature/idempotency regression — **NOT EXECUTED — ENVIRONMENT BLOCKED**.
+- Required DB migration validation for 038 — **NOT EXECUTED — NO AUTHORIZED POSTGRES RUNTIME**.
+- Provider CPS integration test — **NOT YET ADDED**; requires Redis-backed worker test harness.

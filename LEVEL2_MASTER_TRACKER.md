@@ -128,3 +128,10 @@ Actual path: tenant/campaign/lead → Redis tenant queue → dialer_worker.js �
 Phone-number tenant routing is now implemented through migration 037, TelephonyNumberResolver, signed /voice routing, WSS ticket tenant binding, and tenant-scoped outbound caller-ID selection. SIP remains adapter-level and is not wired into the live listener. Webhook ordering/state, recording lifecycle, provider rate limiting, callback timezone enforcement, and canonical billing/CRM event contracts remain partial.
 
 Workstream 1 remains frozen. Workstreams 3/4/5 and Level-3 remain untouched.
+
+## Workstream 2 — latest implementation slice
+**Status: PARTIALLY IMPLEMENTED — REMAINING IMPLEMENTATION WORK**
+
+Implemented since the previous W2 baseline: canonical provider callback normalization/transition guard; callback correlation against the durable `call_attempts` row with row locking and tenant/lead/pipeline mismatch rejection; terminal event deduplication remains on the existing idempotency table; call-attempt lifecycle migration now permits RINGING/CANCELLED/VOICEMAIL; outbound Twilio creation now has a bounded tenant-scoped CPS guard backed by Redis.
+
+Automated execution remains blocked in this environment. Runtime and production evidence remain required.

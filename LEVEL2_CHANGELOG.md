@@ -54,3 +54,10 @@ Added `tests/unit/monitoring/test_jaeger_retention.py` covering the 7-day value,
 Inspected the actual Twilio live path and corrected a genuine tenant-isolation gap: the media gateway previously carried a process-wide DEFAULT_TENANT_ID. Added migration 037 and TelephonyNumberResolver; signed /voice resolves the owning tenant from the provider number (From for outbound, To for inbound), fails closed for unassigned/inactive numbers, binds the resolved tenant into the single-use WSS admission ticket, and uses that tenant for CRM/context/session allocation. The production dialer now selects an active tenant-owned caller ID, with campaign-specific precedence; the legacy global caller ID requires explicit ALLOW_GLOBAL_TWILIO_FROM=true.
 
 Added unit and integration tests. Tests are NOT EXECUTED — ENVIRONMENT BLOCKED.
+
+## Workstream 2 — callback/state/rate-limit slice
+- Added canonical Twilio provider-status normalization and call-state transition guard.
+- Correlated callbacks to `call_attempts` under transaction/row lock; rejected unknown calls and tenant/lead/pipeline mismatches.
+- Added migration 038 for RINGING/CANCELLED/VOICEMAIL lifecycle states.
+- Added bounded tenant-scoped Redis CPS protection before Twilio call creation.
+- No Level-3 AI intelligence changes.

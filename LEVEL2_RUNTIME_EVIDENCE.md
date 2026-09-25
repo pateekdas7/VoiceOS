@@ -49,3 +49,6 @@ Runtime evidence required: deploy the actual Jaeger 1.60 instance, ingest contro
 
 ## Workstream 2 runtime evidence
 No authorized Twilio/SIP carrier environment or production credentials are attached. Real outbound/inbound calls, real provider signatures, real Media Streams audio, caller-ID verification, carrier outcome drills, duplicate/out-of-order webhook drills, recording lifecycle, tenant-isolation runtime drills and provider rate-limit behavior all remain **RUNTIME EVIDENCE REQUIRED**. The new phone-number routing implementation is source/configuration evidence only.
+
+## Workstream 2 — latest runtime evidence
+No authorized Postgres/Redis/Twilio runtime is attached. Therefore canonical callback transition behavior, migration 038 application, provider CPS enforcement, real carrier callbacks, and real media calls remain **RUNTIME EVIDENCE REQUIRED**.

@@ -76,3 +76,10 @@ Each gate is independent: Implementation / Automated Testing / Integration Testi
 | Tenant isolation | IMPLEMENTED at phone/media boundary; broader flow PARTIAL | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
 | Observability | PARTIAL | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
 | Billing/CRM event boundary | PARTIAL | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+
+## Workstream 2 — latest acceptance status
+- **Webhook correlation/state:** IMPLEMENTED; automated/integration/runtime/production verification pending.
+- **Out-of-order provider events:** IMPLEMENTED via canonical transition guard; automated execution pending.
+- **Tenant mismatch rejection:** IMPLEMENTED; automated/integration/runtime/production verification pending.
+- **Expanded call-attempt lifecycle:** IMPLEMENTED via migration 038; migration execution pending in runtime DB.
+- **Tenant-scoped provider CPS guard:** IMPLEMENTED; automated/integration/runtime/production verification pending.
