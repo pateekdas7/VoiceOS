@@ -84,7 +84,10 @@ app.get('/metrics', (_req, res) => {
     _renderCounter('voiceos_telephony_webhook_duplicates_total', 'Duplicate telephony webhook deliveries suppressed.'),
     _renderCounter('voiceos_telephony_webhook_failures_total', 'Telephony webhook processing failures.'),
     _renderCounter('voiceos_telephony_webhook_processing_seconds_sum', 'Sum of telephony webhook processing latency in seconds.'),
-    _renderCounter('voiceos_telephony_webhook_processing_seconds_count', 'Count of telephony webhook processing observations.')
+    _renderCounter('voiceos_telephony_webhook_processing_seconds_count', 'Count of telephony webhook processing observations.'),
+    _renderCounter('voiceos_telephony_calls_by_state_total', 'Telephony lifecycle transitions observed by canonical state.'),
+    _renderCounter('voiceos_telephony_call_setup_seconds_sum', 'Sum of call setup latency from initiation to connection.'),
+    _renderCounter('voiceos_telephony_call_setup_seconds_count', 'Count of call setup latency observations.')
   ].join('\n') + '\n');
 });
 
@@ -2132,7 +2135,7 @@ app.post('/dialer/callback', async (req, res) => {
     await client.query('BEGIN');
     await client.query("SET LOCAL statement_timeout='5000ms'");
     const result = await client.query(
-      `SELECT attempt_id, tenant_id, campaign_id, lead_id, pipeline_id, status
+      `SELECT attempt_id, tenant_id, campaign_id, lead_id, pipeline_id, status, initiated_at
        FROM call_attempts WHERE call_sid=$1 FOR UPDATE`, [CallSid]);
     if (!result.rows.length) {
       await client.query('ROLLBACK');
@@ -2164,6 +2167,14 @@ app.post('/dialer/callback', async (req, res) => {
 
     const terminal = ['COMPLETED','BUSY','NO_ANSWER','FAILED','CANCELLED','TIMEOUT','VOICEMAIL'].includes(next);
     webhookState=next;
+    _incMetric('voiceos_telephony_calls_by_state_total', { state: next });
+    if (next === 'CONNECTED' && attempt.status !== 'IN_PROGRESS') {
+      const initiatedMs = attempt.initiated_at ? new Date(attempt.initiated_at).getTime() : NaN;
+      if (Number.isFinite(initiatedMs)) {
+        _incMetric('voiceos_telephony_call_setup_seconds_sum', {}, Math.max(0, (Date.now()-initiatedMs)/1000));
+        _incMetric('voiceos_telephony_call_setup_seconds_count');
+      }
+    }
     const dbStatus = next === 'CONNECTED' ? 'IN_PROGRESS' : next;
     const duration = Duration == null ? null : Math.max(0, parseInt(Duration) || 0);
 
