@@ -30,11 +30,11 @@ Current Twilio path on this branch:
 | Durable call attempts | IMPLEMENTED | WIRED INTO LIVE PATH |
 | Canonical callback transition guard | IMPLEMENTED | WIRED INTO LIVE PATH |
 | SIP | PARTIAL | NOT WIRED INTO LIVE LISTENER |
-| Recording production lifecycle | PARTIAL | RUNTIME/STORAGE EVIDENCE REQUIRED |
+| Recording production lifecycle | IMPLEMENTED | RUNTIME/STORAGE EVIDENCE REQUIRED |
 | Provider CPS limiting | IMPLEMENTED | WIRED INTO WORKER |
-| Callback timezone policy | PARTIAL | NEEDS CANONICAL TZ VALIDATION |
-| Billing event boundary | PARTIAL | NO COMPLETE BILLING IMPLEMENTATION |
-| CRM event boundary | PARTIAL | POST-CALL DATA EXISTS; CONTRACT VERIFICATION PENDING |
+| Callback timezone policy | IMPLEMENTED | AUTOMATED/RUNTIME EVIDENCE REQUIRED |
+| Canonical telephony event boundary | IMPLEMENTED | OUTBOX/REDIS RUNTIME EVIDENCE REQUIRED |
+| CRM downstream consumer | DEFERRED | W2 emits canonical event only; CRM logic excluded |
 | Real carrier runtime | UNKNOWN | RUNTIME EVIDENCE REQUIRED |
 
 ## Tenant isolation
@@ -71,3 +71,14 @@ The BFF now exposes bounded lifecycle-state counters, webhook outcome/failure co
 
 ### Canonical downstream event boundary
 telephony_call_events is the durable W2 contract for future Billing/CRM consumers. Event identity is deterministic per tenant + provider CallSID + lifecycle state; the event carries schema version, tenant/campaign/lead/call/attempt identity, provider CallSID, lifecycle state, outcome, duration, recording/callback references, event timestamp, correlation ID, and sequence number. The webhook transaction persists the event before the existing Redis completion signal. This is a W2 event boundary only; no Billing or CRM business logic is implemented.
+
+
+## W2 continuation — canonical event delivery boundary
+
+The canonical telephony event contract is now a transactional PostgreSQL event + outbox boundary. The existing callback transaction creates the canonical event and exactly one outbox record for its deterministic event identity. Migration 042 adds the provider field, outbox state machine, retry metadata, and durable DLQ.
+
+The relay in `scripts/telephony/telephony_event_relay.js` claims pending/stale rows with PostgreSQL `SKIP LOCKED`, publishes to a tenant-scoped Redis queue, marks successful delivery as PUBLISHED, retries bounded failures with exponential backoff, and moves exhausted events to `telephony_event_dlq`. Delivery is at-least-once; `event_id` is the downstream deduplication identity.
+
+This boundary intentionally does not implement Billing or CRM business logic. No invoice, payment, CRM synchronization, field mapping, or commercial workflow was added.
+
+Implementation is source-complete for this W2 event boundary. Test, integration, runtime, and production verification remain pending.
