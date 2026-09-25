@@ -1252,6 +1252,8 @@ class CallOrchestrator:
             for task in done:
                 exc = task.exception()
                 if exc is not None:
+                    from src.services.media_gateway.metrics import record_media_failure
+                    record_media_failure("pipeline_error")
                     raise exc
         finally:
             self._closing = True
@@ -1557,11 +1559,13 @@ def create_twilio_media_stream_app(
                 # Phase 3: persist post-call state (RelationshipMemory, PostCallSummary).
                 # Best-effort — never re-raise; the WS is already closing at this point.
                 try:
-                    deps.conversation_engine.end_call(
-                        call_id,
-                        outcome="completed",
-                        customer_id=customer_id,
-                    )
+                    _end_call_span = deps.tracer.start_span("call.end", {"call_id": call_id}) if deps.tracer else contextlib.nullcontext()
+                    with _end_call_span:
+                        deps.conversation_engine.end_call(
+                            call_id,
+                            outcome="completed",
+                            customer_id=customer_id,
+                        )
                 except Exception:
                     logger.exception(
                         "end_call() failed in finally block for call_id=%s — continuing WS teardown",
