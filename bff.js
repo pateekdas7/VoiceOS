@@ -2121,9 +2121,9 @@ app.post('/dialer/callback', async (req, res) => {
       const proto = req.headers['x-forwarded-proto'] || 'https';
       const host = req.headers['x-forwarded-host'] || req.headers.host;
       const fullUrl = `${proto}://${host}${req.originalUrl}`;
-      if (!twilio.validateRequest(twilioAuthToken, signature, fullUrl, req.body)) return res.sendStatus(403);
+      if (!twilio.validateRequest(twilioAuthToken, signature, fullUrl, req.body)) { webhookOutcome='spoofed'; return res.sendStatus(403); }
     } else if (process.env.NODE_ENV === 'production') {
-      return res.sendStatus(503);
+      webhookOutcome='configuration_failure'; return res.sendStatus(503);
     }
 
     const { CallSid, CallStatus, Duration, AnsweredBy } = req.body || {};
