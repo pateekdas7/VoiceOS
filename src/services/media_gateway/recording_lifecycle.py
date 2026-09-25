@@ -198,6 +198,14 @@ class RecordingLifecycleManager:
                                event_type: str, provider_recording_id: str | None,
                                payload: dict[str, Any]) -> bool:
         cur = self.conn.cursor()
+        call_sid = payload.get("CallSid", "")
+        if provider_recording_id:
+            cur.execute(
+                "SELECT recording_id FROM telephony_recordings WHERE tenant_id=%s AND provider=%s AND call_sid=%s",
+                (tenant_id, provider, call_sid),
+            )
+            if not cur.fetchone():
+                raise LookupError("unknown recording CallSid")
         cur.execute(
             """INSERT INTO telephony_recording_events
                (tenant_id,provider,provider_event_id,event_type,payload)
