@@ -173,6 +173,8 @@ class WhisperHTTPAdapter:
                 except Exception as exc:
                     last_exc = exc
                     if attempt < self._max_retries:
+                        from src.services.media_gateway.metrics import record_retry_attempt
+                        record_retry_attempt("stt_provider")
                         logger.warning(
                             "STT attempt %d/%d failed (%s: %s), retrying in %.1fs",
                             attempt + 1,
