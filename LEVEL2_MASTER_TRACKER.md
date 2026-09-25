@@ -155,3 +155,65 @@ W2 remains PARTIALLY IMPLEMENTED — REMAINING IMPLEMENTATION WORK because recor
 Current branch HEAD: `6963d0411cd4569cfa1e7087d554ac6af14e59f3`.
 
 W2 implementation slices now include durable recording metadata/object-storage boundary and authenticated-by-capability recording access, callback timezone/DST policy, canonical provider failure classification with persisted retryability, bounded webhook execution, canonical durable telephony events, and bounded telephony/media/recording/callback telemetry. These are **IMPLEMENTED** by source inspection. **TESTED / INTEGRATION VERIFIED / RUNTIME VERIFIED / PRODUCTION VERIFIED: BLOCKED** because no executable repository/runtime is available. W2 remains **PARTIALLY IMPLEMENTED — REMAINING IMPLEMENTATION WORK**.
+
+
+## W2 continuation — canonical event boundary implementation — 2026-09-25
+
+**Status: PARTIALLY IMPLEMENTED — REMAINING IMPLEMENTATION WORK**
+
+The canonical telephony event boundary is now implemented as a transactional PostgreSQL event + outbox contract, with tenant-scoped Redis delivery and bounded retry/DLQ handling.
+
+### Added
+- `telephony_event_boundary.js`
+  - schema validation
+  - fixed schema version `1.0`
+  - fixed lifecycle event-type allowlist
+  - deterministic event identity
+  - safe downstream serialization
+  - transactional event + outbox persistence
+  - duplicate suppression
+- migration 042 / Alembic 0042
+  - `provider` field on canonical event record
+  - `telephony_event_outbox`
+  - `telephony_event_dlq`
+  - retry/claim indexes and constraints
+- `scripts/telephony/telephony_event_relay.js`
+  - PostgreSQL row claiming with `SKIP LOCKED`
+  - stale-claim recovery
+  - tenant-scoped Redis delivery
+  - bounded exponential retry
+  - terminal DLQ transition
+- `/dialer/callback` now persists canonical events through the outbox boundary.
+- Focused tests for schema, serialization, identity, persistence, duplicate suppression, retry, DLQ and migration inventory.
+
+### Boundary semantics
+- Canonical event identity is deterministic and tenant/call/lifecycle scoped.
+- One canonical event is persisted per event identity.
+- One outbox row exists per canonical event.
+- Downstream delivery is at-least-once; `event_id` is the deduplication identity.
+- Redis delivery is tenant-isolated by queue key.
+- Billing logic and CRM business logic remain out of scope.
+
+### Verification state
+- IMPLEMENTED: source-level implementation complete for this event-boundary slice.
+- TESTED: **NOT EXECUTED — ENVIRONMENT BLOCKED**.
+- INTEGRATION VERIFIED: **NOT EXECUTED**.
+- RUNTIME VERIFIED: **RUNTIME EVIDENCE REQUIRED**.
+- PRODUCTION VERIFIED: **RUNTIME EVIDENCE REQUIRED**.
+
+Current execution-environment probe on 2026-09-25:
+- repository checkout: unavailable
+- Python 3.13.5: available
+- Node 22.16.0: available
+- npm 10.9.2: available
+- pytest 9.0.2: available
+- ruff: unavailable
+- mypy: unavailable
+- PostgreSQL client: unavailable
+- Redis CLI: unavailable
+- Mongo shell: unavailable
+- Docker / Compose: unavailable
+- kubectl: unavailable
+- `git status`: failed because no repository checkout exists
+
+Therefore no repository-local test, migration, Redis, PostgreSQL, Docker, Prometheus, S3 or Twilio runtime command was executed in this session.
