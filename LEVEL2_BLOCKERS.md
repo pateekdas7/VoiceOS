@@ -8,3 +8,13 @@
 | L2-B004 | Runtime verification | HIGH | Live CPU/GPU/DB/Redis/Mongo/Vault/Twilio environment is not attached to this coding execution environment. | Real runtime gates cannot be marked verified. | BLOCKED | Run the runtime evidence matrix from authorized staging infrastructure. |
 
 Implementation gaps that do not have an external dependency are tracked in LEVEL2_MASTER_TRACKER.md rather than hidden here.
+
+## Workstream 1 blockers
+
+| ID | Workstream | Severity | Description | Why it matters | Status | Exact next action |
+|---|---|---|---|---|---|---|
+| L2-B005 | W1 / automated testing | HIGH | Coding container cannot clone the designated branch because github.com DNS resolution fails. | Prevents execution of the actual pytest/Jest/Ruff/mypy/coverage suites. | BLOCKED | Provide a repository-mounted or network-enabled execution environment and run the Workstream-1 test matrix. |
+| L2-B006 | W1 / runtime | HIGH | No authorized CPU/GPU/DB/Redis/Mongo/Vault/Prometheus runtime is attached to this session. | Service recovery, dependency failure, GPU and alert tests cannot be marked verified. | BLOCKED | Execute the runtime acceptance matrix on the authorized staging environment. |
+| L2-B007 | W1 / tracing | MEDIUM | Jaeger configuration documents a 7-day retention intent, but no actual purge job/mechanism was found in the repository. | Traces can grow without a proven retention enforcement path. | BLOCKED | Establish and runtime-verify an actual Jaeger retention mechanism supported by the deployed Jaeger version. |
+| L2-B008 | W1 / backup verification | MEDIUM | Backup verifier is scheduled, but its systemd timer and real artifact checks have not executed in this environment. | Backup validity is not proven by source/configuration alone. | BLOCKED | Run the timer and verifier on the CPU node, then perform authorized restore drills separately. |
+| L2-B009 | W1 / alerting | MEDIUM | Alertmanager routing configuration exists, but no live firing/resolution test was executed. | Alert definitions alone do not prove an on-call notification path. | BLOCKED | Fire a controlled staging alert and record Alertmanager/receiver evidence. |
