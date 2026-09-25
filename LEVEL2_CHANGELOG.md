@@ -76,3 +76,8 @@ Implemented W2-only production boundary slices:
 - Added focused recording, timezone, provider-failure, canonical-event, and observability contract tests.
 
 Verification state: implementation is source-complete for these slices, but automated execution, migration application, integration execution, real Twilio/provider behavior, and production storage verification remain blocked.
+
+
+## 2026-09-25 — W2 production-boundary continuation (follow-up)
+
+Continued W2 only from the branch's moving HEAD. Added/retained durable recording lifecycle integration, callback timezone policy, canonical provider failure contract, bounded webhook processing, durable canonical call events, and bounded telephony lifecycle/media/recording/callback telemetry. Added focused tests for these contracts. No W3/W4/W5/Level-3 changes were introduced. Automated execution remains blocked.
