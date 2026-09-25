@@ -100,5 +100,5 @@ Scope is operational stability only; no conversation-intelligence expansion was 
 - PRODUCTION VERIFIED: **RUNTIME EVIDENCE REQUIRED**.
 - Pre-implementation SHA: `f9a96abdade81a6717dc154bdc80b19ed1a336fc`.
 - W1 implementation commits: `a8b33f676c80d8ba2b12207e2954a4a800308af0`, `9b4d4b8d14234ee01874d2996340b0d0880b6e21`, `3f66005768a1dd01903cac8218f7257089df7ade`.
-- Final W1 implementation SHA for this pass: `3f66005768a1dd01903cac8218f7257089df7ade`.
+- Final W1 implementation SHA for this pass: `2bcf6b62f4cb4f48216deb31ce22b6a8e05bc2d4`.
 - Runtime/production verification remains pending.
