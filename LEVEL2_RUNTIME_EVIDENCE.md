@@ -104,3 +104,28 @@ The repository cannot be cloned from this container because the earlier network 
 No executable repository checkout was available in the coding environment. GitHub source access was available for inspection and edits, but that is not an execution environment. No Python, Node, PostgreSQL, Redis, S3, Prometheus, Twilio, Media Streams, CPU-service, or GPU-service runtime was authorized/attached for this pass.
 
 Canonical event implementation was inspected and extended, but no test command was executed. Migration 042 was not applied. No Redis delivery, retry, DLQ, or downstream-unavailable drill was run. No real telephony call or Media Stream was run.
+
+
+## W2 FINAL STATIC GAP AUDIT — 2026-09-25
+
+Current branch/HEAD: `claude/ssh-gpu-cpu-servers-y99fib` @ `6e42dce528b84728613c06e082b6983baaed2a52`.
+
+### Implementation gaps vs verification gaps
+
+**Implementation gaps:**
+1. Alembic revision ID collisions at `0037` and `0038`.
+2. OTel tracer is optional in the media gateway dependency object but is not injected by the live CPU composition root.
+3. Several declared telephony metric wrappers have no live call sites.
+4. Redis-backed CPS concurrency/integration test is not implemented.
+
+**Verification-only blockers:**
+- repository checkout/test execution
+- PostgreSQL
+- Redis
+- S3/object storage
+- Prometheus
+- Twilio/carrier
+- Media Streams
+- downstream consumer runtime
+
+No tests or runtime checks were executed. These blockers do not change the source-level classifications above.
