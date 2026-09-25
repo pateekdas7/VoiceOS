@@ -1,6 +1,7 @@
 [Unit]
 Description=VoiceOS Web API (Python/uvicorn)
-After=network.target postgresql.service redis-server.service
+Wants=network-online.target
+After=network-online.target postgresql.service redis-server.service
 
 [Service]
 Type=simple
@@ -9,8 +10,10 @@ EnvironmentFile=/opt/voiceos/.env
 ExecStart=/opt/voiceos/venv/bin/uvicorn src.services.web_api.main:create_app \
     --factory --host 0.0.0.0 --port 8001 --workers 1 \
     --timeout-graceful-shutdown 30
-Restart=always
-RestartSec=10
+Restart=on-failure
+StartLimitIntervalSec=300
+StartLimitBurst=5
+RestartSec=5
 StandardOutput=append:/opt/voiceos/logs/webapi.log
 StandardError=append:/opt/voiceos/logs/webapi.log
 
