@@ -36,8 +36,47 @@ const log = {
   error: (event, fields) => log._write('ERROR', event, fields),
 };
 
+// ─── Prometheus operational metrics ──────────────────────────────────────────
+const _metricCounters = new Map();
+function _incMetric(name, labels = {}) {
+  const key = JSON.stringify([name, labels]);
+  _metricCounters.set(key, (_metricCounters.get(key) || 0) + 1);
+}
+function _escapeProm(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\\"').replace(/\n/g, '\\n');
+}
+function _promLabels(labels) {
+  const entries = Object.entries(labels);
+  return entries.length ? '{' + entries.map(([k, v]) => k + '="' + _escapeProm(v) + '"').join(',') + '}' : '';
+}
+function _renderCounter(name, help) {
+  const lines = ['# HELP ' + name + ' ' + help, '# TYPE ' + name + ' counter'];
+  for (const [rawKey, value] of _metricCounters) {
+    const [metricName, labels] = JSON.parse(rawKey);
+    if (metricName === name) lines.push(name + _promLabels(labels) + ' ' + value);
+  }
+  return lines.join('\n');
+}
+app.use((req, res, next) => {
+  res.on('finish', () => {
+    const route = req.route?.path || 'unmatched';
+    const statusClass = String(res.statusCode).charAt(0) + 'xx';
+    _incMetric('voiceos_bff_http_requests_total', { method: req.method, route, status_class: statusClass });
+    if (res.statusCode >= 500) _incMetric('voiceos_bff_http_errors_total', { method: req.method, route });
+  });
+  next();
+});
+app.get('/metrics', (_req, res) => {
+  res.type('text/plain').send([
+    _renderCounter('voiceos_bff_http_requests_total', 'Total HTTP requests handled by the VoiceOS BFF.'),
+    _renderCounter('voiceos_bff_http_errors_total', 'Total HTTP 5xx responses emitted by the VoiceOS BFF.'),
+    _renderCounter('voiceos_bff_pg_errors_total', 'Total PostgreSQL client or pool errors observed by the VoiceOS BFF.'),
+    _renderCounter('voiceos_bff_redis_errors_total', 'Total Redis errors observed by the VoiceOS BFF.'),
+    _renderCounter('voiceos_bff_readiness_failures_total', 'Total BFF readiness checks with an unavailable dependency.')
+  ].join('\n') + '\n');
+});
+
 // ─── Trace-ID propagation middleware ─────────────────────────────────────────
-const { randomUUID } = require('crypto');
 app.use((req, _res, next) => {
   req.traceId = req.headers['x-trace-id'] || randomUUID();
   next();
@@ -82,7 +121,7 @@ const pool = process.env.POSTGRES_DSN
       password: process.env.POSTGRES_PASSWORD || '',
       ..._poolCommon,
     });
-pool.on('error', (err) => log.error('pg.idle_client_error', { error: err.message }));
+pool.on('error', (err) => { _incMetric('voiceos_bff_pg_errors_total'); log.error('pg.idle_client_error', { error: err.message }); });
 
 // ─── Redis ────────────────────────────────────────────────────────────────────
 const redisOpts = {
@@ -93,7 +132,7 @@ const redisOpts = {
 };
 if (process.env.REDIS_PASSWORD) redisOpts.password = process.env.REDIS_PASSWORD;
 const redis = new Redis(redisOpts);
-redis.on('error', e => log.warn('redis.error', { error: e.message }));
+redis.on('error', e => { _incMetric('voiceos_bff_redis_errors_total'); log.warn('redis.error', { error: e.message }); });
 redis.connect().catch(e => log.warn('redis.connect_failed', { error: e.message }));
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
@@ -892,6 +931,7 @@ app.get('/health/ready', async (_req, res) => {
     })(),
   ]);
   const ready = checks.every(Boolean);
+  if (!ready) _incMetric('voiceos_bff_readiness_failures_total');
   res.status(ready ? 200 : 503).json({
     status: ready ? 'healthy' : 'unhealthy',
     service: 'voiceos-bff',
@@ -923,8 +963,8 @@ app.get('/system/health', async (req, res) => {
     { component: 'STT',        status: sttResult.status,   latencyMs: sttResult.latencyMs,   lastChecked: now },
     { component: 'LLM',        status: llmResult.status,   latencyMs: llmResult.latencyMs,   lastChecked: now },
     { component: 'TTS',        status: ttsResult.status,   latencyMs: ttsResult.latencyMs,   lastChecked: now },
-    { component: 'Twilio/SIP', status: 'healthy',          latencyMs: null,                  lastChecked: now },
-    { component: 'Event Bus',  status: 'healthy',          latencyMs: null,                  lastChecked: now },
+    { component: 'Twilio/SIP', status: process.env.TELEPHONY_HEALTH_URL ? (await probeHttp(process.env.TELEPHONY_HEALTH_URL, 3000)).status : 'unknown', latencyMs: null, lastChecked: now },
+    { component: 'Event Bus',  status: 'unknown', latencyMs: null, lastChecked: now },
     { component: 'Redis',      status: redisResult.status, latencyMs: redisResult.latencyMs, lastChecked: now },
     { component: 'Database',   status: dbResult.status,    latencyMs: dbResult.latencyMs,    lastChecked: now },
   ]);

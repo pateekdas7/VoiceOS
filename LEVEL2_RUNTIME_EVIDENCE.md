@@ -12,3 +12,18 @@ RULE: This file records only actual runtime execution. Source code, documentatio
 CPU startup/health; Postgres/Redis/MongoDB/Vault connectivity; CPU-to-GPU STT/LLM/TTS; real Twilio WebSocket; real call lifecycle; dialer concurrency/crash recovery; CRM sync; billing/payment webhook; tenant isolation; DND/DNC/time-window enforcement; GPU failover/drain; staging deploy/rollback; backup/restore; load/capacity; onboarding; support workflow; cost attribution.
 
 No item may become RUNTIME VERIFIED without exact command/action, timestamp, observed result, logs/metrics and commit SHA.
+
+## Workstream 1 execution record
+
+No CPU/GPU/staging runtime action was executed by this coding session. Source inspection and GitHub edits are implementation evidence only.
+
+Required before RUNTIME VERIFIED:
+- CPU service restart/readiness transition.
+- Redis/Postgres/MongoDB/Vault failure and recovery.
+- Prometheus scrape of BFF/GPU/exporters.
+- Controlled Alertmanager fire/route/resolve.
+- Backup verification plus non-destructive restore.
+- Log rotation/retention check.
+- Staging rollback/recovery drill.
+
+All remain **RUNTIME EVIDENCE REQUIRED**.

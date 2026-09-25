@@ -22,34 +22,12 @@ Files created:
 
 Commit: pending dedicated atomic baseline commit.
 
-## 2026-09-25 — Workstream 1 implementation
+## 2026-09-25 — Workstream 1 production stabilization
 
-Task: implement the executable portion of Production Stabilization without starting other Level-2 workstreams.
+Pre-implementation HEAD: `f9a96abdade81a6717dc154bdc80b19ed1a336fc`; Level-2 baseline: `1646e0896322733e351740f9522db95026956d18`.
 
-Implementation:
-- Added BFF and Web API liveness/readiness endpoints.
-- Corrected BFF system-health semantics so unsupported Twilio/SIP health is not falsely reported healthy and Event Bus follows Redis health.
-- Bounded systemd restart recovery for BFF, Web API, voice runtime, dialer worker and frontend.
-- Loaded the existing BFF/dialer Prometheus alert group.
-- Added service target, GPU target, CPU, memory, network-error and restart-storm alerts.
-- Added scheduled backup-artifact verification for existing MongoDB/Vault/Redis/PostgreSQL backup mechanisms.
-- Added 15 requested production-stabilization runbooks.
-- Added unit tests for health semantics and systemd restart policy.
-- Added backup-verification checks to the existing backup/DR test harness.
+Implemented: BFF metrics/error tracking, BFF health truthfulness, Vault file-backend backup scheduling, Level-2 branch CI + Node/Jest job, W1 runbooks and tracking.
 
-Tests:
-- PASS: bash -n /tmp/backup_verify.sh.
-- NOT EXECUTED: pytest, Jest, Ruff, mypy and coverage because the execution container cannot resolve github.com and no repository checkout is available.
-- RUNTIME EVIDENCE REQUIRED: live service restart, dependency failure/recovery, GPU, Prometheus/Alertmanager, backup timer/artifact and log/trace retention tests.
+Tests: no local commands executed. Runtime/production evidence remains pending.
 
-Files changed: BFF, Web API, systemd units/tests, Prometheus configuration/rules, backup verifier/timer/service/test, 15 production-stabilization runbooks, Level-2 tracking files.
-
-Failures/fixes:
-- Existing BFF /system/health had unconditional healthy status for Twilio/SIP and Event Bus. Fixed the misleading health semantics.
-- Existing core systemd units used Restart=always without a restart-loop bound. Replaced with bounded Restart=on-failure policies.
-- Prometheus did not load voiceos_bff_dialer.yml despite the file existing. Added it to rule_files.
-- A backup alert was initially drafted against a metric not produced by the verifier; removed it before finalizing so no unsupported metric dependency remains.
-
-Runtime state: no live production infrastructure was available to this coding environment. No runtime claims made.
-
-Commit: implementation changes are split into focused repository commits; final tracking synchronization commit will be recorded after the last tracking update.
+Commit: pending.

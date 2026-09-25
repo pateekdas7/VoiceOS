@@ -128,6 +128,16 @@ scrape_configs:
       - action: labeldrop
         regex: __meta_.*
 
+  # -- CPU-host BFF -------------------------------------------------------
+  - job_name: voiceos-bff
+    static_configs:
+      - targets:
+          - "205.147.102.94:8000"
+        labels:
+          node_pool: cpu
+          service: bff
+          cluster_member: "false"
+
   # -- GPU node (STT/LLM/vLLM/TTS export /metrics themselves; scraped
   # directly since the GPU node is not a cluster member -- TT-015) -------
   - job_name: gpu-node

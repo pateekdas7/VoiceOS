@@ -1,7 +1,11 @@
 # Dialer failure
-1. Check: `systemctl status voiceos-dialer-worker`.
-2. Inspect: `journalctl -u voiceos-dialer-worker -n 150 --no-pager`.
-3. Check Redis and queue state: `bash deployment/cpu/healthcheck.sh`.
-4. Restart only after checking whether calls are active: `systemctl restart voiceos-dialer-worker`.
-5. Verify queue reconciliation and terminal call states before resuming campaigns.
-Environment: CPU node with Redis and telephony connectivity.
+
+```bash
+systemctl status voiceos-dialer-worker
+journalctl -u voiceos-dialer-worker -n 200 --no-pager
+```
+1. Confirm Redis is ready.
+2. Restart once: `systemctl restart voiceos-dialer-worker`.
+3. Verify queue consumption and terminal callback progression.
+4. If callbacks fail, follow the existing callback-auth/stuck-call alerts.
+Do not increase concurrency during an outage without evidence.

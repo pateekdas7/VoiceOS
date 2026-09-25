@@ -1,7 +1,15 @@
 # Redis failure
-1. Check: `systemctl status redis-server` and `redis-cli ping`.
-2. Inspect: `journalctl -u redis-server -n 100 --no-pager`.
-3. Verify persistence: `bash scripts/backup/redis_verify_persistence.sh`.
-4. Use `infra/dr/runbooks/redis-failover.md` for failover; do not invent a second recovery mechanism.
-5. After recovery, verify EventBus and queue state with `bash deployment/cpu/healthcheck.sh`.
-Environment: CPU node.
+
+Use `infra/dr/runbooks/redis-failover.md` as the source of truth.
+
+```bash
+redis-cli -a "$REDIS_PASSWORD" ping
+systemctl status redis-server
+journalctl -u redis-server -n 100 --no-pager
+systemctl restart redis-server
+redis-cli PING
+redis-cli INFO persistence | grep aof_last_write_status
+python3 scripts/eventbus_recovery.py
+bash infra/dr/scripts/verify-recovery.sh --component redis
+```
+Do not promote a replica unless the current topology requires it.

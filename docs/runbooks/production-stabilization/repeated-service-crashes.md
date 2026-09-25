@@ -1,7 +1,7 @@
 # Repeated service crashes
-1. Check `systemctl status <voiceos-service>`.
-2. Inspect `journalctl -u <voiceos-service> --since '-30 min'`.
-3. Do not disable StartLimit or increase restart frequency to mask the cause.
-4. Fix the first failure at the owning dependency/configuration.
-5. Restart once and observe readiness before declaring recovery.
-Environment: CPU node/systemd.
+
+```bash
+systemctl status voiceos-bff voiceos-webapi voiceos-voice-runtime voiceos-dialer-worker
+journalctl -u voiceos-bff -u voiceos-webapi -u voiceos-voice-runtime -u voiceos-dialer-worker -n 300 --no-pager
+```
+Find the first failure, respect StartLimit, capture dependency state, apply the smallest fix, then restart once. Persistent instability should move to rollback/recovery rather than endless restarts.

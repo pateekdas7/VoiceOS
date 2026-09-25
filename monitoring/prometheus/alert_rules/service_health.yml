@@ -97,3 +97,37 @@ groups:
           summary: "Container restart storm: {{ $labels.namespace }}/{{ $labels.pod }}"
           description: "A container restarted at least five times in 15 minutes."
           runbook: "docs/runbooks/production-stabilization/repeated-service-crashes.md"
+
+      - alert: VoiceOSBackupVerificationFailed
+        expr: voiceos_backup_verification_last_success == 0
+        for: 5m
+        labels:
+          severity: critical
+          route: page
+          team: platform
+        annotations:
+          summary: "VoiceOS backup verification is failing"
+          description: "The latest backup artifact verification has not succeeded."
+          runbook: "docs/runbooks/production-stabilization/backup-verification.md"
+
+      - alert: VoiceOSBFFHighErrorRate
+        expr: |
+          rate(voiceos_bff_http_errors_total[5m])
+          / clamp_min(rate(voiceos_bff_http_requests_total[5m]), 0.1) > 0.05
+        for: 5m
+        labels: {severity: warning, route: ticket, team: platform}
+        annotations:
+          summary: "BFF HTTP 5xx error ratio above 5%"
+          description: "BFF 5xx responses exceed 5% of requests for 5 minutes."
+          runbook: "docs/runbooks/production-stabilization/bff-failure.md"
+
+      - alert: VoiceOSBFFHighErrorRateCritical
+        expr: |
+          rate(voiceos_bff_http_errors_total[5m])
+          / clamp_min(rate(voiceos_bff_http_requests_total[5m]), 0.1) > 0.20
+        for: 2m
+        labels: {severity: critical, route: page, team: platform}
+        annotations:
+          summary: "BFF HTTP 5xx error ratio above 20%"
+          description: "BFF 5xx responses exceed 20% of requests for 2 minutes."
+          runbook: "docs/runbooks/production-stabilization/bff-failure.md"

@@ -20,19 +20,19 @@ Future rows must include: test name, category, exact command, environment, expec
 
 Required categories across Level-2: unit, integration, API, contract, regression, failure/edge-case, security, performance, load, chaos, E2E and runtime.
 
-## Workstream 1 execution record — 2026-09-25
+## Workstream 1 execution matrix
 
-| Test name | Category | Command | Environment | Expected | Actual | Result | Commit |
-|---|---|---|---|---|---|---|---|
-| Backup verifier shell syntax | configuration/static | bash -n /tmp/backup_verify.sh | coding container | Exit 0 | Exit 0; syntax-ok | PASS | current Workstream-1 changes |
-| Python unit/integration suite | unit/integration/regression | pytest | coding container | Pass | Repository checkout cannot be obtained because github.com DNS resolution fails | NOT EXECUTED | current Workstream-1 changes |
-| Jest BFF suite | unit/integration/regression | npm test -- --runInBand | coding container | Pass | Not executable; repository checkout unavailable | NOT EXECUTED | current Workstream-1 changes |
-| Ruff lint | static | ruff check src/ tests/ | coding container | Exit 0 | Not executed; repository checkout unavailable | NOT EXECUTED | current Workstream-1 changes |
-| Ruff format | static | ruff format --check src/ tests/ | coding container | Exit 0 | Not executed; repository checkout unavailable | NOT EXECUTED | current Workstream-1 changes |
-| Mypy | static/type | mypy --strict src/ tests/ | coding container | Exit 0 | Not executed; repository checkout unavailable | NOT EXECUTED | current Workstream-1 changes |
-| Coverage | quality | pytest with project coverage gate | coding container | >=85% | Not executed | NOT EXECUTED | current Workstream-1 changes |
-| Runtime service restart/recovery | runtime | systemctl stop/restart + health probes | CPU node | Correct health transitions and recovery | No authorized CPU runtime attached | RUNTIME EVIDENCE REQUIRED | current Workstream-1 changes |
-| Redis/Postgres/Mongo/Vault health | integration/runtime | live health commands | CPU node | Healthy dependency probes | No live datastore environment attached | RUNTIME EVIDENCE REQUIRED | current Workstream-1 changes |
-| GPU failure/recovery | runtime/chaos | deployment/gpu/healthcheck.sh + controlled service failure | GPU node | Detection and recovery | No live GPU environment attached | RUNTIME EVIDENCE REQUIRED | current Workstream-1 changes |
-| Prometheus alert firing/resolution | integration/runtime | real metric injection/observation | monitoring environment | Alert fires and resolves | No monitoring runtime attached | RUNTIME EVIDENCE REQUIRED | current Workstream-1 changes |
-| Backup timer/artifact verification | integration/runtime | systemctl timer + verify_backup_artifacts.sh | CPU node | Recent artifacts and zero verification failures | No CPU backup environment attached | RUNTIME EVIDENCE REQUIRED | current Workstream-1 changes |
+| Test | Category | Exact command/action | Expected | Actual | Status |
+|---|---|---|---|---|---|
+| BFF Jest suite | regression | `npm test -- --runInBand` | All tests pass | Not executed locally; CI enabled on branch | NOT EXECUTED |
+| Health route tests | unit | `pytest tests/unit/services/test_web_api_health_routes.py -q` | Pass | Not executed locally | NOT EXECUTED |
+| systemd policy tests | unit/config | `pytest tests/unit/deployment/test_phase7_systemd_units.py -q` | Pass | Not executed locally | NOT EXECUTED |
+| Ruff | static | `ruff check src/ tests/` | Exit 0 | Not executed locally | NOT EXECUTED |
+| Ruff format | static | `ruff format --check src/ tests/` | Exit 0 | Not executed locally | NOT EXECUTED |
+| Mypy | static/type | `mypy --strict src/ tests/` | Exit 0 | Not executed locally | NOT EXECUTED |
+| Compose config | config | `docker compose config --quiet` | Exit 0 | Not executed locally | NOT EXECUTED |
+| Backup verification | runtime | `sudo /bin/bash /opt/voiceos/scripts/backup/verify_backup_artifacts.sh` | Exit 0 | CPU node unavailable | RUNTIME EVIDENCE REQUIRED |
+| Restart/readiness drill | runtime | `systemctl restart voiceos-bff` + live/ready probes | Ready healthy | CPU node unavailable | RUNTIME EVIDENCE REQUIRED |
+| Dependency drill | runtime | Stop Redis/Postgres safely, probe ready, restore | Ready 503 then 200 | CPU node unavailable | RUNTIME EVIDENCE REQUIRED |
+| Alert drill | runtime | Fire controlled Prometheus alert; inspect Alertmanager | Fire/route/resolve | Monitoring environment unavailable | RUNTIME EVIDENCE REQUIRED |
+| Restore drill | runtime | Existing Postgres/Mongo/Vault non-destructive DR drills | Restore + integrity pass | DR environment unavailable | RUNTIME EVIDENCE REQUIRED |

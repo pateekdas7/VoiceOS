@@ -1,7 +1,8 @@
 # MongoDB failure
-1. Check: `systemctl status mongod`.
-2. Inspect: `journalctl -u mongod -n 150 --no-pager`.
-3. Probe with the configured MongoDB URI: `mongosh "$MONGODB_URL" --quiet --eval 'db.adminCommand("ping").ok'`.
-4. Use `infra/dr/runbooks/mongo-restore.md` and `scripts/backup/mongodb_restore.sh` for authorized recovery.
-5. Verify backup artifacts after recovery.
-Environment: CPU/MongoDB host.
+
+```bash
+systemctl status mongod
+journalctl -u mongod -n 100 --no-pager
+mongosh --quiet --eval "db.adminCommand('ping').ok"
+```
+For process failure, restart and verify replica-set/index state. For data loss use `infra/dr/runbooks/mongo-restore.md`; live restore verification is **RUNTIME EVIDENCE REQUIRED**.

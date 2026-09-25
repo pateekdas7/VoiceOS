@@ -1,7 +1,11 @@
 # Voice runtime failure
-1. Check: `systemctl status voiceos-voice-runtime`.
-2. Inspect: `journalctl -u voiceos-voice-runtime -n 150 --no-pager`.
-3. Probe: `curl -i http://127.0.0.1:8010/health/live` and `curl -i http://127.0.0.1:8010/health/ready`.
-4. Recover: `systemctl restart voiceos-voice-runtime`.
-5. Confirm GPU dependencies are ready before accepting calls.
-Environment: CPU node plus reachable GPU services.
+
+```bash
+systemctl status voiceos-voice-runtime
+journalctl -u voiceos-voice-runtime -n 200 --no-pager
+```
+1. Determine whether the process, Redis/Postgres, or GPU dependency failed.
+2. Follow the relevant dependency runbook before repeated restarts.
+3. Restart once: `systemctl restart voiceos-voice-runtime`.
+4. Verify runtime health/readiness and the WebSocket path before restoring traffic.
+Do not clear StartLimit blindly. Runtime WebSocket recovery remains **RUNTIME EVIDENCE REQUIRED**.

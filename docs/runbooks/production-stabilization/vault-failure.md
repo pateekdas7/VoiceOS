@@ -1,7 +1,12 @@
 # Vault failure
-1. Check: `systemctl status vault`.
-2. Inspect: `journalctl -u vault -n 150 --no-pager`.
-3. Probe with the configured address/credentials: `vault status`.
-4. Use `infra/dr/runbooks/vault-snapshot.md` for recovery; never expose unseal material in logs.
-5. Verify the latest snapshot after recovery.
-Environment: CPU/Vault host.
+
+The current backend is **file**, not integrated Raft.
+
+```bash
+vault status
+systemctl status vault
+journalctl -u vault -n 100 --no-pager
+systemctl start voiceos-vault-unseal.service
+vault status
+```
+For restore use `sudo bash infra/dr/scripts/backup-vault.sh --restore /path/to/archive.tar.gz`. Treat `/opt/vault/init.json` as sensitive recovery material.

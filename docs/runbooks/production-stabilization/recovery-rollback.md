@@ -1,8 +1,11 @@
 # Recovery and rollback
-1. Identify the deployed commit before changing anything.
-2. Use `scripts/deploy/` and `docs/runbooks/phase16-production-rollout-runbook.md`.
-3. Use the repository's established rollback mechanism; never perform a blind database rollback.
-4. Verify schema compatibility before changing application versions.
-5. Run service liveness/readiness, `bash deployment/cpu/healthcheck.sh`, and applicable smoke/regression tests.
-6. Record exact commands, timestamps, observed state and commit SHA in `LEVEL2_RUNTIME_EVIDENCE.md`.
-Environment: authorized staging/production host.
+
+Source of truth: `docs/runbooks/phase16-production-rollout-runbook.md`.
+
+1. Record failing SHA and service state.
+2. Use `bash scripts/deploy/rollback.sh --to <sha> --execute` only where its documented assumptions match the environment.
+3. Verify migration state.
+4. Restart services in documented order.
+5. Verify live/ready, dependencies, queue state and critical metrics.
+6. Preserve failed-version evidence until recovery is confirmed.
+Never improvise a database downgrade.

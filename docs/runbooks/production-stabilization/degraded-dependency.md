@@ -1,7 +1,3 @@
 # Degraded dependency
-1. Distinguish `/health/live` from `/health/ready`.
-2. Inspect the dependency-specific alert and service logs.
-3. Keep an unready service out of new traffic; do not restart a healthy process merely because a dependency is unavailable.
-4. Use existing bounded retries/circuit breakers.
-5. Restore traffic only after dependency health and backlog convergence are verified.
-Environment: target service and dependency runtime.
+
+Check `/health/live` and `/health/ready` separately. Identify the dependency from readiness, Prometheus target state, or alert annotations. Follow its runbook. Keep the service running when safe to degrade, but never force readiness to healthy. Restore the dependency and verify readiness returns to healthy.

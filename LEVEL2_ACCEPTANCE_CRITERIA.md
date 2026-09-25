@@ -28,57 +28,18 @@ Every workstream must satisfy five layers where applicable: implementation, auto
 If a criterion cannot currently be executed: DEFERRED — RUNTIME EVIDENCE REQUIRED.
 Never lower a requirement because execution is difficult.
 
-## Workstream 1 — Production Stabilization: objective gates
+## Workstream 1 — objective acceptance gates
 
-### Implementation criteria
-1. Every critical HTTP service exposes separate liveness and readiness semantics. Liveness must not require dependency I/O; readiness must fail when hard dependencies required for serving traffic are unhealthy.
-2. Core systemd services use bounded crash recovery with Restart=on-failure and explicit start-limit protection. Restart policy must not mask persistent configuration/dependency failures.
-3. Prometheus loads all production alert rule groups used by the platform.
-4. Monitoring covers service availability, CPU, memory, disk, network errors, queue/restart symptoms and GPU service availability where metrics exist.
-5. Existing structured logging, log rotation, Loki and OpenTelemetry infrastructure is retained and not duplicated.
-6. Existing backup jobs remain authoritative; a scheduled verifier checks actual backup artifacts and datastore persistence indicators without performing destructive restores.
-7. Operational runbooks exist for BFF, Web API, voice runtime, dialer, Redis, PostgreSQL, MongoDB, Vault, GPU services, disk, memory, queue buildup, repeated crashes, degraded dependencies and recovery/rollback.
+| Gate | Implementation | Automated test | Integration test | Runtime verification | Production verification |
+|---|---|---|---|---|---|
+| Liveness/readiness | Separate live and dependency-aware ready endpoints | Route tests prove correct 200/503 behavior | Start BFF/API with real Redis/Postgres | Stop/recover dependency and observe ready transition | Controlled staging incident shows correct traffic gating |
+| Error-rate tracking | BFF/Python counters exposed to Prometheus | Metrics/counter tests pass | Prometheus scrapes targets | Query error ratio after controlled 5xx | Alert threshold observed without noisy paging |
+| Supervision | Bounded restart/backoff/start-limit policies | Unit-file tests pass | Units installed on CPU node | One safe crash recovers; repeated crash hits guard | Crash-loop drill confirms protection |
+| Infra monitoring | CPU/RAM/disk/network/GPU rules | Config/rule validation passes | Exporters scrape | Controlled threshold/target failure fires alert | Observation confirms useful signal |
+| Dependencies | Redis/Postgres/Mongo/Vault/GPU checks where supported | Failure-path tests pass | Real dependency connectivity | Dependency loss causes correct degradation/recovery | Staging incident detected/recovered |
+| Backups | Existing jobs + artifact verification + correct Vault backend | Script/config tests pass | Verification against staging artifacts | Non-destructive restore succeeds | RPO/RTO/integrity demonstrated |
+| Logs/traces | Structured logs, rotation, OTel pipeline | Logger/config tests pass | Collectors receive events | Rotation + trace query verified | Retention supports incident reconstruction |
+| Alerts | Service/error/crash/resource/queue/backup rules | Rule validation passes | Alertmanager receives synthetic alert | Alert fires/routes/resolves | 24h observation shows acceptable noise |
+| Recovery/rollback | Existing scripts + W1 runbooks | Script/config tests pass | Staging rollback/restore | Actual recovery executed | Agreed RTO/RPO met |
 
-### Automated-test criteria
-1. BFF liveness returns HTTP 200 without touching Postgres or Redis.
-2. BFF readiness returns HTTP 200 only when both Postgres and Redis checks succeed; it returns HTTP 503 when a hard dependency fails.
-3. Web API liveness returns HTTP 200 independent of dependency state.
-4. Web API readiness returns HTTP 200 only when its health aggregator is healthy and HTTP 503 otherwise.
-5. Systemd unit tests verify bounded Restart=on-failure and StartLimitIntervalSec=300/StartLimitBurst=5 for the core services.
-6. Backup verifier shell syntax passes bash -n.
-7. Existing regression suites remain required and must be executed before TESTED is awarded.
-
-### Integration-test criteria
-1. BFF readiness must interact with the real Postgres and Redis instances.
-2. Web API readiness must interact with its configured health checks.
-3. Prometheus must successfully load the complete rule set and scrape the configured service targets.
-4. Backup verification must execute against actual MongoDB, Vault snapshot, Redis persistence and PostgreSQL WAL-archiver state.
-5. Alertmanager must receive and route a real firing/resolved alert.
-
-### Runtime-verification criteria
-1. Kill/restart each supervised CPU service and observe liveness/readiness transitions.
-2. Stop a hard dependency and verify readiness becomes unhealthy without causing an uncontrolled restart loop.
-3. Restore the dependency and verify readiness recovers.
-4. Verify Prometheus records target-down and infrastructure alerts from real metrics.
-5. Verify GPU STT/LLM/TTS readiness and failure detection on the actual GPU node.
-6. Verify scheduled backup timers execute and report success/failure.
-7. Verify logrotate prevents uncontrolled log growth.
-8. Verify trace retention is actually enforced in the deployed Jaeger storage.
-9. Verify graceful shutdown drains active voice runtime work before process exit.
-
-### Production-verification criteria
-1. Core services remain stable over the agreed observation window without manual babysitting.
-2. Error-rate and latency alerts fire only on meaningful sustained conditions and resolve after recovery.
-3. Service restart storms are bounded and diagnosable rather than hidden.
-4. Backup jobs produce recent artifacts and restore drills meet the approved RPO/RTO.
-5. Operational dashboards expose service, dependency and resource health for the production environment.
-6. No critical/high stabilization defect remains unresolved without an explicit accepted risk.
-
-### Current result
-Implementation: PARTIAL / IN_PROGRESS.
-Automated tests: RUNTIME/EXECUTION EVIDENCE REQUIRED.
-Integration tests: RUNTIME EVIDENCE REQUIRED.
-Runtime verification: RUNTIME EVIDENCE REQUIRED.
-Production verification: RUNTIME EVIDENCE REQUIRED.
-
-Criteria are intentionally not lowered because the current coding environment cannot execute the live infrastructure gates.
+**W1 completion rule:** implementation alone never promotes a gate to RUNTIME VERIFIED or PRODUCTION VERIFIED. Missing runtime execution remains **RUNTIME EVIDENCE REQUIRED**.

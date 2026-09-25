@@ -2,7 +2,7 @@ name: VoiceOS CI
 
 on:
   push:
-    branches: ["main", "feature/**", "fix/**", "hotfix/**"]
+    branches: ["main", "feature/**", "fix/**", "hotfix/**", "claude/ssh-gpu-cpu-servers-y99fib"]
   pull_request:
     branches: ["main"]
 
@@ -360,3 +360,18 @@ jobs:
 
       - name: check_performance_regression.py — RegressionDetector CI gate (blocking, Sprint-028)
         run: python scripts/check_performance_regression.py
+
+  # ---------------------------------------------------------------------------
+  # Stage 6.5 — Node BFF regression tests
+  # ---------------------------------------------------------------------------
+  node-bff-tests:
+    name: Node BFF Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm test -- --runInBand
