@@ -135,3 +135,17 @@ Workstream 1 remains frozen. Workstreams 3/4/5 and Level-3 remain untouched.
 Implemented since the previous W2 baseline: canonical provider callback normalization/transition guard; callback correlation against the durable `call_attempts` row with row locking and tenant/lead/pipeline mismatch rejection; terminal event deduplication remains on the existing idempotency table; call-attempt lifecycle migration now permits RINGING/CANCELLED/VOICEMAIL; outbound Twilio creation now has a bounded tenant-scoped CPS guard backed by Redis.
 
 Automated execution remains blocked in this environment. Runtime and production evidence remain required.
+
+
+## W2 continuation status — 2026-09-25
+
+| Capability | Implementation | Tested | Integration | Runtime | Production |
+|---|---|---|---|---|---|
+| Recording production lifecycle | IMPLEMENTED | BLOCKED | BLOCKED | BLOCKED | BLOCKED |
+| Callback timezone boundary | IMPLEMENTED | BLOCKED | BLOCKED | BLOCKED | BLOCKED |
+| Provider failure contract | IMPLEMENTED | BLOCKED | BLOCKED | BLOCKED | BLOCKED |
+| Webhook timeout/retry hardening | IMPLEMENTED | BLOCKED | BLOCKED | BLOCKED | BLOCKED |
+| Telephony observability | IMPLEMENTED/PARTIAL | BLOCKED | BLOCKED | BLOCKED | BLOCKED |
+| Canonical Billing/CRM event boundary | IMPLEMENTED | BLOCKED | BLOCKED | BLOCKED | BLOCKED |
+
+W2 remains PARTIALLY IMPLEMENTED — REMAINING IMPLEMENTATION WORK because recording access is not yet wired through an authenticated public endpoint, and runtime/test execution remains unavailable.
