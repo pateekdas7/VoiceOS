@@ -98,6 +98,17 @@ class TestDialerWorkerService:
         assert "EnvironmentFile=" in _read("voiceos-dialer-worker.service")
 
 
+class TestFrontendService:
+    def test_has_bounded_restart_policy(self) -> None:
+        content = _read("voiceos-frontend.service")
+        assert "Restart=on-failure" in content
+        assert "StartLimitIntervalSec=300" in content
+        assert "StartLimitBurst=5" in content
+
+    def test_has_network_online_dependency(self) -> None:
+        assert "After=network-online.target" in _read("voiceos-frontend.service")
+
+
 class TestBffService:
     def test_exists_and_has_required_fields(self) -> None:
         content = _read("voiceos-bff.service")
@@ -106,3 +117,6 @@ class TestBffService:
         assert "StartLimitBurst=5" in content
         assert "WantedBy=multi-user.target" in content
         assert "bff.js" in content
+
+    def test_has_network_online_dependency(self) -> None:
+        assert "After=network-online.target" in _read("voiceos-bff.service")
