@@ -1,14 +1,17 @@
 [Unit]
 Description=VoiceOS Dialer Worker
-After=network.target postgresql.service redis-server.service
+Wants=network-online.target
+After=network-online.target postgresql.service redis-server.service
 
 [Service]
 Type=simple
 WorkingDirectory=/opt/voiceos/app
 EnvironmentFile=/opt/voiceos/.env
 ExecStart=/opt/voiceos/venv/bin/python scripts/jobs/run_dialer_worker.py
-Restart=always
-RestartSec=10
+Restart=on-failure
+StartLimitIntervalSec=300
+StartLimitBurst=5
+RestartSec=5
 TimeoutStopSec=45
 StandardOutput=append:/opt/voiceos/logs/dialer-worker.log
 StandardError=append:/opt/voiceos/logs/dialer-worker.log
