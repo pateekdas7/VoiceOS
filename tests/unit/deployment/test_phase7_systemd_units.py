@@ -7,7 +7,7 @@ Verifies:
 - voiceos-voice-runtime.service has TimeoutStopSec=45
 - voiceos-dialer-worker.service has TimeoutStopSec=45
 - All 7 listed units have WantedBy=multi-user.target
-- All 7 units have Restart=always
+- All 7 units use bounded Restart=on-failure recovery
 """
 
 from __future__ import annotations
@@ -44,7 +44,9 @@ class TestWebApiService:
         )
 
     def test_has_restart_always(self) -> None:
-        assert "Restart=always" in _read("voiceos-webapi.service")
+        assert "Restart=on-failure" in _read("voiceos-webapi.service")
+        assert "StartLimitIntervalSec=300" in _read("voiceos-webapi.service")
+        assert "StartLimitBurst=5" in _read("voiceos-webapi.service")
 
     def test_has_wanted_by(self) -> None:
         assert "WantedBy=multi-user.target" in _read("voiceos-webapi.service")
@@ -62,7 +64,9 @@ class TestVoiceRuntimeService:
         assert "deployment/cpu/app.py --serve" in content
 
     def test_has_restart_always(self) -> None:
-        assert "Restart=always" in _read("voiceos-voice-runtime.service")
+        assert "Restart=on-failure" in _read("voiceos-voice-runtime.service")
+        assert "StartLimitIntervalSec=300" in _read("voiceos-voice-runtime.service")
+        assert "StartLimitBurst=5" in _read("voiceos-voice-runtime.service")
 
     def test_has_wanted_by(self) -> None:
         assert "WantedBy=multi-user.target" in _read("voiceos-voice-runtime.service")
@@ -83,7 +87,9 @@ class TestDialerWorkerService:
         assert "run_dialer_worker.py" in content
 
     def test_has_restart_always(self) -> None:
-        assert "Restart=always" in _read("voiceos-dialer-worker.service")
+        assert "Restart=on-failure" in _read("voiceos-dialer-worker.service")
+        assert "StartLimitIntervalSec=300" in _read("voiceos-dialer-worker.service")
+        assert "StartLimitBurst=5" in _read("voiceos-dialer-worker.service")
 
     def test_has_wanted_by(self) -> None:
         assert "WantedBy=multi-user.target" in _read("voiceos-dialer-worker.service")
@@ -95,6 +101,8 @@ class TestDialerWorkerService:
 class TestBffService:
     def test_exists_and_has_required_fields(self) -> None:
         content = _read("voiceos-bff.service")
-        assert "Restart=always" in content
+        assert "Restart=on-failure" in content
+        assert "StartLimitIntervalSec=300" in content
+        assert "StartLimitBurst=5" in content
         assert "WantedBy=multi-user.target" in content
         assert "bff.js" in content
