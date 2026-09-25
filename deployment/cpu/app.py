@@ -640,6 +640,20 @@ def build_vad_model_factory():
     return lambda: SileroVADModel(model_path)
 
 
+
+// ---------------------------------------------------------------------------
+// OpenTelemetry — live W2 media-path tracer
+// ---------------------------------------------------------------------------
+
+def build_otel_tracer() -> object | None:
+    """Build the existing OTel tracer for the live W2 media composition."""
+    endpoint = _env("OTEL_EXPORTER_OTLP_ENDPOINT", "").strip()
+    if not endpoint:
+        logger.warning("OTEL_EXPORTER_OTLP_ENDPOINT not set — W2 media tracing disabled")
+        return None
+    from src.libs.observability.tracer import OTelTracer
+    return OTelTracer.for_production("voiceos-cpu-media-gateway", endpoint)
+
 def build_shared_call_dependencies() -> object:
     """Everything src/services/media_gateway/twilio_ws_entrypoint.py's
     Starlette app needs, constructed once for the life of the process —
@@ -693,6 +707,7 @@ def build_shared_call_dependencies() -> object:
         recording_dir=_env("CALL_RECORDING_DIR", ""),
         greeting_timeout_s=float(_env("GREETING_TIMEOUT_S", "60.0")),
         greeting_cache=greeting_cache,
+        tracer=build_otel_tracer(),
         vad_model_factory=build_vad_model_factory(),
     )
 
