@@ -51,3 +51,15 @@ L2-B007 implementation is resolved: the actual Jaeger Deployment now passes `--b
 - **L2-W2-004 REAL TELEPHONY:** real Twilio outbound/inbound/webhook/media/recording/caller-ID drills remain RUNTIME EVIDENCE REQUIRED.
 - **L2-W2-005 RECORDING:** production object-storage retention/deletion lifecycle remains open.
 - **L2-W2-006 CALLBACK TIMEZONE:** campaign/tenant timezone-aware callback policy remains open.
+
+
+## 2026-09-25 — W2 continuation blockers
+
+| ID | Area | Severity | Status | Description | Exact next action |
+|---|---|---|---|---|---|
+| L2-W2-007 | Recording runtime | HIGH | BLOCKED | Recording lifecycle is implemented, but migration 039 and production S3 upload/presign/retention behavior have not been executed. | Apply migrations on authorized staging DB and run real recording upload/access/retention/deletion drills. |
+| L2-W2-008 | Callback timezone runtime | MEDIUM | BLOCKED | Canonical timezone policy is implemented and unit tests are present, but no executable test environment is available. | Execute timezone/DST/working-window matrix in repository checkout. |
+| L2-W2-009 | Provider failure runtime | MEDIUM | BLOCKED | Failure classifier and retry persistence are implemented, but Twilio/provider failure injection has not been executed. | Execute provider network/rate-limit/timeout/invalid-destination/auth failure drills. |
+| L2-W2-010 | Canonical event DB | HIGH | BLOCKED | Migration 041 is not applied to an authorized PostgreSQL runtime. | Apply migration 041 and verify durable event ordering/idempotency under duplicate callbacks. |
+| L2-W2-011 | Observability runtime | MEDIUM | BLOCKED | New telephony metrics are implemented but Prometheus scrape/query evidence is unavailable. | Scrape BFF metrics and verify lifecycle, webhook latency, setup latency, and failure signals. |
+| L2-W2-012 | Recording access API | MEDIUM | OPEN | Storage authorization/presigned URL logic exists in the recording boundary, but no user-facing recording access endpoint is yet wired through the existing authenticated BFF surface. | Add the authenticated access endpoint without exposing object keys or credentials; keep W4/W5 out of scope. |
