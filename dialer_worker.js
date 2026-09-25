@@ -1014,7 +1014,6 @@ class Pipeline extends EventEmitter {
 
     // Push to retry sorted set (score = unix ms timestamp for ordered processing)
     await redis.zadd(K.retryQueue(lead.tenant_id), retryAt, JSON.stringify(retryPayload));
-    _incTelephonyMetric('voiceos_telephony_retry_attempts_total', { reason: 'provider_retry' });
     log.info(`[Pipeline:${this.name}] Retry scheduled for lead ${lead.lead_id} attempt=${attempts} delay=${delaySec}s`);
   }
 
@@ -1197,6 +1196,7 @@ class DialerWorker {
           const removed = await redis.zrem(key, item);
           if (!removed) continue; // Another worker got it
           const lead = JSON.parse(item);
+          _incTelephonyMetric('voiceos_telephony_retry_attempts_total', { reason: 'provider_retry' });
           log.info(`[Worker:${WORKER_ID}] Retrying lead=${lead.lead_id} attempt=${lead._retry_count}`);
           await this._routeToPipeline(lead);
         }
