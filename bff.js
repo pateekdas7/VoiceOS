@@ -2266,6 +2266,9 @@ app.post('/dialer/callback', async (req, res) => {
          VALUES ($1,$2,'twilio_callback',NOW()+INTERVAL '24 hours')
          ON CONFLICT (key) DO NOTHING RETURNING key`,
         [idempKey, attempt.tenant_id]);
+      if (!idem.rows.length) {
+        _incMetric('voiceos_telephony_webhook_duplicates_total');
+      }
       if (idem.rows.length) {
         const payload = JSON.stringify({
           callSid: CallSid, attemptId: attempt.attempt_id, disposition: next,
@@ -2353,6 +2356,7 @@ app.post('/campaigns/:id/leads/:leadId/schedule-callback', requireAuth, async (r
       _callback_timezone: timezone,
     };
     await redis.zadd(`voiceos:callback_calls:${tid}`, callbackMs, JSON.stringify(payload));
+    _incMetric('voiceos_telephony_callback_events_total', { outcome: 'scheduled' });
     await pool.query(
       `UPDATE leads SET queue_status='CALLBACK', updated_at=now() WHERE lead_id=$1 AND tenant_id=$2`,
       [lead.lead_id, tid]
