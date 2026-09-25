@@ -52,6 +52,7 @@ from src.libs.contracts.models.tenant import IsolationProfile
 from src.libs.contracts.models.user import OrgScope
 from src.libs.contracts.primitives import CampaignId, CustomerId, TenantId
 from src.libs.health.aggregator import HealthAggregator
+from src.libs.health.probe import LivenessProbe, ReadinessProbe
 from src.libs.repositories.admin_audit_view import AdminAuditViewRepository
 from src.libs.repositories.audit import AuditRepository
 from src.libs.repositories.campaign_audience import CampaignAudienceRepository
@@ -326,6 +327,8 @@ def create_web_api(
         Route("/auth/google/start", google_start, methods=["GET"]),
         Route("/auth/google/callback", google_callback, methods=["GET"]),
         Route("/auth/logout", logout, methods=["GET", "POST"]),
+        Route("/health/live", health_live, methods=["GET"]),
+        Route("/health/ready", health_ready, methods=["GET"]),
         Route("/system/health", system_health, methods=["GET"]),
         *_build_team_routes(user_service),
     ]
