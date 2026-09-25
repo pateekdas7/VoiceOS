@@ -878,6 +878,27 @@ const AI_PORTS = {
   TTS: process.env.TTS_PORT || '8200',
 };
 
+app.get('/health/live', (_req, res) => {
+  res.status(200).json({ status: 'healthy', service: 'voiceos-bff' });
+});
+
+app.get('/health/ready', async (_req, res) => {
+  const checks = await Promise.all([
+    (async () => {
+      try { await pool.query('SELECT 1'); return true; } catch { return false; }
+    })(),
+    (async () => {
+      try { return (await redis.ping()) === 'PONG'; } catch { return false; }
+    })(),
+  ]);
+  const ready = checks.every(Boolean);
+  res.status(ready ? 200 : 503).json({
+    status: ready ? 'healthy' : 'unhealthy',
+    service: 'voiceos-bff',
+    dependencies: { postgresql: checks[0] ? 'healthy' : 'unhealthy', redis: checks[1] ? 'healthy' : 'unhealthy' },
+  });
+});
+
 app.get('/system/health', async (req, res) => {
   const now = new Date().toISOString();
 
