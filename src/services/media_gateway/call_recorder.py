@@ -66,6 +66,14 @@ class CallRecorder:
         self._outbound_sample_rate = sample_rate
         self._outbound_pcm.extend(pcm16le)
 
+    def artifact_paths(self) -> list[Path]:
+        paths = [self._dir / f"{self._call_id}_events.jsonl"]
+        if self._inbound_pcm:
+            paths.append(self._dir / f"{self._call_id}_customer.wav")
+        if self._outbound_pcm:
+            paths.append(self._dir / f"{self._call_id}_kavya.wav")
+        return paths
+
     def close(self) -> None:
         """Flush the accumulated transcript/audio to disk. Safe to call
         even if no audio/events were ever recorded (e.g. a call that was
