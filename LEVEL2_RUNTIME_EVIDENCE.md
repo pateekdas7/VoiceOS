@@ -35,3 +35,7 @@ All remain **RUNTIME EVIDENCE REQUIRED**.
 | Coding container | Git working-tree status | `git status --short` at 2026-09-25T07:51:30Z UTC | BLOCKED | Exit 128: `fatal: not a git repository` |
 
 This execution attempt produced no application/runtime evidence. No CPU/GPU/dependency/Prometheus/Alertmanager/backup/restore/recovery drill was executed.
+
+
+## MongoDB monitoring remediation
+No MongoDB runtime action was executed. Required evidence: exporter scrape with observed `mongodb_up`; controlled MongoDB failure/recovery; controlled exporter failure with `up{job="mongodb-exporter"}` transition; and Alertmanager fire → route → resolve. All remain **RUNTIME EVIDENCE REQUIRED**.

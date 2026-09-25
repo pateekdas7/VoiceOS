@@ -72,7 +72,12 @@ kubectl create secret generic grafana-admin -n "${NS}" \
   --from-literal=password="${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be set}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
-log "Generating Loki/FluentBit/OTel/Jaeger ConfigMaps..."
+log "Generating MongoDB exporter credentials secret..."
+kubectl create secret generic mongodb-exporter-credentials -n "${NS}" \
+  --from-literal=MONGODB_URI="${MONGODB_MONITORING_URI:?MONGODB_MONITORING_URI must be set from the approved secret source}" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+log "Generating Loki/FluentBit/OTel/Jaeger ConfigMaps...
 kubectl create configmap loki-config -n "${NS}" \
   --from-file="${MON_DIR}/logging/loki.yml" \
   --dry-run=client -o yaml | kubectl apply -f -
@@ -94,7 +99,7 @@ log "Applying NetworkPolicy..."
 kubectl apply -f "${K8S_DIR}/networkpolicy.yaml"
 
 log "Applying Deployments/Services..."
-kubectl apply -f "${K8S_DIR}/prometheus.yaml"
+kubectl apply -f "${K8S_DIR}/prometheus.yaml"\nkubectl apply -f "${K8S_DIR}/mongodb-exporter.yaml"
 kubectl apply -f "${K8S_DIR}/grafana.yaml"
 kubectl apply -f "${K8S_DIR}/alertmanager.yaml"
 kubectl apply -f "${K8S_DIR}/loki.yaml"
@@ -102,7 +107,7 @@ kubectl apply -f "${K8S_DIR}/fluentbit.yaml"
 kubectl apply -f "${K8S_DIR}/otel-jaeger.yaml"
 
 log "Waiting for rollouts..."
-kubectl rollout status deployment/prometheus -n "${NS}" --timeout=180s
+kubectl rollout status deployment/prometheus -n "${NS}" --timeout=180s\nkubectl rollout status deployment/mongodb-exporter -n "${NS}" --timeout=180s
 kubectl rollout status deployment/grafana -n "${NS}" --timeout=120s
 kubectl rollout status deployment/alertmanager -n "${NS}" --timeout=120s
 kubectl rollout status deployment/loki -n "${NS}" --timeout=120s

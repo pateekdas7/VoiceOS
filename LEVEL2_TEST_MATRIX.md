@@ -45,3 +45,11 @@ Required categories across Level-2: unit, integration, API, contract, regression
 | Local git working-tree status | environment | `git status --short` | Run inside repository checkout | Exit 128: `fatal: not a git repository` | NOT EXECUTED — ENVIRONMENT BLOCKED |
 
 Because the repository checkout failed, no pytest, Jest, Ruff, Mypy, frontend build, Compose, integration, or runtime command was executed in this environment. No test is marked PASS on source inspection alone.
+
+
+## MongoDB monitoring remediation tests
+| Test | Category | Exact command | Expected | Actual | Status |
+|---|---|---|---|---|---|
+| MongoDB monitoring configuration tests | unit/config | `pytest tests/unit/monitoring/test_mongodb_monitoring.py -q` | Configuration assertions pass | Repository checkout unavailable; command could not execute | NOT EXECUTED — ENVIRONMENT BLOCKED |
+| MongoDB runtime monitoring | runtime | Prometheus scrape + controlled MongoDB failure/recovery | `up` and `mongodb_up` reflect state and recover | No authorized runtime environment attached | RUNTIME EVIDENCE REQUIRED |
+| MongoDB Alertmanager drill | runtime/alerting | Controlled alert fire → route → resolve | Alert fires, routes and resolves | No authorized Alertmanager environment attached | RUNTIME EVIDENCE REQUIRED |

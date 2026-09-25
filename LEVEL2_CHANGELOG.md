@@ -38,3 +38,7 @@ Commits: `a8b33f676c80d8ba2b12207e2954a4a800308af0`, `9b4d4b8d14234ee01874d29963
 Attempted to establish an executable repository environment before running the W1 matrix. A fresh clone of `claude/ssh-gpu-cpu-servers-y99fib` failed with exit 128 because `github.com` could not be resolved. A direct `git status --short` also confirmed there is no local repository checkout. No test or runtime result was fabricated or promoted to PASS. W1 remains open.
 
 Additional inspection clarified the MongoDB PARTIAL status: Docker Compose provides a MongoDB healthcheck and DR tooling, but the inspected Prometheus configuration has no MongoDB-specific exporter/scrape target or MongoDB-specific service-health alert. Runtime verification remains unavailable.
+
+
+## 2026-09-25 — Workstream 1 MongoDB monitoring remediation
+Fixed the MongoDB monitoring implementation gap: added Percona exporter wiring for Compose and Kubernetes, Prometheus scraping, exporter-down and database-unavailable alerts, deploy-time secret injection, network-policy paths, and configuration tests. Implementation is VERIFIED BY SOURCE/CONFIGURATION. Tests are NOT EXECUTED — ENVIRONMENT BLOCKED. Runtime monitoring and Alertmanager fire → route → resolve remain RUNTIME EVIDENCE REQUIRED.

@@ -17,6 +17,30 @@ groups:
           description: "Prometheus has been unable to scrape {{ $labels.service }} for 2 minutes."
           runbook: "docs/runbooks/production-stabilization/service-down.md"
 
+      - alert: VoiceOSMongoDBExporterDown
+        expr: up{job="mongodb-exporter"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          route: page
+          team: platform
+        annotations:
+          summary: "MongoDB metrics exporter is down"
+          description: "Prometheus cannot scrape the MongoDB exporter for 2 minutes."
+          runbook: "docs/runbooks/production-stabilization/mongodb-failure.md"
+
+      - alert: VoiceOSMongoDBUnavailable
+        expr: mongodb_up{job="mongodb-exporter"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          route: page
+          team: platform
+        annotations:
+          summary: "MongoDB is unavailable"
+          description: "The MongoDB exporter is reachable but cannot establish a healthy MongoDB connection."
+          runbook: "docs/runbooks/production-stabilization/mongodb-failure.md"
+
       - alert: VoiceOSGPUServiceDown
         expr: up{job="gpu-node"} == 0
         for: 1m

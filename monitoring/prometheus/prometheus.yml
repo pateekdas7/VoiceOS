@@ -150,6 +150,14 @@ scrape_configs:
           node_pool: gpu
           cluster_member: "false"
 
+  # -- MongoDB exporter -----------------------------------------------------
+  - job_name: mongodb-exporter
+    static_configs:
+      - targets: ["mongodb-exporter:9216"]
+        labels:
+          service: mongodb
+          component: database
+
   # -- Infra exporters -----------------------------------------------------
   - job_name: node-exporter
     static_configs:

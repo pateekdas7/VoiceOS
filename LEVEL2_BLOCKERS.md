@@ -22,3 +22,9 @@ Implementation gaps that do not have an external dependency are tracked in LEVEL
 
 ### 2026-09-25 execution re-check (2026-09-25T07:51:30Z UTC)
 The execution-environment blocker was reproduced, not merely carried forward: a fresh branch clone failed with exit 128 because `github.com` could not be resolved. No automated or runtime W1 test was therefore executed. MongoDB's PARTIAL status is also confirmed as an implementation gap in the inspected monitoring layer: Compose healthchecking exists, but no MongoDB-specific Prometheus exporter/scrape target or service-health alert was identified. This remains open pending an implementation decision and runtime verification.
+
+
+### MongoDB monitoring runtime blocker
+| ID | Workstream | Severity | Description | Status | Exact next action |
+|---|---|---|---|---|---|
+| L2-B010 | W1 / MongoDB runtime monitoring | HIGH | MongoDB exporter and alerts are source/configuration verified, but no authorized Prometheus/MongoDB/Alertmanager runtime is attached. | BLOCKED | Execute exporter scrape, MongoDB failure/recovery, exporter failure, and Alertmanager fire → route → resolve drills on authorized staging infrastructure. |
