@@ -137,7 +137,9 @@ class ScheduleVerifier {
     const c = rows[0];
     if (c.status !== 'ACTIVE') return { ok: false, reason: `campaign_${c.status.toLowerCase()}` };
 
-    const tz = c.timezone || 'Asia/Kolkata';
+    const tz = c.timezone;
+    if (!tz || typeof tz !== 'string') return { ok: false, reason: 'campaign_timezone_missing' };
+    try { new Intl.DateTimeFormat('en-US', { timeZone: tz }).format(); } catch { return { ok: false, reason: 'campaign_timezone_invalid' }; }
     const now = new Date();
 
     // Absolute window (optional)
