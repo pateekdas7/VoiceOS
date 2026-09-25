@@ -111,6 +111,8 @@ spec:
           port: 4318 # otel-collector OTLP/HTTP (DR/smoke-test trace pushes)
         - protocol: TCP
           port: 9093 # alertmanager
+        - protocol: TCP
+          port: 9216 # MongoDB exporter
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

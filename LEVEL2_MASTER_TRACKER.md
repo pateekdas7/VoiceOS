@@ -73,7 +73,7 @@ Scope is operational stability only; no conversation-intelligence expansion was 
 | CPU/RAM/disk/network | IMPLEMENTED | node-exporter + Prometheus infrastructure rules |
 | GPU health | IMPLEMENTED | GPU scrape + fleet/unavailable alerts; runtime evidence pending |
 | Redis/PostgreSQL | IMPLEMENTED | readiness, exporters/alerts, DR runbooks |
-| MongoDB | PARTIAL | Compose healthcheck + DR tooling; production runtime monitoring unverified |
+| MongoDB | IMPLEMENTED | Percona exporter + Prometheus scrape + exporter/database alerts + K8s/Compose wiring; runtime verification pending |
 | Vault | IMPLEMENTED | file-backend DR backup; scheduled wrapper corrected in W1 |
 | Backup verification | IMPLEMENTED | verifier + systemd service/timer + alert |
 | Error-rate tracking | IMPLEMENTED | Python RED metrics + BFF counters/`/metrics` |
