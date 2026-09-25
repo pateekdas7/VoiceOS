@@ -87,6 +87,7 @@ if TYPE_CHECKING:
     from src.libs.observability.tracer import OTelTracer
     from src.services.conversation_engine.engine import ConversationEngine
     from src.services.crm.service import CustomerService
+    from src.services.telephony.phone_numbers import TelephonyNumberResolver
     from src.services.dialogue_manager.service import DialogueManager
     from src.services.stt.service import STTService
     from src.services.tts.greeting_cache import GreetingCache
@@ -132,6 +133,7 @@ class SharedCallDependencies:
     stt_service: STTService
     conversation_engine: ConversationEngine
     customer_service: CustomerService | None = None
+    telephony_number_resolver: "TelephonyNumberResolver | None" = None
     """Authoritative CRM lookup used by /voice to resolve customer_id from
     the caller's phone number (ANI for inbound calls, DNIS/To for
     outbound-api Direction) BEFORE minting TwiML. Same
@@ -1383,6 +1385,8 @@ def create_twilio_media_stream_app(
             await websocket.close(code=4401)
             return
 
+        resolved_tenant_id = ticket.tenant_id if ticket is not None else deps.tenant_id
+
         # Defense-in-depth: the ticket's account_sid was checked by
         # verify_and_consume, but we also verify against the process's
         # configured expected account_sid — a token minted under this
@@ -1448,19 +1452,19 @@ def create_twilio_media_stream_app(
             consent_gate = NullCustomerConsent()
         if customer_id:
             try:
-                if consent_gate.is_revoked(deps.tenant_id, customer_id):
+                if consent_gate.is_revoked(resolved_tenant_id, customer_id):
                     logger.warning(
                         "consent_revoked call_id=%s tenant=%s customer=%s — closing call before greeting",
-                        call_id, deps.tenant_id, customer_id,
+                        call_id, resolved_tenant_id, customer_id,
                     )
                     from src.services.media_gateway.metrics import record_call_blocked_consent_revoked
-                    record_call_blocked_consent_revoked(deps.tenant_id)
+                    record_call_blocked_consent_revoked(resolved_tenant_id)
                     await websocket.close(code=4003)
                     return
             except Exception:
                 logger.exception(
                     "consent_gate lookup failed for tenant=%s customer=%s — proceeding (fail-open, phone-DND and schedule-DND remain in force)",
-                    deps.tenant_id, customer_id,
+                    resolved_tenant_id, customer_id,
                 )
 
         context = None
@@ -1469,7 +1473,7 @@ def create_twilio_media_stream_app(
                 _ctx_span = deps.tracer.start_span("crm.context_assemble", {"call_id": call_id, "customer_id": customer_id}) if deps.tracer else contextlib.nullcontext()
                 with _ctx_span:
                     context = deps.conversation_engine.start_call(
-                        tenant_id=TenantId(deps.tenant_id), customer_id=customer_id, call_id=call_id
+                        tenant_id=TenantId(resolved_tenant_id), customer_id=customer_id, call_id=call_id
                     )
             except Exception:
                 logger.exception("start_call() failed for customer_id=%s call_id=%s — proceeding without context", customer_id, call_id)
@@ -1489,7 +1493,7 @@ def create_twilio_media_stream_app(
 
         orchestrator = await CallOrchestrator.create(
             call_id=call_id,
-            tenant_id=deps.tenant_id,
+            tenant_id=resolved_tenant_id,
             credentials=credentials,
             deps=deps,
             context=context,
@@ -1633,6 +1637,23 @@ def create_twilio_media_stream_app(
                 "/voice rejected: AccountSid mismatch expected=%s got=%s",
                 deps.account_sid, account_sid,
             )
+
+        # Resolve the provider-owned phone number to its VoiceOS tenant.
+        # Outbound calls are routed by From; inbound calls by To. When the
+        # resolver is injected, an unassigned number fails closed. Tests/dev
+        # fixtures may omit the resolver and retain the static tenant fallback.
+        direction = (params.get("Direction", "") or "").lower()
+        from_number = params.get("From", "") or ""
+        to_number = params.get("To", "") or ""
+        resolved_tenant_id = deps.tenant_id
+        if deps.telephony_number_resolver is not None:
+            route_number = to_number if direction == "inbound" else from_number
+            number = deps.telephony_number_resolver.resolve_for_call(route_number, direction=direction)
+            if number is None:
+                logger.warning("/voice rejected: phone number is not assigned to an active tenant call_sid=%s", call_sid)
+                return Response("Forbidden", status_code=403, media_type="text/plain")
+            resolved_tenant_id = number.tenant_id
+
             return Response("Forbidden", status_code=403, media_type="text/plain")
 
         # ANI → CustomerService lookup (RI-5: authoritative-by-origin).
@@ -1655,7 +1676,7 @@ def create_twilio_media_stream_app(
         if deps.customer_service is not None and caller_phone:
             try:
                 customer = deps.customer_service.find_by_phone(
-                    TenantId(deps.tenant_id), caller_phone,
+                    TenantId(resolved_tenant_id), caller_phone,
                 )
             except Exception as exc:
                 logger.warning(
@@ -1681,12 +1702,12 @@ def create_twilio_media_stream_app(
                 call_sid, deps.customer_service is not None, caller_phone,
             )
 
-        _voice_span = deps.tracer.start_span("voice.http.inbound", {"call_sid": call_sid, "direction": direction}) if deps.tracer else contextlib.nullcontext()
+        _voice_span = deps.tracer.start_span("voice.http.inbound", {"call_sid": call_sid, "direction": direction, "tenant_id": resolved_tenant_id}) if deps.tracer else contextlib.nullcontext()
         with _voice_span:
             ticket = await deps.admission_registry.issue(
                 call_sid=call_sid,
                 account_sid=account_sid,
-                tenant_id=deps.tenant_id,
+                tenant_id=resolved_tenant_id,
             )
 
             host = request.headers.get("host") or request.url.hostname

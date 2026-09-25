@@ -355,7 +355,8 @@ class CallSimulator {
 // ─── Twilio Dialer (production mode) ────────────────────────────────────────
 
 class TwilioDialer {
-  constructor() {
+  constructor(dbPool) {
+    this._pool = dbPool;
     const sid     = process.env.TWILIO_ACCOUNT_SID;
     const token   = process.env.TWILIO_AUTH_TOKEN;
     if (!sid || !token) throw new Error('TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN required in production mode');
@@ -376,9 +377,20 @@ class TwilioDialer {
     const twimlUrl = `${mgHttp}/voice`;
     const callbackUrl = `${this._bffUrl}/dialer/callback?pipeline_id=${encodeURIComponent(lead.pipeline_id)}&lead_id=${encodeURIComponent(lead.lead_id)}&tenant_id=${encodeURIComponent(lead.tenant_id)}`;
 
+    const { rows: numbers } = await this._pool.query(
+      `SELECT e164_number FROM telephony_phone_numbers
+       WHERE tenant_id=$1 AND status='ACTIVE' AND provider='twilio' AND outbound_enabled=true
+         AND (campaign_id=$2 OR campaign_id IS NULL)
+       ORDER BY (campaign_id=$2) DESC, created_at ASC
+       LIMIT 1`,
+      [lead.tenant_id, lead.campaign_id]
+    );
+    const callerId = numbers[0]?.e164_number || (process.env.ALLOW_GLOBAL_TWILIO_FROM === 'true' ? this._from : null);
+    if (!callerId) throw new Error(`No active Twilio caller ID assigned to tenant=${lead.tenant_id} campaign=${lead.campaign_id}`);
+
     const call = await this._client.calls.create({
       to:             `+91${lead.phone}`,
-      from:           this._from,
+      from:           callerId,
       url:            twimlUrl,
       statusCallback: callbackUrl,
       statusCallbackMethod: 'POST',
@@ -991,7 +1003,7 @@ class DialerWorker {
     this._tracker    = new ActiveCallTracker(pool);
     this._registry   = new PipelineRegistry(pool);
     this._logger     = new EventLogger(pool);
-    this._dialer     = DIALER_MODE === 'production' ? new TwilioDialer() : new CallSimulator();
+    this._dialer     = DIALER_MODE === 'production' ? new TwilioDialer(pool) : new CallSimulator();
 
     this._callsToday  = 0;
     this._callsMinute = [];       // timestamps for per-minute rate

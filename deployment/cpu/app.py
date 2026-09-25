@@ -650,6 +650,7 @@ def build_shared_call_dependencies() -> object:
     CallOrchestrator itself.
     """
     from src.services.media_gateway.twilio_ws_entrypoint import SharedCallDependencies
+    from src.services.telephony.phone_numbers import TelephonyNumberResolver
 
     gpu_scheduler = build_gpu_scheduler()
     # Fresh CustomerService reading from the same authoritative Postgres —
@@ -657,6 +658,7 @@ def build_shared_call_dependencies() -> object:
     # end up at the same customers table, so source-of-truth is shared
     # even though the client objects are constructed independently.
     customer_service = build_customer_service(build_postgres_connection())
+    telephony_number_resolver = TelephonyNumberResolver(build_postgres_connection())
     from src.services.tts.greeting_cache import GreetingCache
     greeting_cache = GreetingCache()
     return SharedCallDependencies(
@@ -669,6 +671,7 @@ def build_shared_call_dependencies() -> object:
         stt_service=build_stt_service(gpu_scheduler),
         conversation_engine=build_conversation_engine(),
         customer_service=customer_service,
+        telephony_number_resolver=telephony_number_resolver,
         language=_env("STT_LANGUAGE", "hi"),
         # See SharedCallDependencies.public_ws_base_url's docstring — required
         # whenever this process runs behind a tunnel/reverse-proxy (e.g. a
