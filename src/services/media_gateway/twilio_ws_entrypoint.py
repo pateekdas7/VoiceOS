@@ -91,6 +91,7 @@ if TYPE_CHECKING:
     from src.services.dialogue_manager.service import DialogueManager
     from src.services.stt.service import STTService
     from src.services.tts.greeting_cache import GreetingCache
+    from src.services.media_gateway.recording_lifecycle import RecordingLifecycleManager
 
 logger = logging.getLogger("voiceos.media_gateway.twilio_ws")
 
@@ -211,6 +212,7 @@ class SharedCallDependencies:
     string (the default) disables recording entirely (no CallRecorder is
     constructed), preserving prior behavior for every existing test and
     deployment that hasn't opted in."""
+    recording_manager: "RecordingLifecycleManager | None" = None
     greeting_cache: "GreetingCache | None" = None
     tracer: "OTelTracer | None" = None
     """Optional OTelTracer (src/libs/observability/tracer.py). When set,
@@ -388,6 +390,8 @@ class CallOrchestrator:
         vad_engine = VADEngine(model=vad_model)
 
         recorder = CallRecorder(call_id, deps.recording_dir) if deps.recording_dir else None
+        if recorder is not None and deps.recording_manager is not None:
+            deps.recording_manager.start(tenant_id=tenant_id, call_sid=call_id)
 
         return cls(
             call_id=call_id,
@@ -1263,6 +1267,15 @@ class CallOrchestrator:
                     "call_end", total_turns=self._turn_index, call_time_ms=self._call_time_ms()
                 )
                 self._recorder.close()
+                if self._deps.recording_manager is not None:
+                    try:
+                        self._deps.recording_manager.finalize(
+                            tenant_id=self._tenant_id,
+                            call_sid=self._call_id,
+                            artifacts=self._recorder.artifact_paths(),
+                        )
+                    except Exception:
+                        logger.exception("recording.finalize_failed call_sid=%s tenant_id=%s", self._call_id, self._tenant_id)
 
 
 def _default_vad_model() -> VADModelProtocol:
