@@ -1637,6 +1637,7 @@ def create_twilio_media_stream_app(
                 "/voice rejected: AccountSid mismatch expected=%s got=%s",
                 deps.account_sid, account_sid,
             )
+            return Response("Forbidden", status_code=403, media_type="text/plain")
 
         # Resolve the provider-owned phone number to its VoiceOS tenant.
         # Outbound calls are routed by From; inbound calls by To. When the
@@ -1653,8 +1654,6 @@ def create_twilio_media_stream_app(
                 logger.warning("/voice rejected: phone number is not assigned to an active tenant call_sid=%s", call_sid)
                 return Response("Forbidden", status_code=403, media_type="text/plain")
             resolved_tenant_id = number.tenant_id
-
-            return Response("Forbidden", status_code=403, media_type="text/plain")
 
         # ANI → CustomerService lookup (RI-5: authoritative-by-origin).
         # We resolve customer_id from the Twilio-supplied phone number
