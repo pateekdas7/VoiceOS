@@ -90,7 +90,8 @@ app.get('/metrics', (_req, res) => {
     _renderCounter('voiceos_telephony_call_setup_seconds_sum', 'Sum of call setup latency from initiation to connection.'),
     _renderCounter('voiceos_telephony_call_setup_seconds_count', 'Count of call setup latency observations.'),
     _renderCounter('voiceos_telephony_canonical_events_created_total', 'Canonical telephony events durably created.'),
-    _renderCounter('voiceos_telephony_canonical_event_duplicates_total', 'Duplicate canonical telephony events suppressed.')
+    _renderCounter('voiceos_telephony_canonical_event_duplicates_total', 'Duplicate canonical telephony events suppressed.'),
+    _renderCounter('voiceos_telephony_callback_events_total', 'Telephony callback processing events by bounded outcome.')
   ].join('\n') + '\n');
 });
 
@@ -2291,6 +2292,10 @@ app.post('/dialer/callback', async (req, res) => {
   } finally {
     const latencySeconds=Number(process.hrtime.bigint()-startedAt)/1e9;
     _incMetric('voiceos_telephony_webhook_events_total',{outcome:webhookOutcome,state:webhookState});
+    const callbackMetricOutcome = new Set(['processed','spoofed','configuration_failure','malformed','unknown_call','tenant_mismatch','unknown_status','out_of_order','failure']).has(webhookOutcome)
+      ? webhookOutcome
+      : 'failure';
+    _incMetric('voiceos_telephony_callback_events_total', { outcome: callbackMetricOutcome });
     _incMetric('voiceos_telephony_webhook_processing_seconds_sum',{},latencySeconds);
     _incMetric('voiceos_telephony_webhook_processing_seconds_count');
     log.info('dialer.callback.completed',{outcome:webhookOutcome,state:webhookState,latency_ms:Math.round(latencySeconds*1000),trace_id:req.traceId});
