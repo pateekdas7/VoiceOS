@@ -77,3 +77,23 @@ Because the repository checkout failed, no pytest, Jest, Ruff, Mypy, frontend bu
 - Existing `tests/jest/bff/dialer.test.js` — webhook signature/idempotency regression — **NOT EXECUTED — ENVIRONMENT BLOCKED**.
 - Required DB migration validation for 038 — **NOT EXECUTED — NO AUTHORIZED POSTGRES RUNTIME**.
 - Provider CPS integration test — **NOT YET ADDED**; requires Redis-backed worker test harness.
+
+
+## W2 continuation test matrix
+
+| Test area | Added/updated tests | Execution |
+|---|---|---|
+| Recording lifecycle | tests/unit/services/test_recording_lifecycle.py | NOT EXECUTED — ENVIRONMENT BLOCKED |
+| Callback timezone/DST | tests/jest/bff/telephony_callback_policy.test.js | NOT EXECUTED — ENVIRONMENT BLOCKED |
+| Provider failure classification | tests/jest/bff/telephony_provider_failure.test.js | NOT EXECUTED — ENVIRONMENT BLOCKED |
+| Canonical call event | tests/jest/bff/telephony_call_event.test.js | NOT EXECUTED — ENVIRONMENT BLOCKED |
+| Existing state/provider boundary | tests/jest/bff/telephony_call_state.test.js, telephony_provider_boundary.test.js | NOT EXECUTED — ENVIRONMENT BLOCKED |
+| Webhook/API security | tests/jest/bff/dialer.test.js plus new contract coverage | NOT EXECUTED — ENVIRONMENT BLOCKED |
+| Migration validation | SQL/Alembic migrations 039–041 | NOT EXECUTED — ENVIRONMENT BLOCKED |
+| Lint/type checks | repository-configured Python/Node checks | NOT EXECUTED — ENVIRONMENT BLOCKED |
+
+Required regression commands remain:
+pytest tests/unit/services/test_recording_lifecycle.py -q
+pytest tests/unit/services/test_telephony_phone_numbers.py -q
+npm test -- --runInBand tests/jest/bff/telephony_call_state.test.js tests/jest/bff/telephony_provider_boundary.test.js tests/jest/bff/telephony_callback_policy.test.js tests/jest/bff/telephony_provider_failure.test.js tests/jest/bff/telephony_call_event.test.js tests/jest/bff/dialer.test.js
+plus repository lint/type/migration validation where configured.
