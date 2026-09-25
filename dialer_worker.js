@@ -37,6 +37,7 @@ const Redis         = require('ioredis');
 const { EventEmitter } = require('events');
 const crypto        = require('crypto');
 const { classifyProviderFailure } = require('./telephony_provider_failure');
+const { acquireProviderRateSlot } = require('./telephony_cps');
 
 // ─── Configuration ─────────────────────────────────────────────────────────
 
@@ -98,6 +99,13 @@ const redis    = new Redis({ host: process.env.REDIS_HOST || '127.0.0.1', port: 
 const redisSub = new Redis({ host: process.env.REDIS_HOST || '127.0.0.1', port: parseInt(process.env.REDIS_PORT||'6379'), password: process.env.REDIS_PASSWORD || undefined, maxRetriesPerRequest: 3, retryStrategy: n => Math.min(n * 200, 2000) });
 redis.on('error',    e => log.warn('Redis error', e.message));
 redisSub.on('error', e => log.warn('RedisSub error', e.message));
+
+// ─── W2 telephony metric call sites ──────────────────────────────────────────
+const _telephonyMetricCounters = new Map();
+function _incTelephonyMetric(name, labels = {}) {
+  const key = JSON.stringify([name, labels]);
+  _telephonyMetricCounters.set(key, (_telephonyMetricCounters.get(key) || 0) + 1);
+}
 
 // ─── Logger ─────────────────────────────────────────────────────────────────
 
@@ -376,17 +384,15 @@ class TwilioDialer {
 
   async _acquireProviderRateSlot(tenantId) {
     const limit = Math.max(1, parseInt(process.env.TWILIO_CALLS_PER_SECOND || '5', 10));
-    const windowMs = 1000;
-    const bucket = Math.floor(Date.now() / windowMs);
-    const key = `voiceos:twilio:cps:${tenantId}:${bucket}`;
-    const count = await redis.incr(key);
-    if (count === 1) await redis.pexpire(key, windowMs + 1000);
-    if (count > limit) {
-      log.warn(`[TWILIO] Provider CPS limit reached tenant=${tenantId} limit=${limit}`);
-      const err = new Error('TWILIO_RATE_LIMIT');
-      err.code = 'TWILIO_RATE_LIMIT';
-      throw err;
-    }
+    return acquireProviderRateSlot({
+      redis,
+      tenantId,
+      limit,
+      onLimit: () => {
+        _incTelephonyMetric('voiceos_telephony_cps_limit_events_total');
+        log.warn(`[TWILIO] Provider CPS limit reached tenant=${tenantId} limit=${limit}`);
+      },
+    });
   }
 
   async initiate(lead) {
@@ -1008,6 +1014,7 @@ class Pipeline extends EventEmitter {
 
     // Push to retry sorted set (score = unix ms timestamp for ordered processing)
     await redis.zadd(K.retryQueue(lead.tenant_id), retryAt, JSON.stringify(retryPayload));
+    _incTelephonyMetric('voiceos_telephony_retry_attempts_total', { reason: 'provider_retry' });
     log.info(`[Pipeline:${this.name}] Retry scheduled for lead ${lead.lead_id} attempt=${attempts} delay=${delaySec}s`);
   }
 
@@ -1342,4 +1349,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { ScheduleVerifier, PipelineRegistry, ActiveCallTracker, CrashReconciler, Pipeline, DialerWorker };
+module.exports = { ScheduleVerifier, PipelineRegistry, ActiveCallTracker, CrashReconciler, Pipeline, DialerWorker, _telephonyMetricCounters };
