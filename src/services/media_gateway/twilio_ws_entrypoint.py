@@ -45,6 +45,8 @@ from __future__ import annotations
 
 import audioop
 import contextlib
+import hashlib
+import hmac
 import logging
 import re
 import time
@@ -213,6 +215,7 @@ class SharedCallDependencies:
     constructed), preserving prior behavior for every existing test and
     deployment that hasn't opted in."""
     recording_manager: "RecordingLifecycleManager | None" = None
+    recording_access_secret: str = ""
     greeting_cache: "GreetingCache | None" = None
     tracer: "OTelTracer | None" = None
     """Optional OTelTracer (src/libs/observability/tracer.py). When set,
@@ -1743,6 +1746,39 @@ def create_twilio_media_stream_app(
             )
             return Response(xml, media_type="application/xml")
 
+    async def _recording_access(request):
+        if deps.recording_manager is None or not deps.recording_access_secret:
+            return Response("Recording access unavailable", status_code=503, media_type="text/plain")
+        tenant_id = request.query_params.get("tenant_id", "")
+        expires_raw = request.headers.get("x-voiceos-recording-expires", "")
+        signature = request.headers.get("x-voiceos-recording-signature", "")
+        recording_id = request.path_params.get("recording_id", "")
+        try:
+            expires = int(expires_raw)
+        except ValueError:
+            return Response("Forbidden", status_code=403, media_type="text/plain")
+        if expires <= int(time.time()) or not tenant_id or not recording_id:
+            return Response("Forbidden", status_code=403, media_type="text/plain")
+        message = f"{tenant_id}:{recording_id}:{expires}".encode()
+        expected = hmac.new(deps.recording_access_secret.encode(), message, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, signature):
+            return Response("Forbidden", status_code=403, media_type="text/plain")
+        try:
+            access = deps.recording_manager.authorize_access(
+                recording_id=recording_id, tenant_id=tenant_id,
+                expires_seconds=max(1, min(expires - int(time.time()), 300)),
+            )
+            if not access.url:
+                return Response("Recording backend does not expose signed access", status_code=501, media_type="text/plain")
+            return _JSONResponse({"recording_id": access.recording_id, "expires_at": access.expires_at.isoformat(), "url": access.url})
+        except PermissionError:
+            return Response("Not Found", status_code=404, media_type="text/plain")
+        except LookupError:
+            return Response("Not Found", status_code=404, media_type="text/plain")
+        except Exception:
+            logger.exception("recording access failure recording_id=%s tenant_id=%s", recording_id, tenant_id)
+            return Response("Internal Server Error", status_code=500, media_type="text/plain")
+
     async def _health(request):
         return Response("ok", media_type="text/plain")
 
@@ -1782,6 +1818,7 @@ def create_twilio_media_stream_app(
     return Starlette(routes=[
         WebSocketRoute("/twilio/media-stream", endpoint=_endpoint),
         Route("/voice", endpoint=_voice, methods=["POST","GET"]),
+        Route("/recordings/{recording_id}/access", endpoint=_recording_access, methods=["GET"]),
         Route("/health", endpoint=_health, methods=["GET"]),
         Route("/health/live", endpoint=_health_live, methods=["GET"]),
         Route("/health/ready", endpoint=_health_ready, methods=["GET"]),
