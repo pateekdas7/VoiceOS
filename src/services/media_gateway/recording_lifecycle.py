@@ -262,6 +262,16 @@ class RecordingLifecycleManager:
         self.conn.commit()
         return deleted
 
+    def mark_retained(self, *, recording_id: str, tenant_id: str) -> None:
+        cur = self.conn.cursor()
+        cur.execute(
+            """UPDATE telephony_recordings
+               SET state='RETAINED', updated_at=NOW()
+               WHERE recording_id=%s AND tenant_id=%s AND state='AVAILABLE'""",
+            (recording_id, tenant_id),
+        )
+        self.conn.commit()
+
 
 def build_recording_storage() -> RecordingStorage:
     backend = os.environ.get("RECORDING_STORAGE_BACKEND", "filesystem").lower()
