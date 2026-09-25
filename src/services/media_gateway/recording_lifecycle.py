@@ -157,10 +157,16 @@ class RecordingLifecycleManager:
             )
             cur.execute(
                 """UPDATE telephony_recordings
-                   SET state='RETAINED', object_key=%s, content_type='application/zip',
+                   SET state='AVAILABLE', object_key=%s, content_type='application/zip',
                        byte_size=%s, completed_at=NOW(), updated_at=NOW(), last_error=NULL
                    WHERE recording_id=%s AND tenant_id=%s""",
                 (key, size, recording_id, tenant_id),
+            )
+            cur.execute(
+                """UPDATE telephony_recordings
+                   SET state='RETAINED', updated_at=NOW()
+                   WHERE recording_id=%s AND tenant_id=%s AND state='AVAILABLE'""",
+                (recording_id, tenant_id),
             )
             self.conn.commit()
             bundle.unlink(missing_ok=True)
