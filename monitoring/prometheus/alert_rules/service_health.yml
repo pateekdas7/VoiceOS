@@ -112,8 +112,8 @@ groups:
 
       - alert: VoiceOSBFFHighErrorRate
         expr: |
-          rate(voiceos_bff_http_errors_total[5m])
-          / clamp_min(rate(voiceos_bff_http_requests_total[5m]), 0.1) > 0.05
+          sum(rate(voiceos_bff_http_errors_total[5m]))
+          / clamp_min(sum(rate(voiceos_bff_http_requests_total[5m])), 0.1) > 0.05
         for: 5m
         labels: {severity: warning, route: ticket, team: platform}
         annotations:
@@ -123,8 +123,8 @@ groups:
 
       - alert: VoiceOSBFFHighErrorRateCritical
         expr: |
-          rate(voiceos_bff_http_errors_total[5m])
-          / clamp_min(rate(voiceos_bff_http_requests_total[5m]), 0.1) > 0.20
+          sum(rate(voiceos_bff_http_errors_total[5m]))
+          / clamp_min(sum(rate(voiceos_bff_http_requests_total[5m])), 0.1) > 0.20
         for: 2m
         labels: {severity: critical, route: page, team: platform}
         annotations:
