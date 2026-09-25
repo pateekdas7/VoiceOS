@@ -76,3 +76,14 @@ L2-W2-012 is RESOLVED at implementation level: the authenticated BFF recording-a
 - **L2-W2-015 TELEPHONY RUNTIME:** BLOCKED — no authorized Twilio credentials/carrier runtime/Media Streams endpoint for real call and failure drills.
 - **L2-W2-016 OBJECT STORAGE:** BLOCKED — production S3 upload/presigned access/retention/deletion has not been executed.
 - **L2-W2-017 OBSERVABILITY:** BLOCKED — Prometheus scrape/query evidence for the new W2 telemetry is unavailable.
+
+
+## W2 continuation blockers — canonical event delivery
+
+| ID | Area | State | Exact blocker / required evidence |
+|---|---|---|---|
+| L2-W2-018 | Event boundary test execution | BLOCKED | Repository/test runtime is unavailable; new canonical boundary, relay, and migration tests are not executed. |
+| L2-W2-019 | PostgreSQL outbox | BLOCKED | No authorized PostgreSQL runtime; migration 042 and transactional outbox persistence are not applied or integration-verified. |
+| L2-W2-020 | Redis event delivery | BLOCKED | No authorized Redis runtime; tenant queue delivery, retry/backoff, stale-lock recovery and downstream-unavailable behavior are not executed. |
+| L2-W2-021 | Event DLQ | BLOCKED | No runtime failure injection has exercised max-attempt transition into `telephony_event_dlq`. |
+| L2-W2-022 | Downstream consumer | BLOCKED | No authorized downstream consumer/runtime is attached; at-least-once delivery and consumer-side event-id deduplication remain unverified. |
