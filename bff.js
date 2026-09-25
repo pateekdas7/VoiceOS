@@ -8,6 +8,7 @@ const cors         = require('cors');
 const Redis        = require('ioredis');
 const twilio       = require('twilio');
 const { randomUUID } = require('crypto');
+const { normalizeProviderStatus, canTransition } = require('./telephony_call_state');
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const app          = express();
@@ -2098,85 +2099,102 @@ app.post('/dialer/twiml', async (req, res) => {
 // ── Twilio status callback — Twilio POSTs call lifecycle events here ───────────
 // Forwards completion signal to the waiting Pipeline loop via Redis
 app.post('/dialer/callback', async (req, res) => {
+  const client = await pool.connect();
   try {
     const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN;
     if (twilioAuthToken) {
       const signature = req.headers['x-twilio-signature'] || '';
       const proto = req.headers['x-forwarded-proto'] || 'https';
-      const host  = req.headers['x-forwarded-host'] || req.headers.host;
+      const host = req.headers['x-forwarded-host'] || req.headers.host;
       const fullUrl = `${proto}://${host}${req.originalUrl}`;
-      if (!twilio.validateRequest(twilioAuthToken, signature, fullUrl, req.body)) {
-        log.warn('dialer.callback.invalid_signature', { ip: req.ip });
-        return res.sendStatus(403);
-      }
+      if (!twilio.validateRequest(twilioAuthToken, signature, fullUrl, req.body)) return res.sendStatus(403);
     } else if (process.env.NODE_ENV === 'production') {
-      log.error('dialer.callback.no_auth_token', { env: 'production' });
       return res.sendStatus(503);
-    } else {
-      log.warn('dialer.callback.no_auth_token', { env: 'development' });
     }
 
-    const { CallSid, CallStatus, Duration, AnsweredBy } = req.body;
-    const pipelineId = req.query.pipeline_id;
-    const leadId     = req.query.lead_id;
-    const tenantId   = req.query.tenant_id;
+    const { CallSid, CallStatus, Duration, AnsweredBy } = req.body || {};
+    if (!CallSid || !CallStatus) return res.sendStatus(400);
 
-    if (!CallSid || !pipelineId) { res.sendStatus(400); return; }
+    await client.query('BEGIN');
+    const result = await client.query(
+      `SELECT attempt_id, tenant_id, campaign_id, lead_id, pipeline_id, status
+       FROM call_attempts WHERE call_sid=$1 FOR UPDATE`, [CallSid]);
+    if (!result.rows.length) {
+      await client.query('ROLLBACK');
+      return res.sendStatus(404);
+    }
+    const attempt = result.rows[0];
 
-    const disposition =
-      CallStatus === 'completed'  ? 'COMPLETED'  :
-      CallStatus === 'no-answer'  ? 'NO_ANSWER'  :
-      CallStatus === 'busy'       ? 'BUSY'        :
-      CallStatus === 'failed'     ? 'FAILED'      :
-      'UNKNOWN';
+    if ((req.query.tenant_id && req.query.tenant_id !== String(attempt.tenant_id)) ||
+        (req.query.lead_id && req.query.lead_id !== String(attempt.lead_id)) ||
+        (req.query.pipeline_id && req.query.pipeline_id !== String(attempt.pipeline_id))) {
+      await client.query('ROLLBACK');
+      return res.sendStatus(403);
+    }
 
-    // Only signal completion on terminal states
-    if (['COMPLETED','NO_ANSWER','BUSY','FAILED'].includes(disposition)) {
-      // Idempotency guard: Twilio sometimes delivers the same terminal event twice.
-      // Use the existing idempotency_keys table (migration 005) to deduplicate.
+    const next = normalizeProviderStatus(CallStatus, AnsweredBy);
+    if (!next) {
+      await client.query('ROLLBACK');
+      return res.sendStatus(400);
+    }
+
+    const current = attempt.status === 'IN_PROGRESS' ? 'CONNECTED' :
+      attempt.status === 'INITIATED' ? 'DIALING' : attempt.status;
+    if (!canTransition(current, next)) {
+      await client.query('ROLLBACK');
+      log.info('dialer.callback.out_of_order_suppressed', { call_sid: CallSid, current_state: current, provider_status: CallStatus });
+      return res.sendStatus(200);
+    }
+
+    const terminal = ['COMPLETED','BUSY','NO_ANSWER','FAILED','CANCELLED','TIMEOUT','VOICEMAIL'].includes(next);
+    const dbStatus = next === 'CONNECTED' ? 'IN_PROGRESS' : next;
+    const duration = Duration == null ? null : Math.max(0, parseInt(Duration) || 0);
+
+    await client.query(
+      `UPDATE call_attempts SET status=$2,
+         disposition=CASE WHEN $3 THEN $2 ELSE disposition END,
+         duration_s=CASE WHEN $4::int IS NULL THEN duration_s ELSE $4::int END,
+         answered_at=CASE WHEN $2='IN_PROGRESS' AND answered_at IS NULL THEN NOW() ELSE answered_at END,
+         ended_at=CASE WHEN $3 THEN NOW() ELSE ended_at END
+       WHERE attempt_id=$1`,
+      [attempt.attempt_id, dbStatus, terminal, duration]);
+
+    await client.query(
+      `UPDATE active_calls SET status=$2,
+         answered_at=CASE WHEN $2='IN_PROGRESS' AND answered_at IS NULL THEN NOW() ELSE answered_at END,
+         ended_at=CASE WHEN $3 THEN NOW() ELSE ended_at END,
+         duration_seconds=CASE WHEN $4::int IS NULL THEN duration_seconds ELSE $4::int END,
+         disposition=CASE WHEN $3 THEN $5 ELSE disposition END
+       WHERE call_sid=$1 AND tenant_id=$6`,
+      [CallSid, dbStatus, terminal, duration, next, attempt.tenant_id]);
+
+    if (terminal) {
       const idempKey = `twilio_callback:${CallSid}:${CallStatus}`;
-      const existing = await pool.query(
-        'SELECT key FROM idempotency_keys WHERE key=$1',
-        [idempKey]
-      );
-      if (existing.rows.length) {
-        log.info('dialer.callback.duplicate_suppressed', { call_sid: CallSid, status: CallStatus });
-        return res.sendStatus(200);
-      }
-      await pool.query(
+      const idem = await client.query(
         `INSERT INTO idempotency_keys (key, tenant_id, resource_type, expires_at)
-         VALUES ($1, $2::uuid, 'twilio_callback', NOW() + INTERVAL '24 hours')
-         ON CONFLICT (key) DO NOTHING`,
-        [idempKey, tenantId || '00000000-0000-0000-0000-000000000000']
-      );
-
-      const payload = JSON.stringify({
-        callSid:     CallSid,
-        disposition,
-        durationS:   parseInt(Duration) || 0,
-        endedAt:     new Date().toISOString(),
-        pipelineId,
-        tenantId,
-        answeredBy:  AnsweredBy,
-      });
-      await redis.lpush(`voiceos:pipeline:completed:${pipelineId}`, payload);
-      await redis.expire(`voiceos:pipeline:completed:${pipelineId}`, 120);
+         VALUES ($1,$2,'twilio_callback',NOW()+INTERVAL '24 hours')
+         ON CONFLICT (key) DO NOTHING RETURNING key`,
+        [idempKey, attempt.tenant_id]);
+      if (idem.rows.length) {
+        const payload = JSON.stringify({
+          callSid: CallSid, attemptId: attempt.attempt_id, disposition: next,
+          durationS: duration || 0, endedAt: new Date().toISOString(),
+          pipelineId: attempt.pipeline_id, tenantId: attempt.tenant_id,
+          leadId: attempt.lead_id, answeredBy: AnsweredBy,
+        });
+        await redis.lpush(`voiceos:pipeline:completed:${attempt.pipeline_id}`, payload);
+        await redis.expire(`voiceos:pipeline:completed:${attempt.pipeline_id}`, 120);
+      }
     }
 
-    // Update active_calls table for non-terminal status updates
-    if (['in-progress', 'ringing', 'initiated'].includes(CallStatus)) {
-      await pool.query(
-        `UPDATE active_calls SET status=$2,
-         answered_at = CASE WHEN $2='in-progress' THEN now() ELSE answered_at END
-         WHERE call_sid=$1`,
-        [CallSid, CallStatus === 'in-progress' ? 'IN_PROGRESS' : CallStatus.toUpperCase()]
-      );
-    }
-
-    res.sendStatus(200);
+    await client.query('COMMIT');
+    return res.sendStatus(200);
   } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
     log.error('dialer.callback_error', { error: e.message });
-    res.sendStatus(500);
+    return res.sendStatus(500);
+  } finally {
+    client.release();
   }
 });
 
