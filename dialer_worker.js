@@ -36,6 +36,7 @@ const { Pool }      = require('pg');
 const Redis         = require('ioredis');
 const { EventEmitter } = require('events');
 const crypto        = require('crypto');
+const { classifyProviderFailure } = require('./telephony_provider_failure');
 
 // ─── Configuration ─────────────────────────────────────────────────────────
 
@@ -382,7 +383,9 @@ class TwilioDialer {
     if (count === 1) await redis.pexpire(key, windowMs + 1000);
     if (count > limit) {
       log.warn(`[TWILIO] Provider CPS limit reached tenant=${tenantId} limit=${limit}`);
-      throw new Error('TWILIO_RATE_LIMIT');
+      const err = new Error('TWILIO_RATE_LIMIT');
+      err.code = 'TWILIO_RATE_LIMIT';
+      throw err;
     }
   }
 
@@ -835,10 +838,13 @@ class Pipeline extends EventEmitter {
         }
       } else if (attemptId) {
         // Twilio initiation failed before callSid was returned
+        const failure = classifyProviderFailure(e);
         await pool.query(
-          `UPDATE call_attempts SET status='FAILED', ended_at=NOW(), error_message=$1 WHERE attempt_id=$2`,
-          [e.message, attemptId]
+          `UPDATE call_attempts SET status='FAILED', ended_at=NOW(), error_message=$1,
+             provider_failure_class=$2, provider_failure_code=$3, retryable=$4 WHERE attempt_id=$5`,
+          [e.message, failure.failureClass, failure.reasonCode, failure.retryable, attemptId]
         ).catch(dbErr => log.warn('[call_attempts] failed to mark FAILED:', dbErr.message));
+        if (failure.retryable) await this._scheduleRetry(lead, 'FAILED');
       }
     } finally {
       // ── 8. Release lock after all synchronous work is complete ─────────
@@ -903,11 +909,16 @@ class Pipeline extends EventEmitter {
 
     // Update call_attempts to final status (critical — used by Phase 3 reconciliation)
     if (attemptId) {
+      const failure = classifyProviderFailure({}, { callStatus: String(disposition || '').toLowerCase(), answeredBy: result.answeredBy });
       await pool.query(
         `UPDATE call_attempts
-         SET status=$1, disposition=$2, duration_s=$3, ended_at=$4
+         SET status=$1, disposition=$2, duration_s=$3, ended_at=$4,
+             provider_failure_class=CASE WHEN $6='COMPLETED' THEN NULL ELSE $7 END,
+             provider_failure_code=CASE WHEN $6='COMPLETED' THEN NULL ELSE $8 END,
+             retryable=CASE WHEN $6='COMPLETED' THEN NULL ELSE $9 END
          WHERE attempt_id=$5`,
-        [disposition, disposition, finalDurS, endedAt, attemptId]
+        [disposition, disposition, finalDurS, endedAt, attemptId,
+         disposition, failure.failureClass, failure.reasonCode, failure.retryable]
       );
     }
 
@@ -959,10 +970,14 @@ class Pipeline extends EventEmitter {
   }
 
   async _handleCallError(callSid, lead, err, attemptId) {
+    const failure = classifyProviderFailure(err);
     if (attemptId) {
       await pool.query(
-        `UPDATE call_attempts SET status='FAILED', ended_at=NOW(), error_message=$1 WHERE attempt_id=$2`,
-        [err.message, attemptId]
+        `UPDATE call_attempts
+         SET status='FAILED', ended_at=NOW(), error_message=$1,
+             provider_failure_class=$2, provider_failure_code=$3, retryable=$4
+         WHERE attempt_id=$5`,
+        [err.message, failure.failureClass, failure.reasonCode, failure.retryable, attemptId]
       ).catch(dbErr => log.warn('[call_attempts] failed to mark FAILED:', dbErr.message));
     }
     await this._tracker.update(callSid, lead.tenant_id, {
@@ -978,7 +993,7 @@ class Pipeline extends EventEmitter {
       message: err.message,
       metadata: { call_sid: callSid, error: err.message },
     });
-    await this._scheduleRetry(lead, 'FAILED');
+    if (failure.retryable) await this._scheduleRetry(lead, 'FAILED');
   }
 
   async _scheduleRetry(lead, disposition) {
