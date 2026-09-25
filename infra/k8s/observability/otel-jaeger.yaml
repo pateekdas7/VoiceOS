@@ -24,8 +24,7 @@ spec:
           # Jaeger 1.60 all-in-one uses Badger storage. Retention is enforced
           # by Badger's native span-store TTL, not by a separate purge job.
           # Keep this value aligned with monitoring/tracing/jaeger.yml.
-          command:
-            - "/go/bin/jaeger-all-in-one"
+          args:
             - "--badger.span-store-ttl=168h0m0s"
           env:
             - name: COLLECTOR_OTLP_ENABLED
