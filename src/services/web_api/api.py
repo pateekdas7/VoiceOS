@@ -41,7 +41,8 @@ from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, StreamingResponse
-from starlette.routing import Route
+from starlette.routing import Mount, Route
+from prometheus_client import make_asgi_app
 
 from src.libs.audit.event import AuditEvent
 from src.libs.contracts.models.billing import SubscriptionTier
@@ -53,6 +54,7 @@ from src.libs.contracts.models.user import OrgScope
 from src.libs.contracts.primitives import CampaignId, CustomerId, TenantId
 from src.libs.health.aggregator import HealthAggregator
 from src.libs.health.probe import LivenessProbe, ReadinessProbe
+from src.libs.health.protocol import HealthStatus
 from src.libs.repositories.admin_audit_view import AdminAuditViewRepository
 from src.libs.repositories.audit import AuditRepository
 from src.libs.repositories.campaign_audience import CampaignAudienceRepository
@@ -231,6 +233,8 @@ def create_web_api(
     """Assemble the Web BFF Starlette app (ADR-005 Sec 4.1)."""
 
     callback_redirect_uri = f"{bff_public_url}/auth/google/callback"
+    liveness_probe = LivenessProbe()
+    readiness_probe = ReadinessProbe(liveness_probe)
 
     def _set_session_cookies(response: RedirectResponse, *, token: str, actor_kind: str) -> None:
         response.set_cookie(
@@ -312,6 +316,22 @@ def create_web_api(
         response.delete_cookie(_ACTOR_KIND_COOKIE)
         return response
 
+    async def health_live(_request: Request) -> JSONResponse:
+        status = await liveness_probe.check()
+        return JSONResponse(
+            {"status": status.value},
+            status_code=200 if status == HealthStatus.HEALTHY else 503,
+        )
+
+    async def health_ready(_request: Request) -> JSONResponse:
+        status = await readiness_probe.check()
+        if status == HealthStatus.HEALTHY and health_aggregator is not None:
+            status = (await health_aggregator.report()).overall
+        return JSONResponse(
+            {"status": status.value},
+            status_code=200 if status == HealthStatus.HEALTHY else 503,
+        )
+
     async def system_health(_request: Request) -> JSONResponse:
         if health_aggregator is None:
             return JSONResponse([])
@@ -324,6 +344,7 @@ def create_web_api(
         )
 
     routes = [
+        Mount("/metrics", app=make_asgi_app()),
         Route("/auth/google/start", google_start, methods=["GET"]),
         Route("/auth/google/callback", google_callback, methods=["GET"]),
         Route("/auth/logout", logout, methods=["GET", "POST"]),

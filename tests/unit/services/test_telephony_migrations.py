@@ -1,5 +1,5 @@
-from pathlib import Path
 import ast
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 SQL_DIR = ROOT / "scripts" / "db" / "migrations"
@@ -35,7 +35,7 @@ def test_w2_telephony_migrations_exist_in_order():
         41: "041_telephony_call_events.sql",
         42: "042_telephony_event_outbox.sql",
     }
-    for number, filename in expected.items():
+    for _number, filename in expected.items():
         path = SQL_DIR / filename
         assert path.exists(), f"missing migration {filename}"
         assert path.read_text(encoding="utf-8").lstrip().startswith("-- Migration"), filename
@@ -53,10 +53,10 @@ def test_alembic_revision_ids_are_unique_and_down_revisions_exist():
     for path in ALEMBIC_DIR.glob("*.py"):
         if path.name == "__init__.py":
             continue
-        revision, down_revision = _revision_metadata(path)
+        revision, _down_revision = _revision_metadata(path)
         assert revision not in metadata, f"duplicate Alembic revision {revision}: {metadata.get(revision)} and {path.name}"
         metadata[revision] = path.name
-    for revision, path in metadata.items():
+    for _revision, path in metadata.items():
         down = _revision_metadata(ALEMBIC_DIR / path)[1]
         if down is not None:
             assert down in metadata, f"{path} points to missing down_revision {down}"

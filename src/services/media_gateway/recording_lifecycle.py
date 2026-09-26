@@ -15,7 +15,7 @@ import os
 import shutil
 import zipfile
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -75,10 +75,11 @@ class S3RecordingStorage:
         self.client.delete_object(Bucket=self.bucket, Key=self._key(key))
 
     def signed_url(self, key: str, expires_seconds: int) -> str | None:
-        return self.client.generate_presigned_url(
+        url = self.client.generate_presigned_url(
             "get_object", Params={"Bucket": self.bucket, "Key": self._key(key)},
             ExpiresIn=max(1, min(int(expires_seconds), 3600)),
         )
+        return str(url) if url else None
 
 
 @dataclass(frozen=True)
@@ -196,7 +197,7 @@ class RecordingLifecycleManager:
         object_key = row[2]
         if not object_key:
             raise LookupError("recording object unavailable")
-        expires_at = datetime.now(timezone.utc) + timedelta(seconds=max(1, min(expires_seconds, 3600)))
+        expires_at = datetime.now(UTC) + timedelta(seconds=max(1, min(expires_seconds, 3600)))
         return RecordingAccess(str(row[0]), str(row[1]), object_key, expires_at,
                                self.storage.signed_url(object_key, expires_seconds))
 

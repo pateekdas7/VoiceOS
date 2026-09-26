@@ -102,9 +102,9 @@ class WhisperAdapter:
         audio_frames: AsyncIterator[AudioFrame],
         language: str,
     ) -> AsyncIterator[WordHypothesis]:
+        from src.libs.observability.metrics import record_stt_latency
         from src.services.stt.metrics import (
             gpu_allocation_time_ms,
-            stt_latency_ms,
             stt_requests_total,
         )
 
@@ -128,7 +128,7 @@ class WhisperAdapter:
                 words = await self._breaker.call(self._run_whisper_async, pcm_bytes, language)
             else:
                 words = await self._run_whisper_async(pcm_bytes, language)
-            stt_latency_ms.observe((time.monotonic() - infer_start) * 1000)
+            record_stt_latency(language or "unknown", "success", (time.monotonic() - infer_start) * 1000)
             stt_requests_total.labels(status="success").inc()
         finally:
             self._gpu_scheduler.release_allocation(token)

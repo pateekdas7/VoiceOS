@@ -1,7 +1,7 @@
-"""Phase I — Gate 3: production-grade Twilio Media Streams admission tests.
+"""Phase I - Gate 3: production-grade Twilio Media Streams admission tests.
 
 Covers the two-stage admission protocol introduced to replace the broken
-X-Twilio-Signature-on-WSS design. The 13 scenarios A–M explicitly enumerate
+X-Twilio-Signature-on-WSS design. The 13 scenarios A-M explicitly enumerate
 the invariants a hostile or malformed caller must NOT be able to violate:
 
     A — Valid full sequence (HTTP /voice signed → mint → WSS start with
@@ -40,19 +40,19 @@ import base64
 import hashlib
 import hmac
 import re
-import time
 from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from src.libs.contracts.streaming import AudioClause, WordHypothesis
 from src.services.audio_preprocessing.service import AudioPreprocessorService
 from src.services.audio_session_manager.service import AudioSessionManagerService
 from src.services.media_gateway.admission import (
-    AdmissionRegistry,
     DEFAULT_ADMISSION_TTL_S,
+    AdmissionRegistry,
 )
 from src.services.media_gateway.service import MediaGatewayService
 from src.services.media_gateway.twilio_ws_entrypoint import (
@@ -171,7 +171,7 @@ def _default_call_params(call_sid: str, account_sid: str = _ACCOUNT_SID) -> dict
 # ---------------------------------------------------------------------------
 
 
-def test_A_valid_full_sequence_admits_call() -> None:
+def test_a_valid_full_sequence_admits_call() -> None:
     client, deps = _make_app()
     params = _default_call_params("CAvalidA")
 
@@ -197,9 +197,9 @@ def test_A_valid_full_sequence_admits_call() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_B_wss_missing_admission_token_rejected() -> None:
+def test_b_wss_missing_admission_token_rejected() -> None:
     client, deps = _make_app()
-    with pytest.raises(Exception):
+    with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect("/twilio/media-stream") as ws:
             ws.send_json({"event": "connected"})
             ws.send_json(_wss_start("CAmissB"))  # no token
@@ -213,7 +213,7 @@ def test_B_wss_missing_admission_token_rejected() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_C_voice_wrong_account_sid_forbidden() -> None:
+def test_c_voice_wrong_account_sid_forbidden() -> None:
     client, deps = _make_app()
     params = _default_call_params("CAwrongC", account_sid="ACwrong")
     resp = _post_voice(client, params)
@@ -226,9 +226,9 @@ def test_C_voice_wrong_account_sid_forbidden() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_D_wss_missing_call_and_stream_sid_rejected() -> None:
+def test_d_wss_missing_call_and_stream_sid_rejected() -> None:
     client, _ = _make_app()
-    with pytest.raises(Exception):
+    with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect("/twilio/media-stream") as ws:
             ws.send_json({"event": "connected"})
             ws.send_json({
@@ -243,14 +243,14 @@ def test_D_wss_missing_call_and_stream_sid_rejected() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_E_wss_wrong_call_sid_rejected_and_token_not_consumed() -> None:
+def test_e_wss_wrong_call_sid_rejected_and_token_not_consumed() -> None:
     client, deps = _make_app()
     params = _default_call_params("CArealE")
     resp = _post_voice(client, params)
     token = _extract_admission_token(resp.text)
 
     # Attacker uses right token but presents a different callSid.
-    with pytest.raises(Exception):
+    with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect("/twilio/media-stream") as ws:
             ws.send_json({"event": "connected"})
             ws.send_json(_wss_start("CAattackerE", token=token))
@@ -270,13 +270,13 @@ def test_E_wss_wrong_call_sid_rejected_and_token_not_consumed() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_F_wss_wrong_account_sid_rejected() -> None:
+def test_f_wss_wrong_account_sid_rejected() -> None:
     client, deps = _make_app()
     params = _default_call_params("CArealF")
     resp = _post_voice(client, params)
     token = _extract_admission_token(resp.text)
 
-    with pytest.raises(Exception):
+    with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect("/twilio/media-stream") as ws:
             ws.send_json({"event": "connected"})
             ws.send_json(_wss_start("CArealF", account_sid="ACdifferent", token=token))
@@ -290,7 +290,7 @@ def test_F_wss_wrong_account_sid_rejected() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_G_replay_second_use_of_same_token_rejected() -> None:
+def test_g_replay_second_use_of_same_token_rejected() -> None:
     client, deps = _make_app()
     params = _default_call_params("CArealG")
     resp = _post_voice(client, params)
@@ -304,7 +304,7 @@ def test_G_replay_second_use_of_same_token_rejected() -> None:
     assert deps.admission_registry.size() == 0
 
     # Replay — same token, same callSid — must be rejected.
-    with pytest.raises(Exception):
+    with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect("/twilio/media-stream") as ws:
             ws.send_json({"event": "connected"})
             ws.send_json(_wss_start("CArealG", token=token))
@@ -316,7 +316,7 @@ def test_G_replay_second_use_of_same_token_rejected() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_H_expired_admission_token_rejected() -> None:
+def test_h_expired_admission_token_rejected() -> None:
     """Uses an injected clock to advance past TTL without real sleeping."""
     fake_now = [1000.0]
     client, deps = _make_app(admission_ttl_s=5.0, now=lambda: fake_now[0])
@@ -329,7 +329,7 @@ def test_H_expired_admission_token_rejected() -> None:
     # Advance clock past TTL.
     fake_now[0] += 10.0
 
-    with pytest.raises(Exception):
+    with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect("/twilio/media-stream") as ws:
             ws.send_json({"event": "connected"})
             ws.send_json(_wss_start("CArealH", token=token))
@@ -344,9 +344,9 @@ def test_H_expired_admission_token_rejected() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_I_wss_without_prior_voice_rejected() -> None:
+def test_i_wss_without_prior_voice_rejected() -> None:
     client, _ = _make_app()
-    with pytest.raises(Exception):
+    with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect("/twilio/media-stream") as ws:
             ws.send_json({"event": "connected"})
             # Fabricated token that was never issued.
@@ -359,7 +359,7 @@ def test_I_wss_without_prior_voice_rejected() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_J_cross_call_isolation() -> None:
+def test_j_cross_call_isolation() -> None:
     client, deps = _make_app()
 
     # Two independent /voice calls → two independent tokens.
@@ -371,7 +371,7 @@ def test_J_cross_call_isolation() -> None:
     assert deps.admission_registry.size() == 2
 
     # Try to admit Call B's WSS using Call A's token.
-    with pytest.raises(Exception):
+    with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect("/twilio/media-stream") as ws:
             ws.send_json({"event": "connected"})
             ws.send_json(_wss_start("CAcallB", token=token_a))
@@ -395,7 +395,7 @@ def test_J_cross_call_isolation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_K_legacy_adapter_hmac_path_still_works() -> None:
+async def test_k_legacy_adapter_hmac_path_still_works() -> None:
     """Guards that we didn't break the HMAC branch existing unit tests use."""
     import json as _json
 
@@ -425,7 +425,7 @@ async def test_K_legacy_adapter_hmac_path_still_works() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_L_voice_missing_signature_forbidden() -> None:
+def test_l_voice_missing_signature_forbidden() -> None:
     client, deps = _make_app()
     params = _default_call_params("CAnosigL")
     # Explicitly pass empty signature (helper distinguishes None → auto-sign,
@@ -440,7 +440,7 @@ def test_L_voice_missing_signature_forbidden() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_M_voice_missing_call_sid_bad_request() -> None:
+def test_m_voice_missing_call_sid_bad_request() -> None:
     client, deps = _make_app()
     # A signed but incomplete body — missing CallSid.
     params = {

@@ -64,7 +64,7 @@ ON CONFLICT DO NOTHING;
 
 # ── 3. Verify bff.js and web_api healthy ──────────────────────────────────────
 echo "[3] Health checks..."
-for svc in "bff.js:http://localhost:8000/health" "web_api:http://localhost:8001/health"; do
+for svc in "bff.js:http://localhost:8000/health/ready" "web_api:http://localhost:8001/health/ready"; do
   name="${svc%%:*}"
   url="${svc#*:}"
   if $DRY_RUN; then

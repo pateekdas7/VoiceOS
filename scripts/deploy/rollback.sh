@@ -53,6 +53,8 @@ START_TS=$(date +%s)
 # ── 1. Stop dialer_worker first (drain in-flight calls) ───────────────────────
 echo "[1] Stopping dialer_worker (SIGTERM for graceful drain)..."
 run systemctl stop voiceos-dialer-worker
+run systemctl disable --now voiceos-telephony-event-relay.timer
+run systemctl stop voiceos-telephony-event-relay.service
 $EXECUTE && sleep 5 || true
 
 # ── 2. Stop voice runtime (drain gate) ───────────────────────────────────────
@@ -102,7 +104,7 @@ if $EXECUTE; then
   echo ""
   echo "[7] Health checks..."
   sleep 5
-  for svc in "bff.js:http://localhost:8000/health" "web_api:http://localhost:8001/health"; do
+  for svc in "bff.js:http://localhost:8000/health/ready" "web_api:http://localhost:8001/health/ready"; do
     name="${svc%%:*}"
     url="${svc#*:}"
     if curl -sf "$url" > /dev/null 2>&1; then

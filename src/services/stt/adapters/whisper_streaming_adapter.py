@@ -58,9 +58,9 @@ class WhisperStreamingAdapter:
         audio_frames: AsyncIterator[AudioFrame],
         language: str,
     ) -> AsyncIterator[WordHypothesis]:
+        from src.libs.observability.metrics import record_stt_latency
         from src.services.stt.metrics import (
             gpu_allocation_time_ms,
-            stt_latency_ms,
             stt_requests_total,
         )
 
@@ -87,7 +87,7 @@ class WhisperStreamingAdapter:
                 gen = self._stream_words(audio_frames, ws_url)
             async for hyp in gen:
                 yield hyp
-            stt_latency_ms.observe((time.monotonic() - infer_start) * 1000)
+            record_stt_latency(language or "unknown", "success", (time.monotonic() - infer_start) * 1000)
             stt_requests_total.labels(status="success").inc()
         except Exception:
             stt_requests_total.labels(status="error").inc()
@@ -141,7 +141,7 @@ class WhisperStreamingAdapter:
                         pass
 
     @staticmethod
-    async def _sender(audio_frames, ws) -> None:
+    async def _sender(audio_frames: AsyncIterator[AudioFrame], ws: Any) -> None:
         try:
             async for frame in audio_frames:
                 pcm = frame.pcm_data

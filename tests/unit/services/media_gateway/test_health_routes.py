@@ -70,6 +70,13 @@ def test_health_live_returns_200_ok(monkeypatch: pytest.MonkeyPatch) -> None:
     assert r.json() == {"status": "healthy"}
 
 
+def test_prometheus_metrics_are_exposed_by_media_gateway(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GPU_HOST", raising=False)
+    response = TestClient(create_twilio_media_stream_app(_make_deps())).get("/metrics")
+    assert response.status_code == 200
+    assert "python_gc_objects_collected_total" in response.text
+
+
 def test_health_ready_returns_200_when_no_gpu_host_configured(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

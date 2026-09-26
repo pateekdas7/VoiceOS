@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
 import os
-from unittest.mock import AsyncMock, MagicMock, patch
+import sys
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -60,7 +60,6 @@ class TestDialerWorkerDispatch:
 
     @pytest.mark.asyncio
     async def test_start_command_calls_start(self) -> None:
-        from scripts.jobs.run_dialer_worker import _run
 
         cmd = self._make_cmd({
             "command": "start",
@@ -76,11 +75,7 @@ class TestDialerWorkerDispatch:
         # Run with a very short BLPOP that will exhaust after 3 calls
         with patch("scripts.jobs.run_dialer_worker._BLPOP_TIMEOUT", 0):
             # Override the shutdown event to stop after 3 iterations
-            original_run = asyncio.run
-
             async def _controlled_run(dialer_mgr, raw_redis):
-                import signal as _sig
-                loop = asyncio.get_running_loop()
                 shutdown = asyncio.Event()
                 call_count = 0
 
@@ -94,9 +89,6 @@ class TestDialerWorkerDispatch:
                 raw_redis.blpop = _blpop_patch
 
                 # Run just 2 iterations by setting shutdown after cmd processed
-                import scripts.jobs.run_dialer_worker as _m
-                orig = _m._BLPOP_TIMEOUT
-
                 iterations = 0
                 while iterations < 3 and not shutdown.is_set():
                     result = await asyncio.to_thread(raw_redis.blpop, key="x", timeout=0)

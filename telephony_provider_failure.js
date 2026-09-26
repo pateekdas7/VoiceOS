@@ -36,7 +36,7 @@ function classifyProviderFailure(error = {}, context = {}) {
   if (status === 'no-answer') return result(FAILURE_CLASSES.NO_ANSWER, code || 'no-answer');
   if (context.answeredBy && /machine|fax/i.test(String(context.answeredBy)) && status === 'completed')
     return result(FAILURE_CLASSES.VOICEMAIL, code || 'machine');
-  if (status === 'timeout' || /timed? ?out|timeout|etimedout/.test(message) || ['econnreset','econnrefused','enotfound'].includes(code))
+  if (status === 'timeout' || /timed? ?out|timeout|etimedout/.test(message) || code === 'etimedout')
     return result(FAILURE_CLASSES.TIMEOUT, code || 'timeout');
   if (code === 'twilio_rate_limit' || code === '429' || status === '429' || /rate.?limit|too many requests|throttl/.test(message))
     return result(FAILURE_CLASSES.RATE_LIMIT, code || 'rate_limit');
@@ -44,7 +44,7 @@ function classifyProviderFailure(error = {}, context = {}) {
     return result(FAILURE_CLASSES.INVALID_DESTINATION, code || 'invalid_destination');
   if (code === '20003' || /authentication|authenticate|api key|account.*sid|credential/.test(message))
     return result(FAILURE_CLASSES.AUTH_CONFIGURATION, code || 'auth_configuration');
-  if (/network|socket|dns|connection reset|connection refused|temporar(y|ily) unavailable/.test(message))
+  if (['econnreset','econnrefused','enotfound'].includes(code) || /network|socket|dns|econnreset|econnrefused|enotfound|connection reset|connection refused|temporar(y|ily) unavailable/.test(message))
     return result(FAILURE_CLASSES.TRANSIENT_PROVIDER, code || 'provider_network');
   if (status === 'failed' || status === 'canceled' || /provider.*failed|call failed|rejected/.test(message))
     return result(FAILURE_CLASSES.PROVIDER_FAILED, code || status || 'provider_failed');

@@ -93,9 +93,10 @@ class TestEntrypointWiring:
         customer whose consent is revoked — that is the exact failure this
         gate exists to prevent."""
         src = self._src()
-        check_pos = src.index("is_revoked(deps.tenant_id, customer_id)")
+        tenant_resolution_pos = src.index("resolved_tenant_id = ticket.tenant_id")
+        check_pos = src.index("is_revoked(resolved_tenant_id, customer_id)")
         create_pos = src.index("await CallOrchestrator.create(")
-        assert check_pos < create_pos, (
+        assert tenant_resolution_pos < check_pos < create_pos, (
             "Consent revocation check must precede CallOrchestrator.create() — "
             "otherwise a revoked customer still triggers session allocation."
         )
@@ -105,9 +106,10 @@ class TestEntrypointWiring:
         Revoked customers must not generate that trail — the check has to
         happen before start_call() is invoked."""
         src = self._src()
-        check_pos = src.index("is_revoked(deps.tenant_id, customer_id)")
+        tenant_resolution_pos = src.index("resolved_tenant_id = ticket.tenant_id")
+        check_pos = src.index("is_revoked(resolved_tenant_id, customer_id)")
         start_call_pos = src.index("conversation_engine.start_call(")
-        assert check_pos < start_call_pos, (
+        assert tenant_resolution_pos < check_pos < start_call_pos, (
             "Consent revocation check must precede conversation_engine.start_call() — "
             "otherwise a revoked customer generates CRM/audit trails they shouldn't."
         )

@@ -7,12 +7,6 @@ from __future__ import annotations
 
 from prometheus_client import Counter, Gauge, Histogram
 
-stt_latency_ms = Histogram(
-    "voiceos_stt_latency_ms",
-    "STT transcription latency in milliseconds (from first audio frame to last WordHypothesis)",
-    buckets=[50, 100, 200, 300, 500, 750, 1000, 1500, 2000, 3000],
-)
-
 stt_first_word_latency_ms = Histogram(
     "voiceos_stt_first_word_latency_ms",
     "Latency to first WordHypothesis in milliseconds (streaming TTFW)",

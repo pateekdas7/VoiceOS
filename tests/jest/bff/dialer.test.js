@@ -36,9 +36,13 @@ const mockRedis = {
 };
 Redis.mockImplementation(() => mockRedis);
 
+const mockClient = {
+  query: jest.fn().mockResolvedValue({ rows: [] }),
+  release: jest.fn(),
+};
 const mockPool = {
   query: jest.fn().mockResolvedValue({ rows: [] }),
-  connect: jest.fn().mockResolvedValue({ query: jest.fn().mockResolvedValue({ rows: [] }), release: jest.fn() }),
+  connect: jest.fn().mockResolvedValue(mockClient),
   end: jest.fn(),
   on: jest.fn(),
 };
@@ -51,6 +55,27 @@ const VALID_PAYLOAD = {
   CallStatus: 'completed',
   Duration:   '45',
 };
+
+function seedDurableCallAttempt() {
+  const idempotencyKeys = new Set();
+  mockClient.query.mockImplementation(async (sql, params = []) => {
+    if (sql.includes('FROM call_attempts WHERE call_sid=$1')) {
+      return { rows: [{
+        attempt_id: 'attempt-1', tenant_id: 'tenant-test-001',
+        campaign_id: 'campaign-1', lead_id: 'l-001', pipeline_id: 'pipe-001',
+        status: 'IN_PROGRESS', initiated_at: new Date().toISOString(),
+      }] };
+    }
+    if (sql.includes('INSERT INTO telephony_call_events')) return { rows: [{ event_id: 'event-1' }] };
+    if (sql.includes('INSERT INTO idempotency_keys')) {
+      const key = params[0];
+      if (idempotencyKeys.has(key)) return { rows: [] };
+      idempotencyKeys.add(key);
+      return { rows: [{ key }] };
+    }
+    return { rows: [] };
+  });
+}
 
 describe('POST /dialer/callback', () => {
   beforeEach(() => {
@@ -95,7 +120,7 @@ describe('POST /dialer/callback', () => {
     // Simulation mode: no TWILIO_AUTH_TOKEN → skip HMAC validation
     const savedToken = process.env.TWILIO_AUTH_TOKEN;
     delete process.env.TWILIO_AUTH_TOKEN;
-    mockPool.query.mockResolvedValue({ rows: [] });
+    seedDurableCallAttempt();
 
     const res = await request(app)
       .post('/dialer/callback?pipeline_id=pipe-001&lead_id=l-001&tenant_id=tenant-test-001')
@@ -103,30 +128,34 @@ describe('POST /dialer/callback', () => {
 
     process.env.TWILIO_AUTH_TOKEN = savedToken;
     // Without auth token and not in production: should not 403
-    expect(res.status).not.toBe(403);
-    expect([200, 400, 500]).toContain(res.status);
+    expect(res.status).toBe(200);
   });
 
   it('pushes to Redis completion queue on valid callback', async () => {
     const savedToken = process.env.TWILIO_AUTH_TOKEN;
     delete process.env.TWILIO_AUTH_TOKEN;
-    mockPool.query.mockResolvedValue({ rows: [] });
+    seedDurableCallAttempt();
 
     await request(app)
       .post('/dialer/callback?pipeline_id=pipe-001&lead_id=l-001&tenant_id=tenant-test-001')
       .send({ CallSid: 'CA-test-001', CallStatus: 'completed', Duration: '60' });
 
     process.env.TWILIO_AUTH_TOKEN = savedToken;
-    // Redis lpush should have been called
-    expect(mockRedis.lpush).toHaveBeenCalled();
+    expect(mockRedis.lpush).toHaveBeenCalledWith(
+      'voiceos:pipeline:completed:pipe-001', expect.any(String),
+    );
   });
 });
 
 describe('/dialer/callback idempotency', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   it('handles duplicate callbacks (second call does not crash)', async () => {
     const savedToken = process.env.TWILIO_AUTH_TOKEN;
     delete process.env.TWILIO_AUTH_TOKEN;
-    mockPool.query.mockResolvedValue({ rows: [] });
+    seedDurableCallAttempt();
 
     const url = '/dialer/callback?pipeline_id=pipe-001&lead_id=l-001&tenant_id=tenant-test-001';
     const payload = { CallSid: 'CA-dup-001', CallStatus: 'completed', Duration: '30' };
@@ -135,9 +164,8 @@ describe('/dialer/callback idempotency', () => {
     const res2 = await request(app).post(url).send(payload);
 
     process.env.TWILIO_AUTH_TOKEN = savedToken;
-    expect([200, 500]).toContain(res1.status);
-    expect([200, 500]).toContain(res2.status);
-    expect(res1.status).not.toBe(403);
-    expect(res2.status).not.toBe(403);
+    expect(res1.status).toBe(200);
+    expect(res2.status).toBe(200);
+    expect(mockRedis.lpush).toHaveBeenCalledTimes(1);
   });
 });

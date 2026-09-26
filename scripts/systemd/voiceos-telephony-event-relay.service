@@ -1,0 +1,16 @@
+[Unit]
+Description=VoiceOS durable telephony event outbox relay
+Wants=network-online.target
+After=network-online.target postgresql.service redis-server.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/voiceos/app
+EnvironmentFile=/opt/voiceos/.env
+ExecStart=/usr/bin/node scripts/telephony/telephony_event_relay.js
+StandardOutput=append:/opt/voiceos/logs/telephony-event-relay.log
+StandardError=append:/opt/voiceos/logs/telephony-event-relay.log
+TimeoutStartSec=30
+
+[Install]
+WantedBy=multi-user.target

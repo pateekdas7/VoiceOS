@@ -13,16 +13,12 @@ the live Veena PCM path.
 """
 from __future__ import annotations
 
-import asyncio
-import types
-from dataclasses import dataclass, field
-from typing import List
+from itertools import pairwise
 
 import pytest
 
 from src.libs.contracts.streaming import AudioClause
 from src.services.media_gateway.twilio_ws_entrypoint import CallOrchestrator
-
 
 # ---------------------------------------------------------------------------
 # Test doubles — only enough surface for _send_clause / _send_clauses.
@@ -35,7 +31,7 @@ class _FakePlayback:
     def __init__(self, generation: int = 0) -> None:
         self.generation = generation
 
-    def dequeue_nowait(self):  # noqa: D401 — matches PlaybackScheduler shape
+    def dequeue_nowait(self):
         return None
 
 
@@ -44,7 +40,7 @@ class _FakeAudioOutput:
     downstream of AudioOutput, so this bypasses PCM→μ-law conversion and
     tests the framing loop directly with known μ-law byte streams."""
 
-    def convert(self, clause, fmt: str = "ulaw") -> bytes:  # noqa: D401
+    def convert(self, clause, fmt: str = "ulaw") -> bytes:
         assert fmt == "ulaw"
         return clause.audio_data
 
@@ -53,7 +49,7 @@ class _FakeAdapter:
     """Capture every emitted frame's payload for byte-exact assertions."""
 
     def __init__(self) -> None:
-        self.frames: List[bytes] = []
+        self.frames: list[bytes] = []
 
     async def send_frame(self, frame) -> None:
         # AudioFrame.pcm_data holds the μ-law payload for outbound frames.
@@ -61,7 +57,7 @@ class _FakeAdapter:
 
 
 class _FakeVAD:
-    def set_playback_active(self, active: bool, playback_seq: int = 0) -> None:  # noqa: D401
+    def set_playback_active(self, active: bool, playback_seq: int = 0) -> None:
         pass
 
 
@@ -215,7 +211,7 @@ async def test_generation_bump_mid_clause_drops_stale_carry() -> None:
     assert orch._send_ulaw_carry == b"", "stale carry must be discarded on gen bump"
 
     # New generation: clause arrives at the correct generation and framing restarts clean.
-    orch2, adapter2, pb2 = _make_orchestrator(generation=1)
+    orch2, adapter2, _pb2 = _make_orchestrator(generation=1)
     await orch2._send_clause(_clause(b"\xEE" * 320, idx=0, generation=1))
     assert len(adapter2.frames) == 2
     for f in adapter2.frames:
@@ -231,13 +227,13 @@ async def test_generation_bump_mid_clause_drops_stale_carry() -> None:
 
 @pytest.mark.asyncio
 async def test_sequence_and_rtp_ts_monotonic_20ms_spaced() -> None:
-    orch, adapter, _ = _make_orchestrator()
+    orch, _adapter, _ = _make_orchestrator()
 
     class _SeqAdapter(_FakeAdapter):
         def __init__(self) -> None:
             super().__init__()
-            self.seqs: List[int] = []
-            self.rtp_ts: List[int] = []
+            self.seqs: list[int] = []
+            self.rtp_ts: list[int] = []
 
         async def send_frame(self, frame) -> None:
             await super().send_frame(frame)
@@ -257,5 +253,5 @@ async def test_sequence_and_rtp_ts_monotonic_20ms_spaced() -> None:
     assert seqs == list(range(1, len(seqs) + 1)), "seq must be monotonic starting at 1"
     assert rtp == [s * 160 for s in seqs], "rtp_ts must be seq*160 (20 ms @ 8 kHz)"
     # 20 ms per frame @ 8 kHz μ-law = 160 samples = 160 μ-law bytes.
-    for a, b in zip(rtp, rtp[1:]):
+    for a, b in pairwise(rtp):
         assert b - a == 160, "rtp_ts spacing must be exactly 160 samples per frame"

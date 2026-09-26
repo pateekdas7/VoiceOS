@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 import struct
 from collections.abc import AsyncIterator
-from math import sin, pi
+from math import pi, sin
 
 import pytest
 

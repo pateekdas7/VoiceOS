@@ -5,6 +5,7 @@ const {
   validateOutboxPayload,
   markFailure,
   relayBatch,
+  connectionConfigs,
 } = require('../../../scripts/telephony/telephony_event_relay');
 
 const row = {
@@ -21,6 +22,24 @@ const row = {
 };
 
 describe('W2 canonical event relay', () => {
+  test('uses the CPU deployment POSTGRES_* and REDIS_* environment contract', () => {
+    const { pgConfig, redisConfig } = connectionConfigs({
+      POSTGRES_HOST: 'postgres.internal',
+      POSTGRES_PORT: '5433',
+      POSTGRES_DB: 'voiceos',
+      POSTGRES_USER: 'voiceos_app',
+      POSTGRES_PASSWORD: 'placeholder',
+      REDIS_HOST: 'redis.internal',
+      REDIS_PORT: '6380',
+      REDIS_PASSWORD: 'placeholder',
+    });
+    expect(pgConfig).toEqual({
+      host: 'postgres.internal', port: 5433, database: 'voiceos',
+      user: 'voiceos_app', password: 'placeholder',
+    });
+    expect(redisConfig).toEqual({ host: 'redis.internal', port: 6380, password: 'placeholder' });
+  });
+
   test('uses bounded exponential retry delay', () => {
     expect(retryDelaySeconds(1)).toBe(5);
     expect(retryDelaySeconds(2)).toBe(10);

@@ -52,3 +52,9 @@ def test_health_ready_returns_503_when_dependency_is_unhealthy() -> None:
     response = client.get("/health/ready")
     assert response.status_code == 503
     assert response.json() == {"status": "unhealthy"}
+
+
+def test_prometheus_metrics_are_exposed_by_composed_web_api() -> None:
+    response = TestClient(_app(HealthStatus.HEALTHY)).get("/metrics")
+    assert response.status_code == 200
+    assert "python_gc_objects_collected_total" in response.text

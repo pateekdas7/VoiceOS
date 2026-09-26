@@ -12,6 +12,7 @@ const { normalizeProviderStatus, canTransition } = require('./telephony_call_sta
 const { parseCallbackInstant, evaluateWorkingHours, validTimezone } = require('./telephony_callback_policy');
 const { buildCanonicalCallEvent } = require('./telephony_call_event');
 const { persistCanonicalCallEvent } = require('./telephony_event_boundary');
+const { pendingCallsKey, buildPendingCallJob } = require('./dialer_queue_contract');
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const app          = express();
@@ -515,18 +516,8 @@ async function distributeLeadToPipeline(campaignId, score, language, tenantId, f
 // ── 7. Redis queue push ───────────────────────────────────────────────────────
 async function pushToRedisQueue(lead) {
   try {
-    const key = `voiceos:pending_calls:${lead.tenant_id}`;
-    await redis.lpush(key, JSON.stringify({
-      lead_id:     lead.lead_id,
-      campaign_id: lead.campaign_id,
-      pipeline_id: lead.pipeline_id,
-      tenant_id:   lead.tenant_id,
-      phone:       lead.phone,
-      name:        lead.name,
-      language:    lead.language,
-      score:       lead.score,
-      queued_at:   new Date().toISOString(),
-    }));
+    const key = pendingCallsKey(String(lead.tenant_id || ''));
+    await redis.lpush(key, JSON.stringify(buildPendingCallJob(lead)));
     return true;
   } catch (e) {
     log.warn('redis.push_failed', { error: e.message });

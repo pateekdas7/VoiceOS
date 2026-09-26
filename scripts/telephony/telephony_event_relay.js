@@ -124,9 +124,30 @@ async function relayBatch({ pool, redis }) {
   }
 }
 
+function connectionConfigs(env = process.env) {
+  const pgConfig = env.POSTGRES_DSN
+    ? { connectionString: env.POSTGRES_DSN }
+    : {
+        host: env.POSTGRES_HOST || '127.0.0.1',
+        port: Number(env.POSTGRES_PORT || 5432),
+        database: env.POSTGRES_DB || 'voiceos',
+        user: env.POSTGRES_USER || 'voiceos',
+        password: env.POSTGRES_PASSWORD || undefined,
+      };
+  const redisConfig = env.REDIS_URL
+    ? env.REDIS_URL
+    : {
+        host: env.REDIS_HOST || '127.0.0.1',
+        port: Number(env.REDIS_PORT || 6379),
+        password: env.REDIS_PASSWORD || undefined,
+      };
+  return { pgConfig, redisConfig };
+}
+
 async function runOnce() {
-  const pool = new Pool({ connectionString: process.env.POSTGRES_DSN });
-  const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+  const { pgConfig, redisConfig } = connectionConfigs();
+  const pool = new Pool(pgConfig);
+  const redis = new Redis(redisConfig);
   try {
     return await relayBatch({ pool, redis });
   } finally {
@@ -155,4 +176,5 @@ module.exports = {
   markPublished,
   markFailure,
   relayBatch,
+  connectionConfigs,
 };

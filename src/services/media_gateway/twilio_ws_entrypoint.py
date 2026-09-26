@@ -51,22 +51,22 @@ import logging
 import re
 import time
 import uuid
-from datetime import datetime
 from collections import deque
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from starlette.applications import Starlette
-from starlette.routing import Route, WebSocketRoute
+from starlette.requests import Request
 from starlette.responses import Response
-from starlette.requests import Request as _StarReq
+from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from src.libs.contracts.audio import AudioConfig, AudioFrame, Encoding, SampleRate
 from src.libs.contracts.context import CustomerContext
 from src.libs.contracts.events.audio_events import BargeinDetected, VADSpeechEnd, VADSpeechStart
-from src.libs.contracts.primitives import TenantId
+from src.libs.contracts.primitives import CallId, TenantId
 from src.libs.contracts.streaming import WordHypothesis
 from src.libs.contracts.turn import TurnInput, TurnRole, UtteranceSegment
 from src.services.audio_preprocessing.service import AudioPreprocessorService
@@ -79,8 +79,8 @@ from src.services.media_gateway.protocol import ADAPTER_TYPE_TWILIO
 from src.services.media_gateway.service import MediaGatewayService
 from src.services.playback.output import AudioOutput
 from src.services.playback.scheduler import PlaybackScheduler
-from src.services.vad_endpointing.bargein_detector import BargeinDetector
 from src.services.vad_endpointing.backchannel import BackchannelDiscriminator
+from src.services.vad_endpointing.bargein_detector import BargeinDetector
 from src.services.vad_endpointing.endpoint_detector import EndpointDetector
 from src.services.vad_endpointing.service import VADEndpointingService
 from src.services.vad_endpointing.vad_engine import VADEngine, VADModelProtocol
@@ -89,11 +89,11 @@ if TYPE_CHECKING:
     from src.libs.observability.tracer import OTelTracer
     from src.services.conversation_engine.engine import ConversationEngine
     from src.services.crm.service import CustomerService
-    from src.services.telephony.phone_numbers import TelephonyNumberResolver
     from src.services.dialogue_manager.service import DialogueManager
-    from src.services.stt.service import STTService
-    from src.services.tts.greeting_cache import GreetingCache
     from src.services.media_gateway.recording_lifecycle import RecordingLifecycleManager
+    from src.services.stt.service import STTService
+    from src.services.telephony.phone_numbers import TelephonyNumberResolver
+    from src.services.tts.greeting_cache import GreetingCache
 
 logger = logging.getLogger("voiceos.media_gateway.twilio_ws")
 
@@ -136,7 +136,7 @@ class SharedCallDependencies:
     stt_service: STTService
     conversation_engine: ConversationEngine
     customer_service: CustomerService | None = None
-    telephony_number_resolver: "TelephonyNumberResolver | None" = None
+    telephony_number_resolver: TelephonyNumberResolver | None = None
     """Authoritative CRM lookup used by /voice to resolve customer_id from
     the caller's phone number (ANI for inbound calls, DNIS/To for
     outbound-api Direction) BEFORE minting TwiML. Same
@@ -214,10 +214,10 @@ class SharedCallDependencies:
     string (the default) disables recording entirely (no CallRecorder is
     constructed), preserving prior behavior for every existing test and
     deployment that hasn't opted in."""
-    recording_manager: "RecordingLifecycleManager | None" = None
+    recording_manager: RecordingLifecycleManager | None = None
     recording_access_secret: str = ""
-    greeting_cache: "GreetingCache | None" = None
-    tracer: "OTelTracer | None" = None
+    greeting_cache: GreetingCache | None = None
+    tracer: OTelTracer | None = None
     """Optional OTelTracer (src/libs/observability/tracer.py). When set,
     spans are emitted for: /voice HTTP handler, WS call lifecycle,
     CustomerContext assembly, STT transcription, LLM engine turn,
@@ -375,8 +375,8 @@ class CallOrchestrator:
         adapter = TwilioWebSocketAdapter(
             account_sid=deps.account_sid,
             auth_token=deps.auth_token,
-            tenant_id=tenant_id,
-            call_id=call_id,
+            tenant_id=TenantId(tenant_id),
+            call_id=CallId(call_id),
         )
         result = await deps.media_gateway_service.admit_adapter(
             call_id=call_id,
@@ -424,7 +424,9 @@ class CallOrchestrator:
             pcm_frame = _mulaw_frame_to_pcm16le(raw_frame)
             for ready_frame in self._session.push_frame(pcm_frame):
                 pre = self._deps.audio_preprocessor.process_frame(self._call_id, ready_frame)
-                events = self._vad.process_frame(pre, self._call_id, self._tenant_id, self._call_time_ms())
+                events = self._vad.process_frame(
+                    pre, CallId(self._call_id), TenantId(self._tenant_id), self._call_time_ms()
+                )
 
                 if self._recorder is not None:
                     self._recorder.add_inbound_audio(pre.pcm_data, int(pre.config.sample_rate))
@@ -446,6 +448,8 @@ class CallOrchestrator:
         # doesn't block forever waiting on a sentinel that will never come.
         if self._turn_active and self._current_turn_queue is not None:
             await self._current_turn_queue.put(None)
+            self._turn_active = False
+            self._vad_speech_ended.set()
         self._closing = True
         # Wake _run_turns: it blocks on `await self._turn_ready.wait()`, which
         # is NOT cancelled by _closing flipping to True, so without this it
@@ -641,7 +645,10 @@ class CallOrchestrator:
                 self._playback.preempt_current_clause()
             except Exception:
                 logger.exception("preempt_current_clause failed")
-            asyncio.ensure_future(self._playback.flush())
+            flush_task = asyncio.ensure_future(self._playback.flush())
+            flush_task.add_done_callback(
+                lambda task: task.exception() if not task.cancelled() else None
+            )
             self._playback.clear_barge_in()
 
             transcript = " ".join(prefix_words)
@@ -887,7 +894,8 @@ class CallOrchestrator:
             return
         if self._recorder is not None:
             self._recorder.add_outbound_audio(clause.audio_data, clause.sample_rate)
-        import time as _t, logging as _lg
+        import logging as _lg
+        import time as _t
         _t0 = _t.monotonic()
         _last_end = getattr(self, "_pace_last_clause_end", None)
         _gap_ms = int((_t0 - _last_end) * 1000) if _last_end else 0
@@ -1074,7 +1082,8 @@ class CallOrchestrator:
         if self._deps.greeting_cache is not None:
             frames = self._deps.greeting_cache.get_frames(greeting)
             if frames:
-                import asyncio as _asyncio_gc, time as _time_gc
+                import asyncio as _asyncio_gc
+                import time as _time_gc
                 logger.info(
                     "twilio_ws: greeting-cache HIT (%d frames, ~%d ms) - splicing directly",
                     len(frames), len(frames) * 20,
@@ -1127,7 +1136,8 @@ class CallOrchestrator:
         # already enqueues each clause into self._playback as it produces it,
         # so draining that queue concurrently gets first audio out in
         # roughly first-clause latency instead of full-utterance latency.
-        import asyncio, time as _time
+        import asyncio
+        import time as _time
 
         self._pace_greeting_start = _time.monotonic()
         self._pace_greeting_first_frame_at = None
@@ -1180,10 +1190,15 @@ class CallOrchestrator:
                 self._vad.set_playback_active(False)
                 import logging as _lg3
                 _wall = int((_time.monotonic() - self._pace_greeting_start) * 1000)
+                first_frame_at = getattr(self, "_pace_greeting_first_frame_at", None)
+                ttfa_ms = (
+                    int((first_frame_at - self._pace_greeting_start) * 1000)
+                    if first_frame_at is not None else -1
+                )
                 _lg3.getLogger("voiceos.twilio_ws").info(
                     "PACE_DIAG greeting_done wall_ms=%d ttfa_ms=%d out_seq=%d",
                     _wall,
-                    int((self._pace_greeting_first_frame_at - self._pace_greeting_start) * 1000) if getattr(self, "_pace_greeting_first_frame_at", None) else -1,
+                    ttfa_ms,
                     self._out_seq,
                 )
                 # Uninterruptible greeting complete: restore normal barge-in
@@ -1248,7 +1263,7 @@ class CallOrchestrator:
 
             if self._deps.speak_greeting:
                 tasks.append(asyncio.create_task(_speak_greeting_task()))
-            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+            done, _pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
             for task in done:
                 exc = task.exception()
                 if exc is not None:
@@ -1583,7 +1598,7 @@ def create_twilio_media_stream_app(
             return "http://" + base[len("ws://"):]
         return base
 
-    async def _voice(request):
+    async def _voice(request: Request) -> Response:
         """HTTP webhook handler.
 
         Twilio POSTs form-encoded call metadata (CallSid, AccountSid, From,
@@ -1754,7 +1769,7 @@ def create_twilio_media_stream_app(
             )
             return Response(xml, media_type="application/xml")
 
-    async def _recording_access(request):
+    async def _recording_access(request: Request) -> Response:
         if deps.recording_manager is None or not deps.recording_access_secret:
             return Response("Recording access unavailable", status_code=503, media_type="text/plain")
         tenant_id = request.query_params.get("tenant_id", "")
@@ -1787,7 +1802,7 @@ def create_twilio_media_stream_app(
             logger.exception("recording access failure recording_id=%s tenant_id=%s", recording_id, tenant_id)
             return Response("Internal Server Error", status_code=500, media_type="text/plain")
 
-    async def _health(request):
+    async def _health(request: Request) -> Response:
         return Response("ok", media_type="text/plain")
 
     # V3 Ch12 §12.6/§12.9 — /health/live is a process-alive check with no
@@ -1796,7 +1811,10 @@ def create_twilio_media_stream_app(
     # The naive /health above is preserved for backward compatibility with
     # existing Twilio configurations and older monitors.
     import os as _os
+
     from starlette.responses import JSONResponse as _JSONResponse
+    from starlette.routing import Mount as _Mount
+    from prometheus_client import make_asgi_app as _make_prometheus_app
 
     from src.libs.health.probe import LivenessProbe, ReadinessProbe
     from src.libs.health.protocol import HealthStatus
@@ -1809,14 +1827,14 @@ def create_twilio_media_stream_app(
         dependencies=build_gpu_health_checks(_gpu_host) if _gpu_host else (),
     )
 
-    async def _health_live(_request):
+    async def _health_live(_request: Request) -> Response:
         status = await _liveness.check()
         return _JSONResponse(
             {"status": status.value},
             status_code=200 if status == HealthStatus.HEALTHY else 503,
         )
 
-    async def _health_ready(_request):
+    async def _health_ready(_request: Request) -> Response:
         status = await _readiness.check()
         return _JSONResponse(
             {"status": status.value},
@@ -1824,6 +1842,7 @@ def create_twilio_media_stream_app(
         )
 
     return Starlette(routes=[
+        _Mount("/metrics", app=_make_prometheus_app()),
         WebSocketRoute("/twilio/media-stream", endpoint=_endpoint),
         Route("/voice", endpoint=_voice, methods=["POST","GET"]),
         Route("/recordings/{recording_id}/access", endpoint=_recording_access, methods=["GET"]),

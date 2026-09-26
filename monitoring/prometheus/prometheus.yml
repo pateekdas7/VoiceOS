@@ -138,6 +138,17 @@ scrape_configs:
           service: bff
           cluster_member: "false"
 
+  # systemd-hosted CPU processes share the BFF host and expose Prometheus.
+  - job_name: voiceos-cpu-runtime
+    static_configs:
+      - targets:
+          - "205.147.102.94:8001" # Web API
+          - "205.147.102.94:8010" # Twilio media gateway
+          - "205.147.102.94:9101" # dialer worker
+        labels:
+          node_pool: cpu
+          cluster_member: "false"
+
   # -- GPU node (STT/LLM/vLLM/TTS export /metrics themselves; scraped
   # directly since the GPU node is not a cluster member -- TT-015) -------
   - job_name: gpu-node
@@ -161,7 +172,11 @@ scrape_configs:
   # -- Infra exporters -----------------------------------------------------
   - job_name: node-exporter
     static_configs:
-      - targets: ["node-exporter.voiceos-ops.svc.cluster.local:9100"]
+      - targets:
+          - "node-exporter.voiceos-ops.svc.cluster.local:9100"
+          - "205.147.102.94:9100"
+        labels:
+          node_pool: cpu
 
   - job_name: redis-exporter
     static_configs:

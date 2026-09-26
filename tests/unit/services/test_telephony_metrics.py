@@ -2,6 +2,7 @@ from pathlib import Path
 
 from src.services.media_gateway import metrics
 
+
 def test_w2_telephony_metric_labels_are_bounded():
     metrics.record_call_lifecycle("CONNECTED")
     metrics.record_webhook_failure("timeout")

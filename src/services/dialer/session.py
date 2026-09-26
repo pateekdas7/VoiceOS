@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -47,7 +47,7 @@ class DialerSessionManager:
         self._queue = dialer_queue
         self._lead_repo = lead_repo
         self._engines: dict[str, DialerEngine] = {}  # campaign_id → engine
-        self._tasks: dict[str, asyncio.Task] = {}    # campaign_id → task
+        self._tasks: dict[str, asyncio.Task[Any]] = {}    # campaign_id → task
         self._sessions: dict[str, DialerSessionInfo] = {}
 
     # ------------------------------------------------------------------
@@ -132,7 +132,7 @@ class DialerSessionManager:
     # Internal
     # ------------------------------------------------------------------
 
-    def _on_done(self, campaign_id: str, task: asyncio.Task) -> None:
+    def _on_done(self, campaign_id: str, task: asyncio.Task[Any]) -> None:
         info = self._sessions.get(campaign_id)
         if info:
             info.status = "stopped"

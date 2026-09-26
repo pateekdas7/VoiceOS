@@ -36,8 +36,10 @@ const { Pool }      = require('pg');
 const Redis         = require('ioredis');
 const { EventEmitter } = require('events');
 const crypto        = require('crypto');
+const http          = require('http');
 const { classifyProviderFailure } = require('./telephony_provider_failure');
 const { acquireProviderRateSlot } = require('./telephony_cps');
+const { PENDING_CALLS_PREFIX, pendingCallsKey, parsePendingCallJob } = require('./dialer_queue_contract');
 
 // ─── Configuration ─────────────────────────────────────────────────────────
 
@@ -70,7 +72,7 @@ const SIM_OUTCOMES = [
 // ─── Redis keys ─────────────────────────────────────────────────────────────
 
 const K = {
-  pendingQueue:    (tid) => `voiceos:pending_calls:${tid}`,
+  pendingQueue:    pendingCallsKey,
   retryQueue:      (tid) => `voiceos:retry_calls:${tid}`,
   callbackQueue:   (tid) => `voiceos:callback_calls:${tid}`,
   activeCalls:     (tid) => `voiceos:active_calls:${tid}`,
@@ -105,6 +107,30 @@ const _telephonyMetricCounters = new Map();
 function _incTelephonyMetric(name, labels = {}) {
   const key = JSON.stringify([name, labels]);
   _telephonyMetricCounters.set(key, (_telephonyMetricCounters.get(key) || 0) + 1);
+}
+
+function _promEscape(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+}
+
+function renderTelephonyMetrics() {
+  const definitions = {
+    voiceos_telephony_cps_limit_events_total: 'Provider CPS limit events observed by the dialer worker.',
+    voiceos_telephony_retry_attempts_total: 'Provider retry attempts observed by the dialer worker.',
+  };
+  const lines = ['# HELP voiceos_dialer_worker_up Whether the dialer worker metrics endpoint is responding.',
+    '# TYPE voiceos_dialer_worker_up gauge', 'voiceos_dialer_worker_up 1'];
+  for (const [name, help] of Object.entries(definitions)) {
+    lines.push(`# HELP ${name} ${help}`, `# TYPE ${name} counter`);
+    for (const [key, value] of _telephonyMetricCounters) {
+      const [metricName, labels] = JSON.parse(key);
+      if (metricName !== name) continue;
+      const rendered = Object.entries(labels).map(([label, labelValue]) =>
+        `${label}="${_promEscape(labelValue)}"`).join(',');
+      lines.push(`${name}${rendered ? `{${rendered}}` : ''} ${value}`);
+    }
+  }
+  return `${lines.join('\n')}\n`;
 }
 
 // ─── Logger ─────────────────────────────────────────────────────────────────
@@ -375,9 +401,10 @@ class TwilioDialer {
     const Twilio  = require('twilio');
     this._client  = new Twilio(sid, token);
     this._from    = process.env.TWILIO_FROM_NUMBER;
+    this._allowGlobalFrom = process.env.ALLOW_GLOBAL_TWILIO_FROM === 'true';
     this._bffUrl  = process.env.PUBLIC_BFF_URL; // e.g. https://bff.voiceos.ai
     this._wsUrl   = process.env.PUBLIC_WS_URL;  // e.g. wss://bff.voiceos.ai
-    if (!this._from) throw new Error('TWILIO_FROM_NUMBER required');
+    if (this._allowGlobalFrom && !this._from) throw new Error('TWILIO_FROM_NUMBER required when global caller ID fallback is enabled');
     if (!this._bffUrl) throw new Error('PUBLIC_BFF_URL required (Twilio status callback)');
     if (!this._wsUrl) throw new Error('PUBLIC_WS_URL required (media stream endpoint)');
   }
@@ -411,7 +438,7 @@ class TwilioDialer {
        LIMIT 1`,
       [lead.tenant_id, lead.campaign_id]
     );
-    const callerId = numbers[0]?.e164_number || (process.env.ALLOW_GLOBAL_TWILIO_FROM === 'true' ? this._from : null);
+    const callerId = numbers[0]?.e164_number || (this._allowGlobalFrom ? this._from : null);
     if (!callerId) throw new Error(`No active Twilio caller ID assigned to tenant=${lead.tenant_id} campaign=${lead.campaign_id}`);
 
     const call = await this._client.calls.create({
@@ -1049,12 +1076,28 @@ class DialerWorker {
     this._heartbeatTimer = null;
     this._retryTimer     = null;
     this._callbackTimer  = null;
+    this._metricsServer = null;
     this._reconciler     = new CrashReconciler(pool, redis);
   }
 
   async start() {
     log.info(`[Worker:${WORKER_ID}] Starting in ${DIALER_MODE} mode`);
     this._running = true;
+
+    const metricsHost = process.env.DIALER_METRICS_HOST || '127.0.0.1';
+    const metricsPort = Number.parseInt(process.env.DIALER_METRICS_PORT || '9101', 10);
+    this._metricsServer = http.createServer((request, response) => {
+      if (request.method !== 'GET' || request.url !== '/metrics') {
+        response.writeHead(404).end();
+        return;
+      }
+      response.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' });
+      response.end(renderTelephonyMetrics());
+    });
+    await new Promise((resolve, reject) => {
+      this._metricsServer.once('error', reject);
+      this._metricsServer.listen(metricsPort, metricsHost, resolve);
+    });
 
     // Discover all tenant queues
     await this._refreshQueues();
@@ -1098,6 +1141,10 @@ class DialerWorker {
     }
 
     await this._updateWorkerStatus('STOPPED');
+    if (this._metricsServer) {
+      await new Promise(resolve => this._metricsServer.close(resolve));
+      this._metricsServer = null;
+    }
     log.info(`[Worker:${WORKER_ID}] Shutdown complete`);
   }
 
@@ -1129,7 +1176,7 @@ class DialerWorker {
         if (!result) continue; // timeout — loop continues
 
         const [queueKey, payload] = result;
-        const lead = JSON.parse(payload);
+        const lead = parsePendingCallJob(payload, queueKey);
 
         log.info(`[Worker:${WORKER_ID}] Dequeued lead=${lead.lead_id} phone=${lead.phone} pipeline=${lead.pipeline_id}`);
 
@@ -1230,7 +1277,7 @@ class DialerWorker {
   // ── Refresh tenant queue list ─────────────────────────────────────────────
   async _refreshQueues() {
     try {
-      const keys = await redis.keys('voiceos:pending_calls:*');
+      const keys = await redis.keys(`${PENDING_CALLS_PREFIX}*`);
       this._tenantQueues = keys.length > 0 ? keys : [];
       if (keys.length > 0) log.debug(`[Worker] Monitoring queues: ${keys.join(', ')}`);
     } catch (e) {
@@ -1349,4 +1396,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { ScheduleVerifier, PipelineRegistry, ActiveCallTracker, CrashReconciler, Pipeline, DialerWorker, _telephonyMetricCounters };
+module.exports = { ScheduleVerifier, PipelineRegistry, ActiveCallTracker, CrashReconciler, Pipeline, TwilioDialer, DialerWorker, K, renderTelephonyMetrics, _telephonyMetricCounters };

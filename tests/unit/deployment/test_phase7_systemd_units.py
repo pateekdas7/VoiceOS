@@ -76,15 +76,22 @@ class TestVoiceRuntimeService:
 
 
 class TestDialerWorkerService:
-    def test_has_timeout_stop_sec_45(self) -> None:
+    def test_has_graceful_shutdown_budget_for_node_worker(self) -> None:
         content = _read("voiceos-dialer-worker.service")
-        assert "TimeoutStopSec=45" in content, (
-            "voiceos-dialer-worker.service must have TimeoutStopSec=45"
+        assert "TimeoutStopSec=130" in content, (
+            "Node dialer drains active calls for up to 120s"
         )
 
-    def test_exec_start_calls_run_dialer_worker(self) -> None:
+    def test_exec_start_runs_authoritative_w2_worker_in_production_mode(self) -> None:
         content = _read("voiceos-dialer-worker.service")
-        assert "run_dialer_worker.py" in content
+        assert "Environment=DIALER_MODE=production" in content
+        assert "ExecStart=/usr/bin/node dialer_worker.js" in content
+
+    def test_deploy_installs_and_enables_authoritative_relay_timer(self) -> None:
+        deploy = (pathlib.Path(__file__).parents[3] / "scripts" / "deploy" / "deploy.sh").read_text()
+        assert "voiceos-telephony-event-relay.service" in deploy
+        assert "voiceos-telephony-event-relay.timer" in deploy
+        assert "enable --now voiceos-telephony-event-relay.timer" in deploy
 
     def test_has_restart_always(self) -> None:
         assert "Restart=on-failure" in _read("voiceos-dialer-worker.service")
@@ -96,6 +103,20 @@ class TestDialerWorkerService:
 
     def test_has_environment_file(self) -> None:
         assert "EnvironmentFile=" in _read("voiceos-dialer-worker.service")
+
+
+class TestTelephonyEventRelayUnits:
+    def test_periodic_relay_service_uses_shared_environment(self) -> None:
+        content = _read("voiceos-telephony-event-relay.service")
+        assert "ExecStart=/usr/bin/node scripts/telephony/telephony_event_relay.js" in content
+        assert "EnvironmentFile=/opt/voiceos/.env" in content
+        assert "Type=oneshot" in content
+
+    def test_relay_timer_is_enabled_as_timer(self) -> None:
+        content = _read("voiceos-telephony-event-relay.timer")
+        assert "OnUnitActiveSec=5s" in content
+        assert "Unit=voiceos-telephony-event-relay.service" in content
+        assert "WantedBy=timers.target" in content
 
 
 class TestBffService:

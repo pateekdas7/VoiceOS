@@ -28,6 +28,10 @@ def test_outbound_number_resolves_tenant_and_wss_uses_same_tenant() -> None:
     engine.start_call = MagicMock()
     engine.build_greeting = MagicMock(return_value=None)
     engine.handle_turn = AsyncMock(return_value=[])
+    customer_service = MagicMock()
+    customer = MagicMock()
+    customer.customer_id = "customer-b"
+    customer_service.find_by_phone.return_value = customer
 
     resolver = MagicMock()
     number = MagicMock()
@@ -43,6 +47,7 @@ def test_outbound_number_resolves_tenant_and_wss_uses_same_tenant() -> None:
         audio_preprocessor=AudioPreprocessorService(enabled_stages={"resample"}),
         stt_service=MagicMock(),
         conversation_engine=engine,
+        customer_service=customer_service,
         telephony_number_resolver=resolver,
         public_ws_base_url="wss://voice.example.test",
     )
@@ -61,6 +66,8 @@ def test_outbound_number_resolves_tenant_and_wss_uses_same_tenant() -> None:
     match = re.search(r'name="admission_token" value="([^"]+)"', response.text)
     assert match is not None
     token = match.group(1)
+    customer_match = re.search(r'name="customer_id" value="([^"]+)"', response.text)
+    assert customer_match is not None
     resolver.resolve_for_call.assert_called_once_with("+919900000001", direction="outbound-api")
 
     with client.websocket_connect("/twilio/media-stream") as ws:
@@ -71,7 +78,7 @@ def test_outbound_number_resolves_tenant_and_wss_uses_same_tenant() -> None:
                 "callSid": "CAtenant001",
                 "streamSid": "MZtenant001",
                 "accountSid": ACCOUNT,
-                "customParameters": {"admission_token": token},
+                "customParameters": {"admission_token": token, "customer_id": customer_match.group(1)},
                 "mediaFormat": {"sampleRate": 8000},
             },
         })

@@ -80,7 +80,7 @@ GREETING_OUTCOMES: Counter = Counter(
 (hit greeting_timeout_s — GPU TTS unreachable/slow), ``error`` (exception).
 A rising timeout rate is the earliest signal of GPU/TTS regression: without
 this metric, a hung greeting only surfaces in per-call logs long after
-callers have already heard 30–60s of dead air."""
+callers have already heard 30-60s of dead air."""
 
 
 # ---------------------------------------------------------------------------

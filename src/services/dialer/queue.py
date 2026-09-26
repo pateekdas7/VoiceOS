@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 
 _log = logging.getLogger("voiceos.dialer.queue")
 
@@ -73,7 +73,7 @@ class DialerQueue:
         added = self._redis.zadd(key, mapping, nx=True)
         self._redis.expire(key, _KEY_TTL_SECONDS)
         _log.debug("queue push tenant=%s campaign=%s added=%d", tenant_id, campaign_id, added)
-        return added
+        return int(added)
 
     # ------------------------------------------------------------------
     # Read / pop path
@@ -87,14 +87,17 @@ class DialerQueue:
             return None
         member_bytes, _score = result[0]
         member = member_bytes.decode() if isinstance(member_bytes, bytes) else member_bytes
-        return json.loads(member)
+        payload = json.loads(member)
+        if not isinstance(payload, dict):
+            raise ValueError("dialer queue member must contain a JSON object")
+        return cast(dict[str, Any], payload)
 
     # ------------------------------------------------------------------
     # Introspection
     # ------------------------------------------------------------------
 
     def size(self, tenant_id: str, campaign_id: str) -> int:
-        return self._redis.zcard(self._key(tenant_id, campaign_id))
+        return int(self._redis.zcard(self._key(tenant_id, campaign_id)))
 
     def is_empty(self, tenant_id: str, campaign_id: str) -> bool:
         return self.size(tenant_id, campaign_id) == 0

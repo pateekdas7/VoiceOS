@@ -77,6 +77,8 @@ for unit in \
     voiceos-frontend.service \
     voiceos-voice-runtime.service \
     voiceos-dialer-worker.service \
+    voiceos-telephony-event-relay.service \
+    voiceos-telephony-event-relay.timer \
     voiceos-mongodb-backup.service \
     voiceos-mongodb-backup.timer \
     voiceos-vault-snapshot.service \
@@ -91,21 +93,21 @@ run systemctl daemon-reload
 step "4/7" "Restarting web_api..."
 run systemctl restart voiceos-webapi
 if ! $DRY_RUN; then
-  wait_healthy "web_api" "http://localhost:8001/health" 30
+  wait_healthy "web_api" "http://localhost:8001/health/ready" 30
 fi
 
 # ── Step 5: Restart bff.js ────────────────────────────────────────────────────
 step "5/7" "Restarting bff.js (graceful shutdown active)..."
 run systemctl restart voiceos-bff
 if ! $DRY_RUN; then
-  wait_healthy "bff.js" "http://localhost:8000/health" 30
+  wait_healthy "bff.js" "http://localhost:8000/health/ready" 30
 fi
 
 # ── Step 6: Restart voice runtime ─────────────────────────────────────────────
 step "6/7" "Restarting voice runtime (drain gate active)..."
 run systemctl restart voiceos-voice-runtime
 if ! $DRY_RUN; then
-  wait_healthy "voice-runtime" "http://localhost:8010/health" 30
+  wait_healthy "voice-runtime" "http://localhost:8010/health/ready" 30
 fi
 
 # ── Step 7: Restart dialer_worker ─────────────────────────────────────────────
@@ -127,6 +129,7 @@ echo ""
 echo "[post] Enabling backup timers..."
 run systemctl enable --now voiceos-mongodb-backup.timer
 run systemctl enable --now voiceos-vault-snapshot.timer
+run systemctl enable --now voiceos-telephony-event-relay.timer
 
 # ── Post-deploy: 10-minute error rate watch ───────────────────────────────────
 if ! $DRY_RUN; then
