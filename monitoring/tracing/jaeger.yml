@@ -32,11 +32,9 @@ query:
     host-port: 0.0.0.0:16686
   base-path: /jaeger
 
-# Retention: 7 days (Sprint-027.md). Badger storage has no separate
-# retention config in the collector itself -- enforced via a periodic
-# `jaeger-badger-purge` job invoked from a CronJob (see
-# deployment/cpu/healthcheck.sh's new Jaeger check for the query-side
-# health probe, and infra/dr's rebuild validation for the "traces from all
-# services forwarded within 5s" check).
+# Retention contract: 7 days = 168 hours.
+# The deployed Jaeger 1.60 all-in-one enforces this through Badger's native
+# --badger.span-store-ttl=168h0m0s setting in infra/k8s/observability/otel-jaeger.yaml.
+# No separate purge CronJob is required or referenced by the deployed architecture.
 retention:
   max_age: 168h

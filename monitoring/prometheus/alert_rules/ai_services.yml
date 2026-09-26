@@ -1,0 +1,125 @@
+# VoiceOS v2 -- AI service latency and error-rate alerts.
+#
+# Uses the recorded series from the STT/LLM/TTS latency groups in
+# recording_rules.yml so alert expressions remain simple threshold comparisons.
+#
+# Architecture: V7 Ch8 (Alerting), V1 Ch13 (STT/LLM/TTS latency budgets).
+
+groups:
+  - name: voiceos_stt
+    rules:
+      - alert: STTLatencyHigh
+        expr: voiceos:stt_latency_ms:p95_5m > 800
+        for: 5m
+        labels:
+          severity: warning
+          service: stt
+        annotations:
+          summary: "STT p95 latency above 800 ms"
+          description: "voiceos:stt_latency_ms:p95_5m={{ $value | printf \"%.0f\" }}ms — STT is taking longer than the latency budget. Check GPU load."
+
+      - alert: STTLatencyCritical
+        expr: voiceos:stt_latency_ms:p95_5m > 2000
+        for: 3m
+        labels:
+          severity: critical
+          service: stt
+        annotations:
+          summary: "STT p95 latency critically high (>2 s)"
+          description: "voiceos:stt_latency_ms:p95_5m={{ $value | printf \"%.0f\" }}ms — calls will time out at this latency. Immediate action required."
+
+      - alert: STTErrorRateHigh
+        expr: voiceos:stt_error_rate:ratio_5m > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: stt
+        annotations:
+          summary: "STT error rate above 5%"
+          description: "voiceos:stt_error_rate:ratio_5m={{ $value | printf \"%.3f\" }} — check STT GPU server logs."
+
+  - name: voiceos_llm
+    rules:
+      - alert: LLMTTFTHigh
+        expr: voiceos:llm_ttft_ms:p95_5m > 1000
+        for: 5m
+        labels:
+          severity: warning
+          service: llm
+        annotations:
+          summary: "LLM time-to-first-token p95 above 1 s"
+          description: "voiceos:llm_ttft_ms:p95_5m={{ $value | printf \"%.0f\" }}ms — customer will perceive a pause before the AI responds."
+
+      - alert: LLMTTFTCritical
+        expr: voiceos:llm_ttft_ms:p95_5m > 3000
+        for: 3m
+        labels:
+          severity: critical
+          service: llm
+        annotations:
+          summary: "LLM TTFT critically high (>3 s)"
+          description: "voiceos:llm_ttft_ms:p95_5m={{ $value | printf \"%.0f\" }}ms — conversations will feel broken at this latency."
+
+      - alert: LLMErrorRateHigh
+        expr: voiceos:llm_error_rate:ratio_5m > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: llm
+        annotations:
+          summary: "LLM error rate above 5%"
+          description: "voiceos:llm_error_rate:ratio_5m={{ $value | printf \"%.3f\" }} — check LLM inference server."
+
+  - name: voiceos_tts
+    rules:
+      - alert: TTSFirstClauseLatencyHigh
+        expr: voiceos:tts_first_clause_latency_ms:p95_5m > 400
+        for: 5m
+        labels:
+          severity: warning
+          service: tts
+        annotations:
+          summary: "TTS first-clause latency p95 above 400 ms"
+          description: "voiceos:tts_first_clause_latency_ms:p95_5m={{ $value | printf \"%.0f\" }}ms — audio start is delayed for callers."
+
+      - alert: TTSFirstClauseLatencyCritical
+        expr: voiceos:tts_first_clause_latency_ms:p95_5m > 1000
+        for: 3m
+        labels:
+          severity: critical
+          service: tts
+        annotations:
+          summary: "TTS first-clause latency critically high (>1 s)"
+          description: "voiceos:tts_first_clause_latency_ms:p95_5m={{ $value | printf \"%.0f\" }}ms — callers will hear dead air."
+
+      - alert: TTSErrorRateHigh
+        expr: voiceos:tts_error_rate:ratio_5m > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: tts
+        annotations:
+          summary: "TTS error rate above 5%"
+          description: "voiceos:tts_error_rate:ratio_5m={{ $value | printf \"%.3f\" }} — check TTS GPU server."
+
+  - name: voiceos_conversation_engine
+    rules:
+      - alert: ConversationEngineErrorRateHigh
+        expr: voiceos:conversation_engine_error_rate:ratio_5m > 0.02
+        for: 5m
+        labels:
+          severity: warning
+          service: conversation_engine
+        annotations:
+          summary: "ConversationEngine error rate above 2%"
+          description: "voiceos:conversation_engine_error_rate:ratio_5m={{ $value | printf \"%.3f\" }} — turns are failing in the AI pipeline. Check conversation engine logs."
+
+      - alert: ConversationEngineLatencyHigh
+        expr: voiceos:conversation_engine_latency_ms:p95_5m > 5000
+        for: 5m
+        labels:
+          severity: warning
+          service: conversation_engine
+        annotations:
+          summary: "ConversationEngine turn latency p95 above 5 s"
+          description: "voiceos:conversation_engine_latency_ms:p95_5m={{ $value | printf \"%.0f\" }}ms — end-to-end turn processing is too slow."

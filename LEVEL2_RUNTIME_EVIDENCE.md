@@ -1,0 +1,152 @@
+# VoiceOS Level-2 Runtime Evidence
+
+RULE: This file records only actual runtime execution. Source code, documentation, manifests and planned commands are never runtime evidence.
+
+| Environment | Service/test | Action | Result | Evidence |
+|---|---|---|---|---|
+| Coding container | Repository | Attempted git clone of designated branch | BLOCKED | DNS/network could not resolve github.com |
+| GitHub | Baseline commit CI | Queried workflow runs for c33571a10b8882b1f3da5b0e0d25ebae7ce3c417 | NO RUNS RETURNED | GitHub workflow query returned empty |
+| GitHub | Vercel | Queried combined commit status | FAILED | Vercel status reported failure |
+
+## Required runtime evidence
+CPU startup/health; Postgres/Redis/MongoDB/Vault connectivity; CPU-to-GPU STT/LLM/TTS; real Twilio WebSocket; real call lifecycle; dialer concurrency/crash recovery; CRM sync; billing/payment webhook; tenant isolation; DND/DNC/time-window enforcement; GPU failover/drain; staging deploy/rollback; backup/restore; load/capacity; onboarding; support workflow; cost attribution.
+
+No item may become RUNTIME VERIFIED without exact command/action, timestamp, observed result, logs/metrics and commit SHA.
+
+## Workstream 1 execution record
+
+No CPU/GPU/staging runtime action was executed by this coding session. Source inspection and GitHub edits are implementation evidence only.
+
+Required before RUNTIME VERIFIED:
+- CPU service restart/readiness transition.
+- Redis/Postgres/MongoDB/Vault failure and recovery.
+- Prometheus scrape of BFF/GPU/exporters.
+- Controlled Alertmanager fire/route/resolve.
+- Backup verification plus non-destructive restore.
+- Log rotation/retention check.
+- Staging rollback/recovery drill.
+
+All remain **RUNTIME EVIDENCE REQUIRED**.
+
+
+| Environment | Service/test | Action | Result | Evidence |
+|---|---|---|---|---|
+| Coding container | Repository execution environment | `git clone --branch claude/ssh-gpu-cpu-servers-y99fib --depth 1 https://github.com/pateekdas7/VoiceOS.git /tmp/VoiceOS` at 2026-09-25T07:51:30Z UTC | BLOCKED | Exit 128: `Could not resolve host: github.com` |
+| Coding container | Git working-tree status | `git status --short` at 2026-09-25T07:51:30Z UTC | BLOCKED | Exit 128: `fatal: not a git repository` |
+
+This execution attempt produced no application/runtime evidence. No CPU/GPU/dependency/Prometheus/Alertmanager/backup/restore/recovery drill was executed.
+
+
+## MongoDB monitoring remediation
+No MongoDB runtime action was executed. Required evidence: exporter scrape with observed `mongodb_up`; controlled MongoDB failure/recovery; controlled exporter failure with `up{job="mongodb-exporter"}` transition; and Alertmanager fire → route → resolve. All remain **RUNTIME EVIDENCE REQUIRED**.
+
+
+## Jaeger/OTel retention
+Implementation evidence: the Jaeger Deployment now explicitly passes `--badger.span-store-ttl=168h0m0s` with `SPAN_STORAGE_TYPE=badger`. This is source/configuration evidence only.
+
+Runtime evidence required: deploy the actual Jaeger 1.60 instance, ingest controlled traces with timestamps that straddle the 7-day boundary, verify query/storage behavior, and capture Jaeger/Badger logs or metrics showing expiry/compaction. No such runtime action was executed in this session. Status: **RUNTIME EVIDENCE REQUIRED**.
+
+
+## Workstream 2 runtime evidence
+No authorized Twilio/SIP carrier environment or production credentials are attached. Real outbound/inbound calls, real provider signatures, real Media Streams audio, caller-ID verification, carrier outcome drills, duplicate/out-of-order webhook drills, recording lifecycle, tenant-isolation runtime drills and provider rate-limit behavior all remain **RUNTIME EVIDENCE REQUIRED**. The new phone-number routing implementation is source/configuration evidence only.
+
+## Workstream 2 — latest runtime evidence
+No authorized Postgres/Redis/Twilio runtime is attached. Therefore canonical callback transition behavior, migration 038 application, provider CPS enforcement, real carrier callbacks, and real media calls remain **RUNTIME EVIDENCE REQUIRED**.
+
+
+## W2 continuation evidence — 2026-09-25
+
+| Area | Implementation | Automated test | Integration | Runtime | Production |
+|---|---|---|---|---|---|
+| Recording lifecycle | IMPLEMENTED | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+| Recording storage/access | IMPLEMENTED | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+| Callback timezone policy | IMPLEMENTED | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+| Provider failure classification | IMPLEMENTED | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+| Webhook timeout/retry hardening | IMPLEMENTED | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+| Telephony lifecycle metrics | IMPLEMENTED/PARTIAL | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+| Canonical call event boundary | IMPLEMENTED | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+
+Execution rule: source inspection is not runtime evidence. No PostgreSQL migration, Redis behavior, Prometheus scrape, Twilio call, Media Stream, S3 object, signed URL, or provider failure behavior has been executed in this environment.
+
+
+### W2 continuation runtime evidence — 2026-09-25
+No Twilio, PostgreSQL, Redis, S3/object-storage, Media Streams, or production CPU runtime was attached. Recording upload/presign/retention/deletion, callback timezone behavior against real scheduling, provider failure injection, webhook replay storms, media lifecycle telemetry, canonical event persistence, and CPS behavior are **RUNTIME EVIDENCE REQUIRED**. No source inspection is treated as runtime verification.
+
+
+## W2 continuation — canonical event boundary
+As of 2026-09-25, source implementation now includes a PostgreSQL transactional canonical-event outbox (`telephony_event_outbox`), durable DLQ (`telephony_event_dlq`), and a bounded Redis relay. No PostgreSQL or Redis runtime is attached to this coding session, so the following are explicitly **NOT EXECUTED**: migration 042 application, outbox persistence against a real DB, Redis delivery, retry/backoff, stale-lock recovery, DLQ transition, and downstream-unavailable recovery.
+
+No source-level event relay result is treated as runtime evidence. Real consumer/delivery verification remains required.
+
+
+## 2026-09-25 execution-environment probe — current session
+
+The available coding container was checked before declaring execution blocked:
+- repository checkout: NOT AVAILABLE
+- Python: 3.13.5
+- Node.js: v22.16.0
+- npm: 10.9.2
+- pytest: 9.0.2
+- Ruff: NOT INSTALLED
+- Mypy: NOT INSTALLED
+- PostgreSQL client (psql): NOT INSTALLED
+- Redis CLI: NOT INSTALLED
+- Mongo shell: NOT INSTALLED
+- Docker: NOT INSTALLED
+- Docker Compose: NOT INSTALLED
+- kubectl: NOT INSTALLED
+- git status --short: FAILED — fatal: not a git repository
+
+The repository cannot be cloned from this container because the earlier network probe failed resolving github.com. Therefore no local repository test or dependency runtime execution was performed. Tool availability alone is not treated as W2 execution evidence.
+
+
+## W2 continuation — event boundary and execution attempt — 2026-09-25
+No executable repository checkout was available in the coding environment. GitHub source access was available for inspection and edits, but that is not an execution environment. No Python, Node, PostgreSQL, Redis, S3, Prometheus, Twilio, Media Streams, CPU-service, or GPU-service runtime was authorized/attached for this pass.
+
+Canonical event implementation was inspected and extended, but no test command was executed. Migration 042 was not applied. No Redis delivery, retry, DLQ, or downstream-unavailable drill was run. No real telephony call or Media Stream was run.
+
+
+## W2 FINAL STATIC GAP AUDIT — 2026-09-25
+
+Current branch/HEAD: `claude/ssh-gpu-cpu-servers-y99fib` @ `6e42dce528b84728613c06e082b6983baaed2a52`.
+
+### Implementation gaps vs verification gaps
+
+**Implementation gaps:**
+1. Alembic revision ID collisions at `0037` and `0038`.
+2. OTel tracer is optional in the media gateway dependency object but is not injected by the live CPU composition root.
+3. Several declared telephony metric wrappers have no live call sites.
+4. Redis-backed CPS concurrency/integration test is not implemented.
+
+**Verification-only blockers:**
+- repository checkout/test execution
+- PostgreSQL
+- Redis
+- S3/object storage
+- Prometheus
+- Twilio/carrier
+- Media Streams
+- downstream consumer runtime
+
+No tests or runtime checks were executed. These blockers do not change the source-level classifications above.
+
+
+## 2026-09-25 — W2 four-gap implementation closure
+
+Fresh implementation pass limited to the four genuine gaps from the final static audit. No W3/W4/W5/Level-3 work was started.
+
+### Implementation status
+- Alembic revision collisions — FIXED. Pre-existing 0037 compliance and 0038 CRM revisions are preserved. W2 Alembic revisions now use 0043 through 0048, chained from 0038 through all six W2 migrations. No duplicate revision ID remains and no unrelated migration functionality was deleted.
+- OTel live W2 composition — FIXED. The CPU composition root now builds the existing OTelTracer from the configured OTLP endpoint and injects it into SharedCallDependencies.tracer. Existing W2 media spans are retained; a call-termination span was added.
+- Telemetry call sites — FIXED. Actual media pipeline failures, actual STT/TTS retry attempts, callback processing, CPS-limit rejection, and outbound retry execution now have bounded metric increments. No CallSID, phone number, raw error text, or other unbounded identifier is used as a metric label.
+- CPS Redis integration test — FIXED. A real-ioredis integration test now covers N/N+1 allowance, concurrent acquisition, tenant isolation, epoch-second rollover, and Redis failure/fail-closed behavior. The test requires a real Redis service.
+
+### Verification status
+- Static/source checks: IMPLEMENTATION EVIDENCE PRESENT; AUTOMATED EXECUTION NOT EXECUTED.
+- Migration application/rollback: NOT EXECUTED — POSTGRESQL RUNTIME UNAVAILABLE.
+- OTel runtime export/scrape: NOT EXECUTED — OTEL/PROMETHEUS RUNTIME UNAVAILABLE.
+- Telephony/Twilio/Media Streams: NOT EXECUTED — REAL TELEPHONY RUNTIME UNAVAILABLE.
+- CPS Redis integration: NOT EXECUTED — REDIS RUNTIME UNAVAILABLE.
+- S3 recording runtime: NOT EXECUTED — S3 RUNTIME UNAVAILABLE.
+
+CURRENT W2 STATUS: WORKSTREAM 2 IMPLEMENTATION COMPLETE — RUNTIME VERIFICATION REQUIRED.

@@ -37,7 +37,10 @@ rule_files:
   - "alert_rules/slo_alerts.yml"
   - "alert_rules/infrastructure.yml"
   - "alert_rules/application.yml"
+  - "alert_rules/voiceos_bff_dialer.yml"
+  - "alert_rules/service_health.yml"
   - "alert_rules/business.yml"
+  - "alert_rules/ai_services.yml"
 
 alerting:
   alertmanagers:
@@ -125,22 +128,55 @@ scrape_configs:
       - action: labeldrop
         regex: __meta_.*
 
+  # -- CPU-host BFF -------------------------------------------------------
+  - job_name: voiceos-bff
+    static_configs:
+      - targets:
+          - "205.147.102.94:8000"
+        labels:
+          node_pool: cpu
+          service: bff
+          cluster_member: "false"
+
+  # systemd-hosted CPU processes share the BFF host and expose Prometheus.
+  - job_name: voiceos-cpu-runtime
+    static_configs:
+      - targets:
+          - "205.147.102.94:8001" # Web API
+          - "205.147.102.94:8010" # Twilio media gateway
+          - "205.147.102.94:9101" # dialer worker
+        labels:
+          node_pool: cpu
+          cluster_member: "false"
+
   # -- GPU node (STT/LLM/vLLM/TTS export /metrics themselves; scraped
   # directly since the GPU node is not a cluster member -- TT-015) -------
   - job_name: gpu-node
     static_configs:
       - targets:
-          - "217.18.55.96:8100" # stt
-          - "217.18.55.96:8000" # llm-runtime (vLLM)
-          - "217.18.55.96:8200" # tts
+          - "185.216.21.242:8100" # stt   (GPU_NODE_STATE: A6000, provisioned 2026-07-19)
+          - "185.216.21.242:8000" # llm-runtime (vLLM)
+          - "185.216.21.242:8200" # tts
         labels:
           node_pool: gpu
           cluster_member: "false"
 
+  # -- MongoDB exporter -----------------------------------------------------
+  - job_name: mongodb-exporter
+    static_configs:
+      - targets: ["mongodb-exporter:9216"]
+        labels:
+          service: mongodb
+          component: database
+
   # -- Infra exporters -----------------------------------------------------
   - job_name: node-exporter
     static_configs:
-      - targets: ["node-exporter.voiceos-ops.svc.cluster.local:9100"]
+      - targets:
+          - "node-exporter.voiceos-ops.svc.cluster.local:9100"
+          - "205.147.102.94:9100"
+        labels:
+          node_pool: cpu
 
   - job_name: redis-exporter
     static_configs:

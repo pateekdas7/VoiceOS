@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the VoiceOS telephony outbox relay periodically
+
+[Timer]
+OnBootSec=15s
+OnUnitActiveSec=5s
+AccuracySec=1s
+Unit=voiceos-telephony-event-relay.service
+
+[Install]
+WantedBy=timers.target

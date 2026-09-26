@@ -1,0 +1,162 @@
+# VoiceOS Level-2 Acceptance Criteria
+
+Level-2 = reliable, scalable, secure, commercially deployable platform around the existing AI. Level-3 conversation intelligence is out of scope.
+
+Every workstream must satisfy five layers where applicable: implementation, automated tests, integration tests, runtime tests, production acceptance.
+
+| # | Workstream | Implementation gate | Automated/integration gate | Runtime gate | Production gate |
+|---|---|---|---|---|---|
+| 1 | Production stabilization | Health, SLOs, logs, traces, alerts, backup, recovery | Unit/integration/failure tests pass | Real restart/recovery/alert/restore drills pass | Agreed SLO/error-budget observation passes |
+| 2 | Telephony | In/out calls, callbacks, idempotency, scheduling, recording lifecycle | Contract/webhook/regression tests pass | Real staging calls and media WS pass | Carrier reliability/compliance approved |
+| 3 | Dialer | Scheduling, pacing, concurrency, retries, callbacks, DNC/time windows | Unit/integration/load/failure tests pass | Concurrent dialing and crash recovery pass | Capacity target met without duplicate/lost effects |
+| 4 | CRM | Canonical records, connectors, sync, retries, DLQ, reconciliation | Connector contract/integration tests pass | Real CRM test tenant sync passes | Consistency/recovery SLA met |
+| 5 | Billing | Plans, entitlements, metering, invoices, payment state, reconciliation | Metering/idempotency/billing tests pass | Payment/webhook lifecycle passes | Provider and ledger reconcile |
+| 6 | Tenants | Lifecycle, users, RBAC, credentials, limits, offboarding | RBAC/isolation/lifecycle tests pass | Real tenant A/B isolation passes | No cross-tenant access; repeatable lifecycle |
+| 7 | Dashboard | Customer call/campaign/lead/billing/user journeys | Build/component/API/E2E pass | Rendered production-like flows pass | Customer operates agreed workflows without engineering |
+| 8 | Analytics | Canonical metrics, aggregation, dashboards, exports | Metric/reconciliation tests pass | Realistic event stream produces correct metrics | Metrics reconcile to source records |
+| 9 | Compliance | DNC/DND, consent, time windows, retention, PII, audit, deletion | Negative/security/compliance tests pass | Live blocked-call/retention/deletion/audit scenarios pass | Technical controls reviewed and enforced |
+| 10 | Security | Authz, secrets, encryption, rate limits, scanning, audit | Static/security/fuzz tests pass | Deployed attack/control scenarios pass | No unresolved critical/high findings under approved gate |
+| 11 | Scalability | Horizontal workers, backpressure, pools, autoscaling | Load/stress/failure gates pass | Target concurrency and sustained load pass | Capacity + headroom demonstrated |
+| 12 | Multi-GPU | Registration, health, routing, drain, failover, versioning | Scheduler/failover tests pass | Actual GPU loss/drain/failover passes | No single GPU SPOF for agreed target |
+| 13 | Deployment | CI/CD, staging, migration, health gates, rollback | CI/release gates pass | Staging deploy + rollback passes | Repeatable production promotion/rollback |
+| 14 | Data platform | Events, durable records, retention, ETL/reporting, reconciliation | Schema/migration/data-quality tests pass | Backup/restore/failure tests pass | RPO/RTO/data-integrity requirements met |
+| 15 | Model/voice infrastructure | Serving, health, warmup, versioning, capacity, rollback | Adapter/contract/latency/failure tests pass | Live STT/LLM/TTS health/latency/failure pass | Availability/latency/rollback gates met |
+| 16 | Onboarding | Signup to tenant, credentials, test call and launch | API/UI/E2E pass | Test tenant completes journey | No manual server edits for agreed flow |
+| 17 | Support | Cases, incidents, audited support access, SLA state | Authorization/audit/workflow tests pass | Real support workflow passes | Auditable support operation meets SLA |
+| 18 | Cost optimization | Per-call/tenant/GPU/telephony cost attribution | Accounting/reconciliation tests pass | Realistic usage reconciles | Economics/margin controls measurable and enforceable |
+
+If a criterion cannot currently be executed: DEFERRED — RUNTIME EVIDENCE REQUIRED.
+Never lower a requirement because execution is difficult.
+
+## Workstream 1 — objective acceptance gates
+
+| Gate | Implementation | Automated test | Integration test | Runtime verification | Production verification |
+|---|---|---|---|---|---|
+| Liveness/readiness | Separate live and dependency-aware ready endpoints | Route tests prove correct 200/503 behavior | Start BFF/API with real Redis/Postgres | Stop/recover dependency and observe ready transition | Controlled staging incident shows correct traffic gating |
+| Error-rate tracking | BFF/Python counters exposed to Prometheus | Metrics/counter tests pass | Prometheus scrapes targets | Query error ratio after controlled 5xx | Alert threshold observed without noisy paging |
+| Supervision | Bounded restart/backoff/start-limit policies | Unit-file tests pass | Units installed on CPU node | One safe crash recovers; repeated crash hits guard | Crash-loop drill confirms protection |
+| Infra monitoring | CPU/RAM/disk/network/GPU rules | Config/rule validation passes | Exporters scrape | Controlled threshold/target failure fires alert | Observation confirms useful signal |
+| Dependencies | Redis/Postgres/Mongo/Vault/GPU checks where supported | Failure-path tests pass | Real dependency connectivity | Dependency loss causes correct degradation/recovery | Staging incident detected/recovered |
+| Backups | Existing jobs + artifact verification + correct Vault backend | Script/config tests pass | Verification against staging artifacts | Non-destructive restore succeeds | RPO/RTO/integrity demonstrated |
+| Logs/traces | Structured logs, rotation, OTel pipeline | Logger/config tests pass | Collectors receive events | Rotation + trace query verified | Retention supports incident reconstruction |
+| Alerts | Service/error/crash/resource/queue/backup rules | Rule validation passes | Alertmanager receives synthetic alert | Alert fires/routes/resolves | 24h observation shows acceptable noise |
+| Recovery/rollback | Existing scripts + W1 runbooks | Script/config tests pass | Staging rollback/restore | Actual recovery executed | Agreed RTO/RPO met |
+
+**W1 completion rule:** implementation alone never promotes a gate to RUNTIME VERIFIED or PRODUCTION VERIFIED. Missing runtime execution remains **RUNTIME EVIDENCE REQUIRED**.
+
+
+### Current W1 execution state — 2026-09-25T07:51:30Z UTC
+No acceptance gate was promoted by source inspection. The execution environment could not obtain a repository checkout: a fresh Git clone failed with exit 128 because `github.com` could not be resolved. Consequently automated, integration, runtime, and production gates remain unverified. MongoDB also remains an implementation gap: Compose healthchecking exists, but no MongoDB-specific Prometheus exporter/scrape target or MongoDB-specific service-health alert was identified in the inspected monitoring configuration.
+
+
+### MongoDB monitoring remediation
+The MongoDB W1 implementation gate is **VERIFIED BY SOURCE/CONFIGURATION**. Automated execution remains **NOT EXECUTED — ENVIRONMENT BLOCKED**. MongoDB runtime monitoring remains **RUNTIME EVIDENCE REQUIRED**. Alertmanager fire → route → resolve remains **RUNTIME EVIDENCE REQUIRED**.
+
+
+### 2026-09-25 — Jaeger retention enforcement
+The W1 tracing implementation gate now includes an explicit 7-day Jaeger retention requirement. The deployed Jaeger 1.60 all-in-one uses Badger storage and passes `--badger.span-store-ttl=168h0m0s` directly to the Jaeger process. This is the enforceable mechanism for the existing architecture. Automated configuration tests were added but are **NOT EXECUTED — ENVIRONMENT BLOCKED**. Runtime retention verification remains **RUNTIME EVIDENCE REQUIRED**.
+
+
+## Workstream 2 acceptance baseline
+Each gate is independent: Implementation / Automated Testing / Integration Testing / Runtime Verification / Production Verification.
+
+| Area | Implementation | Automated | Integration | Runtime | Production |
+|---|---|---|---|---|---|
+| Provider boundary | IMPLEMENTED | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+| Tenant phone numbers | IMPLEMENTED | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+| Outbound calling | IMPLEMENTED/PARTIAL | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+| Inbound calling | IMPLEMENTED | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+| Webhook security | IMPLEMENTED | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+| Webhook reliability/state | IMPLEMENTED | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+| Timeouts/retries | IMPLEMENTED | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+| Scheduling/timezones | IMPLEMENTED | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+| Recording lifecycle | IMPLEMENTED | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+| Carrier failure handling | IMPLEMENTED | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+| Provider rate limiting | IMPLEMENTED | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+| Tenant isolation | IMPLEMENTED at phone/media boundary; broader flow PARTIAL | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+| Observability | IMPLEMENTED | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+| Billing/CRM event boundary | IMPLEMENTED | NOT EXECUTED — ENVIRONMENT BLOCKED | BLOCKED | RUNTIME EVIDENCE REQUIRED | RUNTIME EVIDENCE REQUIRED |
+
+## Workstream 2 — latest acceptance status
+- **Webhook correlation/state:** IMPLEMENTED; automated/integration/runtime/production verification pending.
+- **Out-of-order provider events:** IMPLEMENTED via canonical transition guard; automated execution pending.
+- **Tenant mismatch rejection:** IMPLEMENTED; automated/integration/runtime/production verification pending.
+- **Expanded call-attempt lifecycle:** IMPLEMENTED via migration 038; migration execution pending in runtime DB.
+- **Tenant-scoped provider CPS guard:** IMPLEMENTED; automated/integration/runtime/production verification pending.
+
+
+## Workstream 2 continuation acceptance update — 2026-09-25
+Recording lifecycle, callback timezone handling, provider failure classification, webhook timeout/retry hardening, bounded telephony observability, and the canonical downstream call-event boundary are IMPLEMENTED. The recording access surface is now also IMPLEMENTED through the authenticated BFF → HMAC internal media-gateway → private object storage boundary. Automated and integration tests remain NOT EXECUTED — ENVIRONMENT BLOCKED; runtime and production gates remain RUNTIME EVIDENCE REQUIRED.
+
+W2 is not promoted to COMPLETE by source inspection or test-file existence.
+
+
+### W2 continuation verification state — 2026-09-25
+Recording lifecycle, callback timezone policy, provider failure classification, webhook hardening, telephony observability, and canonical call-event boundary are **IMPLEMENTED**. Their automated, integration, runtime, and production gates remain **NOT EXECUTED — ENVIRONMENT BLOCKED / RUNTIME EVIDENCE REQUIRED**. No implementation-only result is promoted to a verification gate.
+
+
+### W2 canonical telephony event boundary — 2026-09-25
+The canonical event boundary is now implemented as a PostgreSQL transactional event + outbox contract, with Redis tenant-scoped downstream delivery and a bounded retry/DLQ relay. The contract enforces schema version `1.0`, deterministic event identity, fixed lifecycle event types, tenant identity, safe JSON serialization, and one outbox row per canonical event. Delivery is at-least-once; downstream consumers must deduplicate by `event_id`. Billing and CRM business logic are explicitly excluded.
+
+New implementation: `telephony_event_boundary.js`, migration `042_telephony_event_outbox.sql` / Alembic `0042_telephony_event_outbox.py`, and `scripts/telephony/telephony_event_relay.js`.
+
+Automated, integration, Redis/PostgreSQL runtime, DLQ, and downstream-unavailable verification remain NOT EXECUTED — ENVIRONMENT BLOCKED.
+
+
+### W2 implementation completion assessment — 2026-09-25
+
+The previously identified W2 implementation gap — the canonical downstream telephony event boundary — is now closed by the PostgreSQL event/outbox + Redis relay/DLQ implementation. No Billing or CRM business logic was introduced.
+
+**Implementation gate:** IMPLEMENTED for the requested W2 scope.
+
+**Automated testing:** NOT EXECUTED — ENVIRONMENT BLOCKED.
+
+**Integration/runtime/production:** RUNTIME EVIDENCE REQUIRED.
+
+The branch must not be promoted to VERIFIED until applicable PostgreSQL, Redis, S3, Prometheus, Twilio and Media Streams evidence is actually executed and recorded.
+
+
+### W2 canonical event delivery boundary — 2026-09-25
+The canonical telephony event boundary is implemented using the existing repository's documented Redis/PostgreSQL primitives rather than introducing a second event framework. Repository inspection did not find a separately addressable `src/libs/event_bus` or `src/services/event_bus` implementation on the target branch; the W2 boundary therefore uses PostgreSQL as the durable source of truth and the existing Redis dependency as the downstream transport.
+
+Contract: deterministic SHA-256 event identity, fixed schema version `1.0`, fixed lifecycle event types, tenant identity, safe JSON serialization, transactional event+outbox persistence, tenant-scoped Redis delivery, bounded exponential retry, stale-claim recovery, and durable DLQ. Downstream delivery is at-least-once; consumers must deduplicate by `event_id`. Billing and CRM business logic are excluded.
+
+Automated, integration, runtime, and production acceptance gates remain pending.
+
+
+## W2 FINAL STATIC GAP AUDIT — 2026-09-25
+
+Inspected current branch `claude/ssh-gpu-cpu-servers-y99fib` @ `6e42dce528b84728613c06e082b6983baaed2a52`. This audit separates source-level implementation from execution/runtime evidence.
+
+### W2 implementation classification
+
+- **IMPLEMENTED — awaiting verification:** phone routing, outbound creation, caller ID, /voice, WSS, admission, webhook authentication, CallSID correlation, state transitions, idempotency, duplicate/out-of-order handling, callback lifecycle, recording lifecycle/storage/retention, timezone policy, provider failure classification, bounded retries, webhook timeout bounds, CPS limiter, carrier-failure actions, tenant isolation, canonical events, PostgreSQL outbox, relay, backoff, DLQ, billing/CRM boundary contract, dialer boundary, configuration/secrets, documentation.
+- **PARTIALLY IMPLEMENTED — code work remains:** telephony metrics call-site coverage; live OTel tracing injection; W2 CPS integration/concurrency test coverage.
+- **MIGRATION IMPLEMENTATION GAP:** Alembic revision IDs `0037` and `0038` are duplicated by unrelated migration files, making the Alembic graph ambiguous even though raw SQL migrations 037–042 exist.
+
+No runtime blocker is being counted as an implementation gap.
+
+**Final W2 implementation status:** **WORKSTREAM 2 PARTIALLY IMPLEMENTED — REMAINING IMPLEMENTATION WORK**.
+
+W3/W4/W5 and Level-3 remain out of scope.
+
+
+## 2026-09-25 — W2 four-gap implementation closure
+
+Fresh implementation pass limited to the four genuine gaps from the final static audit. No W3/W4/W5/Level-3 work was started.
+
+### Implementation status
+- Alembic revision collisions — FIXED. Pre-existing 0037 compliance and 0038 CRM revisions are preserved. W2 Alembic revisions now use 0043 through 0048, chained from 0038 through all six W2 migrations. No duplicate revision ID remains and no unrelated migration functionality was deleted.
+- OTel live W2 composition — FIXED. The CPU composition root now builds the existing OTelTracer from the configured OTLP endpoint and injects it into SharedCallDependencies.tracer. Existing W2 media spans are retained; a call-termination span was added.
+- Telemetry call sites — FIXED. Actual media pipeline failures, actual STT/TTS retry attempts, callback processing, CPS-limit rejection, and outbound retry execution now have bounded metric increments. No CallSID, phone number, raw error text, or other unbounded identifier is used as a metric label.
+- CPS Redis integration test — FIXED. A real-ioredis integration test now covers N/N+1 allowance, concurrent acquisition, tenant isolation, epoch-second rollover, and Redis failure/fail-closed behavior. The test requires a real Redis service.
+
+### Verification status
+- Static/source checks: IMPLEMENTATION EVIDENCE PRESENT; AUTOMATED EXECUTION NOT EXECUTED.
+- Migration application/rollback: NOT EXECUTED — POSTGRESQL RUNTIME UNAVAILABLE.
+- OTel runtime export/scrape: NOT EXECUTED — OTEL/PROMETHEUS RUNTIME UNAVAILABLE.
+- Telephony/Twilio/Media Streams: NOT EXECUTED — REAL TELEPHONY RUNTIME UNAVAILABLE.
+- CPS Redis integration: NOT EXECUTED — REDIS RUNTIME UNAVAILABLE.
+- S3 recording runtime: NOT EXECUTED — S3 RUNTIME UNAVAILABLE.
+
+CURRENT W2 STATUS: WORKSTREAM 2 IMPLEMENTATION COMPLETE — RUNTIME VERIFICATION REQUIRED.

@@ -200,7 +200,7 @@ def test_disconnect_intent_gives_close(engine: StrategyEngine) -> None:
 def test_identity_verify_intent_gives_verify(engine: StrategyEngine) -> None:
     result = engine.select(
         primary_intent=IntentLabel.IDENTITY_VERIFY,
-        conversation_state="VERIFICATION",
+        conversation_state="IDENTITY_VERIFICATION",
         identity_verified=False,
     )
     assert result.action == StrategyAction.VERIFY

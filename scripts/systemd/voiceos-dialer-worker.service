@@ -1,0 +1,23 @@
+[Unit]
+Description=VoiceOS Dialer Worker
+Wants=network-online.target
+After=network-online.target postgresql.service redis-server.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/voiceos/app
+EnvironmentFile=/opt/voiceos/.env
+Environment=DIALER_MODE=production
+Environment=DIALER_METRICS_HOST=0.0.0.0
+Environment=DIALER_METRICS_PORT=9101
+ExecStart=/usr/bin/node dialer_worker.js
+Restart=on-failure
+StartLimitIntervalSec=300
+StartLimitBurst=5
+RestartSec=5
+TimeoutStopSec=130
+StandardOutput=append:/opt/voiceos/logs/dialer-worker.log
+StandardError=append:/opt/voiceos/logs/dialer-worker.log
+
+[Install]
+WantedBy=multi-user.target

@@ -60,3 +60,93 @@ groups:
         annotations:
           summary: "DLQ depth critical for {{ $labels.queue_name }} ({{ $value }} entries)"
           description: "{{ $labels.queue_name }} has exceeded 100 entries -- likely a systemic downstream failure, not transient retries."
+
+      - alert: HighTurnLatency
+        expr: histogram_quantile(0.95, sum by (le, tenant_id) (rate(voiceos_turn_latency_ms_bucket[5m]))) > 4000
+        for: 5m
+        labels:
+          severity: warning
+          route: ticket
+          team: voice
+        annotations:
+          summary: "p95 turn latency > 4000 ms for tenant {{ $labels.tenant_id }}"
+          description: >
+            95th-percentile end-to-end turn latency (VADSpeechEnd → first TTS frame)
+            has exceeded 4 seconds over the past 5 minutes. Customers experience
+            noticeable dead air. Check STT / LLM / TTS p95 histograms individually
+            to isolate the bottleneck. GPU node may be saturated or cold.
+          runbook: "infra/runbooks/high-turn-latency.md"
+
+      - alert: HighTurnLatencyCritical
+        expr: histogram_quantile(0.95, sum by (le, tenant_id) (rate(voiceos_turn_latency_ms_bucket[5m]))) > 7000
+        for: 3m
+        labels:
+          severity: critical
+          route: page
+          team: voice
+        annotations:
+          summary: "p95 turn latency > 7000 ms — callers hearing dead air"
+          description: >
+            Turn latency p95 has exceeded 7 seconds — callers are hanging up.
+            This is the architecture's hard SLA boundary (V1 Ch23 §23.5).
+            Page on-call; consider routing to a fallback TTS or reducing LLM max_tokens.
+          runbook: "infra/runbooks/high-turn-latency.md"
+
+      - alert: PostgresErrors
+        expr: rate(voiceos_bff_pg_errors_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          route: ticket
+          team: platform
+        annotations:
+          summary: "PostgreSQL error rate elevated ({{ $value | humanize }}/s)"
+          description: >
+            voiceos_bff_pg_errors_total is incrementing at more than 0.05/s.
+            Possible causes: connection pool exhaustion, slow query blocking the
+            pool, OOMKilled Postgres pod, or failed migration. Check BFF logs for
+            pg.idle_client_error events.
+          runbook: "infra/runbooks/postgres-errors.md"
+
+      - alert: PostgresErrorsCritical
+        expr: rate(voiceos_bff_pg_errors_total[5m]) > 0.5
+        for: 2m
+        labels:
+          severity: critical
+          route: page
+          team: platform
+        annotations:
+          summary: "Critical Postgres error rate > 0.5/s — BFF degraded"
+          description: >
+            PostgreSQL errors are occurring at > 0.5/s. At this rate campaign
+            creation, lead uploads, and session auth are all failing. Page on-call.
+          runbook: "infra/runbooks/postgres-errors.md"
+
+      - alert: RedisErrors
+        expr: rate(voiceos_bff_redis_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          route: ticket
+          team: platform
+        annotations:
+          summary: "Redis error rate elevated ({{ $value | humanize }}/s)"
+          description: >
+            voiceos_bff_redis_errors_total is incrementing at more than 0.1/s.
+            The dialer queue and session-token store are both Redis-backed; errors
+            here cause calls to fail silently. Check Redis pod health and memory.
+          runbook: "infra/runbooks/redis-errors.md"
+
+      - alert: RedisErrorsCritical
+        expr: rate(voiceos_bff_redis_errors_total[5m]) > 1.0
+        for: 2m
+        labels:
+          severity: critical
+          route: page
+          team: platform
+        annotations:
+          summary: "Critical Redis error rate > 1/s — dialer queue unreachable"
+          description: >
+            Redis is effectively unreachable from the BFF. Outbound calls cannot
+            be queued or dequeued. Page on-call immediately.
+          runbook: "infra/runbooks/redis-errors.md"

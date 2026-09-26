@@ -39,6 +39,17 @@ class PlaybackScheduler:
         self._queue: deque[AudioClause] = deque()
         self._barge_in_event: asyncio.Event = asyncio.Event()
         self._clause_available: asyncio.Event = asyncio.Event()
+        # Phase E — playback invalidation generation. Monotonically
+        # increments on every flush() (i.e. every barge-in). Producers
+        # snapshot this at the start of a synthesis scope and stamp each
+        # AudioClause with it; enqueue() rejects anything whose generation
+        # does not equal the current generation. This is the fail-closed
+        # channel that guarantees a coroutine from gen N whose await
+        # resumes AFTER a barge-in + clear_barge_in() cannot inject stale
+        # audio into gen N+1's queue.
+        self._generation: int = 0
+        # Uninterruptible greeting protection API.
+        self._protected_generation: int | None = None
         # Sprint-016 (V3 Ch10 §10.17): expose RI-3 max_depth + live depth to
         # Prometheus so hot-path queue saturation is visible on dashboards.
         record_queue_max_size(_QUEUE_NAME, max_depth)
@@ -52,15 +63,34 @@ class PlaybackScheduler:
 
         Raises:
             InvariantViolationError: If queue depth exceeds max_depth (RI-3).
+
+        Phase E — fail-closed generation check: a clause whose
+        ``generation`` does not equal ``self._generation`` is DROPPED with
+        a warning and never enters the queue. This handles the delayed
+        producer race where a coroutine synthesised under gen N resumes
+        AFTER flush() has advanced the generation to N+1 (and after the
+        barge-in event may have been cleared by the next turn starting).
+        We do NOT rewrite the clause's generation to the current value —
+        that would silently mask the race.
         """
+        if clause.generation != self._generation:
+            logger.warning(
+                "PlaybackScheduler: dropping stale clause idx=%d "
+                "(clause_gen=%d, current_gen=%d) — post-barge-in race",
+                clause.clause_index,
+                clause.generation,
+                self._generation,
+            )
+            return
         assert_ri3_bounded_buffer(len(self._queue), self._max_depth, _QUEUE_NAME)
         self._queue.append(clause)
         record_queue_depth(_QUEUE_NAME, len(self._queue))
         self._clause_available.set()
         logger.debug(
-            "PlaybackScheduler: enqueued clause %d (depth=%d)",
+            "PlaybackScheduler: enqueued clause %d (depth=%d, gen=%d)",
             clause.clause_index,
             len(self._queue),
+            self._generation,
         )
 
     async def dequeue(self) -> AudioClause:
@@ -76,31 +106,117 @@ class PlaybackScheduler:
         record_queue_depth(_QUEUE_NAME, len(self._queue))
         return clause
 
+    def dequeue_nowait(self) -> AudioClause | None:
+        """Pop the next AudioClause if one is queued, else return None immediately.
+
+        Unlike dequeue(), never awaits — for callers draining "whatever this
+        turn actually enqueued" (e.g. the WS entrypoint sending clauses it
+        already received directly from ConversationEngine's return value)
+        where the caller must not block if a test double/mocked engine
+        returned clauses without ever calling enqueue() on this scheduler.
+        """
+        if not self._queue:
+            return None
+        clause = self._queue.popleft()
+        record_queue_depth(_QUEUE_NAME, len(self._queue))
+        return clause
+
     async def flush(self) -> list[AudioClause]:
         """Flush all queued clauses and signal barge-in.
 
         Called when the customer interrupts the agent response. Returns
         all previously queued clauses (for logging / replay purposes).
 
+        Phase E — advances ``self._generation`` before anything else so
+        every in-flight producer/consumer that snapshotted the previous
+        generation is now definitively stale. This must happen BEFORE
+        ``_barge_in_event.set()`` so a producer that races between the
+        two ordering points (checks event → not yet set → then enqueues)
+        still fails the generation check.
+
         Returns:
             List of clauses that were flushed.
         """
+        if (
+            self._protected_generation is not None
+            and self._generation == self._protected_generation
+        ):
+            logger.info(
+                "barge-in suppressed (greeting protection active) gen=%d",
+                self._generation,
+            )
+            return []
+        # Option-1 guard: if nothing is queued there is no agent audio to
+        # cancel. Skip the generation bump and barge_in_event.set() so a
+        # spurious speculative-fire (STT stable-suffix triggered while the
+        # agent was silent) doesn't sabotage the next reply.
+        if not self._queue:
+            logger.info(
+                'PlaybackScheduler: flush skipped — queue empty, gen unchanged=%d',
+                self._generation,
+            )
+            return []
+        self._generation += 1
         flushed = list(self._queue)
         self._queue.clear()
         record_queue_depth(_QUEUE_NAME, 0)
         self._clause_available.clear()
         self._barge_in_event.set()
-        logger.info("PlaybackScheduler: flush on barge-in — discarded %d clauses", len(flushed))
+        logger.info(
+            "PlaybackScheduler: flush on barge-in — discarded %d clauses, "
+            "generation now %d",
+            len(flushed),
+            self._generation,
+        )
         return flushed
 
     def clear_barge_in(self) -> None:
         """Reset the barge-in signal for the next turn."""
         self._barge_in_event.clear()
 
+    def set_protected(self, generation_id: int) -> None:
+        """Mark generation_id as uninterruptible; flush() is suppressed while active."""
+        self._protected_generation = generation_id
+
+    def clear_protection(self) -> None:
+        """Clear generation protection; restore normal barge-in behavior."""
+        self._protected_generation = None
+
+    def preempt_current_clause(self) -> list:
+        """Drop all pending queued clauses WITHOUT advancing the generation counter.
+
+        Used by the streaming-STT orchestrator when it cancels the LLM mid-generation
+        and the downstream TTS clauses queued from the cancelled turn must not play,
+        but the SAME generation ID is reused for the next (corrected) LLM run — so
+        we must not increment generation the way flush() does.
+        """
+        dropped = list(self._queue)
+        self._queue.clear()
+        record_queue_depth(_QUEUE_NAME, 0)
+        self._clause_available.clear()
+        logger.info(
+            'PlaybackScheduler: preempt_current_clause dropped %d pending clauses '
+            '(gen unchanged=%d)', len(dropped), self._generation,
+        )
+        return dropped
+
     @property
     def barge_in_event(self) -> asyncio.Event:
         """The asyncio.Event set when a barge-in flush occurs."""
         return self._barge_in_event
+
+    @property
+    def generation(self) -> int:
+        """Current playback invalidation generation (Phase E).
+
+        Producers snapshot this at the start of their synthesis scope and
+        stamp AudioClause.generation with it. Consumers compare against
+        this value at every enqueue/release/send boundary and drop any
+        clause whose generation is older. The counter increments in
+        ``flush()`` only — it is monotonic for the lifetime of the
+        scheduler instance and is NOT reset by ``clear_barge_in()``.
+        """
+        return self._generation
 
     def get_clauses(self) -> list[AudioClause]:
         """Return all queued clauses without removing them (for testing)."""

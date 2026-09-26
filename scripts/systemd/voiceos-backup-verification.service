@@ -1,0 +1,13 @@
+[Unit]
+Description=VoiceOS backup artifact verification
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=voiceos
+EnvironmentFile=/etc/voiceos/cpu.env
+ExecStart=/bin/bash /opt/voiceos/scripts/backup/verify_backup_artifacts.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=voiceos-backup-verification

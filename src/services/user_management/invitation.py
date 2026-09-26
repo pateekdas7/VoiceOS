@@ -39,6 +39,17 @@ class InvitationExpiredError(Exception):
     """Raised when a PENDING invitation's ``expires_at`` has already passed."""
 
 
+class EmailAlreadyRegisteredError(Exception):
+    """Raised when a second PENDING invitation for an already-activated email is redeemed.
+
+    Two invitations can be issued for the same (tenant_id, email) before
+    either is redeemed (invite() has no such check) -- without this, the
+    second activate() call reached the ``uq_user_tenant_email`` unique
+    constraint directly, surfacing as an unhandled 500 instead of a clean,
+    catchable error (found live: a supervisor re-inviting an address that
+    had already accepted crashed the callback)."""
+
+
 @dataclass(frozen=True)
 class IssuedInvitation:
     """Returned once at issuance — ``raw_token`` is never persisted or logged."""
@@ -96,6 +107,9 @@ class InvitationService:
             InvitationNotFoundError: no invitation matches this token.
             InvitationExpiredError: the invitation's TTL has passed.
             InvitationNotPendingError: already accepted or revoked.
+            EmailAlreadyRegisteredError: this tenant already has an active
+                user at this email (e.g. a second invitation for the same
+                address was issued and is being redeemed after the first).
         """
         invitation = self._invitations.get_by_token_hash(_hash_token(raw_token))
         if invitation is None:
@@ -106,6 +120,8 @@ class InvitationService:
         if invitation.expires_at < now:
             self._invitations.mark_status(invitation.invitation_id, "EXPIRED")
             raise InvitationExpiredError("invitation has expired")
+        if self._users.find_user_by_email(invitation.tenant_id, invitation.email) is not None:
+            raise EmailAlreadyRegisteredError(f"{invitation.email} is already registered for this tenant")
 
         user = User(
             user_id=str(uuid.uuid4()),

@@ -1,0 +1,20 @@
+[Unit]
+Description=VoiceOS BFF (Node.js)
+Wants=network-online.target
+After=network-online.target postgresql.service redis-server.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/voiceos/app
+EnvironmentFile=/opt/voiceos/.env
+ExecStart=/usr/bin/node bff.js
+Restart=on-failure
+StartLimitIntervalSec=300
+StartLimitBurst=5
+RestartSec=5
+TimeoutStopSec=30
+StandardOutput=append:/opt/voiceos/logs/bff.log
+StandardError=append:/opt/voiceos/logs/bff.log
+
+[Install]
+WantedBy=multi-user.target

@@ -77,6 +77,10 @@ class TenantService:
     def get_by_slug(self, slug: str) -> Tenant | None:
         return self._repo.get_by_slug(slug)
 
+    def list_all(self) -> tuple[Tenant, ...]:
+        """Every tenant, platform-wide (ADR-005 Sec 6.1 -- Admin Dashboard "Clients")."""
+        return self._repo.list_all()
+
     # ------------------------------------------------------------------
     # Lifecycle transitions
     # ------------------------------------------------------------------

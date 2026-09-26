@@ -15,6 +15,7 @@ Architecture: V1 Ch13 (LLM Runtime); V7 Ch6 (GPU fleet).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections.abc import AsyncIterator, Mapping
@@ -54,6 +55,7 @@ class vLLMAdapter:  # noqa: N801
         top_p: float = 0.9,
         timeout: float = 60.0,
         breaker: CircuitBreaker | None = None,
+        gpu_secret: str | None = None,
     ) -> None:
         self._gpu_scheduler = gpu_scheduler
         self._prompt_contract = prompt_contract
@@ -67,21 +69,31 @@ class vLLMAdapter:  # noqa: N801
         # Optional CircuitBreaker guarding the vLLM HTTP connection (Sprint-016,
         # V3 Ch14 §14.2). None (default) preserves pre-Sprint-016 behavior.
         self._breaker = breaker
+        # Shared GPU-node secret sent as X-GPU-Secret header (Phase 9a).
+        self._gpu_secret = gpu_secret
 
     async def generate_stream(
         self,
         prompt: str,
         response_plan: ResponsePlan,
         max_tokens: int,
+        cancel_event: asyncio.Event | None = None,
     ) -> AsyncIterator[TokenChunk]:
-        """Stream tokens from vLLM, enforcing RI-7 and GPU Scheduler."""
-        return self._generate_gen(prompt, response_plan, max_tokens)
+        """Stream tokens from vLLM, enforcing RI-7 and GPU Scheduler.
+
+        When cancel_event is set mid-stream, the SSE loop exits at the next
+        yield boundary and the HTTP response is closed cleanly — vLLM's
+        server-side aborts the generation on client disconnect, so no
+        server-side cancel API is required.
+        """
+        return self._generate_gen(prompt, response_plan, max_tokens, cancel_event)
 
     async def _generate_gen(
         self,
         prompt: str,
         response_plan: ResponsePlan,
         max_tokens: int,
+        cancel_event: asyncio.Event | None = None,
     ) -> AsyncIterator[TokenChunk]:
         from src.services.llm_runtime.metrics import (
             llm_completion_latency_ms,
@@ -111,7 +123,7 @@ class vLLMAdapter:  # noqa: N801
             raise RuntimeError(f"GPU Scheduler rejected VRAM for {self._model_name} ({self._vram_mb} MB)")
 
         try:
-            async for chunk in self._stream_vllm(prompt, max_tokens, llm_ttft_ms, llm_completion_latency_ms):
+            async for chunk in self._stream_vllm(prompt, max_tokens, llm_ttft_ms, llm_completion_latency_ms, cancel_event):
                 yield chunk
             llm_requests_total.labels(status="success").inc()
         except Exception:
@@ -126,6 +138,7 @@ class vLLMAdapter:  # noqa: N801
         max_tokens: int,
         ttft_histogram: object,
         completion_histogram: object,
+        cancel_event: asyncio.Event | None = None,
     ) -> AsyncIterator[TokenChunk]:
         import httpx
 
@@ -142,6 +155,7 @@ class vLLMAdapter:  # noqa: N801
         start = time.monotonic()
         first_token = True
 
+        _gpu_headers: dict[str, str] | None = {"X-GPU-Secret": self._gpu_secret} if self._gpu_secret else None
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             # The circuit breaker guards only connection establishment (V3 Ch14
             # §14.9) — once the response stream is open, it flows unguarded so
@@ -149,11 +163,16 @@ class vLLMAdapter:  # noqa: N801
             # preserved; a breaker wrapping the entire generator would force
             # buffering the whole response, which is not acceptable here.
             if self._breaker is not None:
-                resp = await self._breaker.call(self._open_stream, client, url, payload)
+                resp = await self._breaker.call(self._open_stream, client, url, payload, _gpu_headers)
             else:
-                resp = await self._open_stream(client, url, payload)
+                resp = await self._open_stream(client, url, payload, _gpu_headers)
             try:
                 async for line in resp.aiter_lines():
+                    # Cancel-token check BEFORE processing each SSE line —
+                    # if the orchestrator flipped the event while we were
+                    # blocked awaiting the next chunk, bail out immediately.
+                    if cancel_event is not None and cancel_event.is_set():
+                        break
                     if not line.startswith("data: "):
                         continue
                     data = line[6:].strip()
@@ -181,7 +200,17 @@ class vLLMAdapter:  # noqa: N801
                             token_id=0,
                             finish_reason=finish_reason,
                         )
+                        # Cancel-token check AFTER yielding — if the
+                        # consumer set the event synchronously during the
+                        # yield (e.g. downstream noticed the prefix
+                        # extended materially), stop before draining the
+                        # next SSE line.
+                        if cancel_event is not None and cancel_event.is_set():
+                            break
             finally:
+                # aclose() ends the HTTP stream cleanly; vLLM's server
+                # aborts the in-flight generation on client disconnect, so
+                # no explicit server-side cancel RPC is required.
                 await resp.aclose()
 
         elapsed = (time.monotonic() - start) * 1000
@@ -189,14 +218,21 @@ class vLLMAdapter:  # noqa: N801
             completion_histogram.observe(elapsed)
 
     @staticmethod
-    async def _open_stream(client: httpx.AsyncClient, url: str, payload: Mapping[str, object]) -> httpx.Response:
+    async def _open_stream(
+        client: httpx.AsyncClient,
+        url: str,
+        payload: Mapping[str, object],
+        headers: Mapping[str, str] | None = None,
+    ) -> httpx.Response:
         """Open the streaming POST to vLLM and validate the response status.
 
         This is the unit the circuit breaker wraps: a connection failure or
         non-2xx status counts as a breaker failure, while the subsequent
         token stream itself is not breaker-guarded (see :meth:`_stream_vllm`).
+        The optional ``headers`` argument carries the X-GPU-Secret auth header
+        (Phase 9a) when a shared GPU secret is configured.
         """
-        request = client.build_request("POST", url, json=payload)
+        request = client.build_request("POST", url, json=payload, headers=dict(headers) if headers else {})
         response = await client.send(request, stream=True)
         response.raise_for_status()
         return response

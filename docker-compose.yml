@@ -93,6 +93,21 @@ services:
       start_period: 20s
 
   # ---------------------------------------------------------------------------
+  # MongoDB exporter — database-level health/diagnostic metrics
+  mongodb-exporter:
+    image: percona/mongodb_exporter:0.53
+    container_name: voiceos-mongodb-exporter
+    restart: unless-stopped
+    command:
+      - "--mongodb.uri=mongodb://mongodb:27017/?directConnection=true"
+      - "--collect-all"
+      - "--web.listen-address=:9216"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    ports:
+      - "9216:9216"
+
   # Prometheus — metrics collection stub
   # ---------------------------------------------------------------------------
   prometheus:

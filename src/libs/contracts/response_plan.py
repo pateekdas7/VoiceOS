@@ -12,7 +12,7 @@ Architecture: V1 Ch10, V1 Appendix A; V2 Ch15; V6 AR-4; DocSuite-02 A.3;
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -224,6 +224,18 @@ class NegotiationEnvelope(BaseModel):
     proposed_amount_minor: int | None = None
     """Initial offer amount in minor units. Must be within [floor_minor, ceiling_minor]."""
 
+    proposed_date: date | None = None
+    """Proposed commitment/payment date for ACCEPT and PROPOSE_PTP moves. None for
+    moves that don't finalize a specific date (OFFER/COUNTER/DECLINE/HOLD)."""
+
+    is_finalized_commitment: bool = False
+    """True only for the engine-level NegotiationMove.ACCEPT/PROPOSE_PTP moves —
+    a customer commitment ready for Collections persistence. Deliberately NOT
+    derived from move_type: NegotiationMoveType collapses ACCEPT/COUNTER/OFFER/
+    DECLINE into overlapping contract categories (e.g. both HOLD and
+    PROPOSE_PTP map to CALLBACK_SCHEDULE), so move_type alone cannot
+    distinguish a finalized commitment from an in-progress negotiation move."""
+
 
 class DeliverySpec(BaseModel):
     """How the response should be delivered: language, voice, pacing.
@@ -417,3 +429,8 @@ class ResponsePlan(BaseModel):
 
     must_not_say: tuple[MustNotSayItem, ...] = ()
     """Prohibited phrases/topics injected by the Policy Engine (AR-7)."""
+
+    sales_state: dict | None = None
+    """Sales Intelligence Layer state for this turn (Phase 2, additive).
+    Serialized SalesState dict; None when sales layer is not wired.
+    Downstream: PromptBuilder injects this into the LLM prompt."""

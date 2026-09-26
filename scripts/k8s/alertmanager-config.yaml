@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config-template
+  namespace: voiceos-ops
+data:
+  alertmanager.yml: |
+    # VoiceOS v2 -- Alertmanager routing configuration.
+    # All alerts are forwarded to the System X web_api webhook for autonomous
+    # incident handling.  External receivers (PagerDuty, Slack, JIRA) are
+    # added here once credentials are provisioned.
+
+    global:
+      resolve_timeout: 5m
+
+    route:
+      receiver: system-x
+      group_by:
+        - alertname
+        - service
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      routes:
+        - matchers:
+            - severity=critical
+          receiver: system-x
+          continue: false
+          group_wait: 10s
+          repeat_interval: 15m
+        - matchers:
+            - severity=warning
+          receiver: system-x
+          continue: false
+          repeat_interval: 12h
+
+    inhibit_rules:
+      - source_matchers:
+          - severity=critical
+        target_matchers:
+          - severity=warning
+        equal:
+          - alertname
+          - service
+
+    receivers:
+      - name: system-x
+        webhook_configs:
+          - url: http://10.0.2.2:8001/webhooks/alertmanager
+            send_resolved: true

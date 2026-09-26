@@ -75,6 +75,19 @@ class TenantRepository(BaseRepository):
         row = cur.fetchone()
         return self._hydrate(row) if row is not None else None
 
+    def list_all(self) -> tuple[Tenant, ...]:
+        """Every tenant, platform-wide (ADR-005 Sec 6.1 -- Admin Dashboard "Clients").
+
+        Unscoped by design, same rationale as this class's own docstring:
+        ``tenants`` is the isolation root, not a tenant-owned resource, so
+        "list every tenant" is inherently a platform-level query, not a
+        violation of AR-8 tenant isolation (which governs resources *within*
+        a tenant).
+        """
+        cur = self._execute(f"SELECT {', '.join(_COLUMNS)} FROM {_TABLE} ORDER BY created_at")
+        rows = cur.fetchall()
+        return tuple(self._hydrate(row) for row in rows)
+
     def update_status(
         self,
         tenant_id: TenantId,

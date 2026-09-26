@@ -5,12 +5,33 @@ Uses httpx streaming client to receive 85.33ms PCM chunks as they are decoded
 server-side, yielding AudioClause objects as each chunk arrives.
 
 Streaming design (ADR-001):
-  The server returns Transfer-Encoding: chunked with one float32 LE PCM chunk
-  per SNAC super-frame (85.33ms). The adapter reads chunks via httpx aiter_bytes()
-  and yields an AudioClause per chunk. A look-ahead buffer ensures the final chunk
-  in the final clause is marked is_final=True.
+  The server returns Transfer-Encoding: chunked with one PCM16LE chunk per
+  SNAC super-frame (85.33ms). The adapter reads chunks via httpx aiter_bytes()
+  and yields an AudioClause per chunk. A look-ahead buffer ensures the final
+  chunk in the final clause is marked is_final=True.
 
-VRAM: Requests 2,048 MB from GPU Scheduler before inference.
+  Phase E correction: earlier revisions of this docstring described the
+  wire payload as "float32 LE PCM". The rest of the pipeline
+  (``AudioOutput.convert`` uses ``audioop.ratecv(pcm, 2, 1, ...)``, i.e. 2
+  bytes per sample) has always treated it as 16-bit — that is the real
+  wire format. ``StartupBufferGate._DEFAULT_BYTES_PER_SAMPLE`` was
+  corrected from 4 to 2 to match, so buffered-mode duration accounting
+  no longer half-counts the audio.
+
+Barge-in / generation cancellation (Phase E):
+  This adapter has no direct knowledge of the playback generation. The
+  cancellation channel is the pipeline's async iteration: when
+  ``TrueStreamingPipeline`` detects a generation advance or barge-in it
+  breaks out of ``async for audio_clause in clause_stream``. That
+  triggers the ``async for raw_chunk in resp.aiter_bytes()`` generator
+  in ``_stream_clause`` to unwind, which runs the
+  ``finally: await resp.aclose()`` block and closes the underlying HTTP
+  connection. GPU-side generation stops once the socket read side stops
+  draining chunks. In practice this happens within one super-frame
+  (~85 ms) — well inside a human perception window and consistent with
+  "stop producing stale generation audio as soon as practical".
+
+VRAM: Requests 7,974 MB from GPU Scheduler before inference (Veena 3B BF16 + SNAC measured footprint).
 Model: maya-research/Veena (3B params, BF16, SNAC codec, 24 kHz) — production model retained.
 
 Architecture: V1 Ch15-17 (Speech Rendering / TTS); V7 Ch6 (GPU fleet); ADR-001.
@@ -18,6 +39,7 @@ Architecture: V1 Ch15-17 (Speech Rendering / TTS); V7 Ch6 (GPU fleet); ADR-001.
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import AsyncIterator, Mapping
 from typing import TYPE_CHECKING
@@ -26,13 +48,22 @@ from src.libs.circuit_breaker.breaker import CircuitBreaker
 from src.libs.contracts.streaming import AudioClause, VoiceConfig
 from src.services.gpu_scheduler.admission import AdmissionDecision
 from src.services.gpu_scheduler.scheduler import GPUScheduler
-from src.services.tts.clause_splitter import ClauseSplitter
 
 if TYPE_CHECKING:
     import httpx
 
+logger = logging.getLogger(__name__)
+
+
+class TTSFailureError(RuntimeError):
+    """Raised when TTS connection fails after the retry attempt (Phase 9d).
+
+    Caught by CallOrchestrator._run_turns() to initiate a graceful hangup —
+    the call cannot continue without audio synthesis capability.
+    """
+
 _VEENA_MODEL_NAME = "veena"
-_VEENA_VRAM_MB = 2048
+_VEENA_VRAM_MB = 7974  # measured: Veena 3B BF16 + SNAC 24kHz = 7,974 MB actual footprint
 _DEFAULT_BASE_URL = "http://localhost:8200"
 _SAMPLE_RATE = 24000
 
@@ -47,11 +78,13 @@ class VeenaAdapter:
         self,
         gpu_scheduler: GPUScheduler,
         base_url: str = _DEFAULT_BASE_URL,
-        speaker: str = "kavya",
+        speaker: str = "maitri",
         vram_mb: int = _VEENA_VRAM_MB,
         model_name: str = _VEENA_MODEL_NAME,
         timeout: float = 60.0,
         breaker: CircuitBreaker | None = None,
+        gpu_secret: str | None = None,
+        tts_retry_wait_s: float = 2.0,
     ) -> None:
         self._gpu_scheduler = gpu_scheduler
         self._base_url = base_url.rstrip("/")
@@ -62,6 +95,10 @@ class VeenaAdapter:
         # Optional CircuitBreaker guarding the Veena HTTP connection (Sprint-016,
         # V3 Ch14 §14.2). None (default) preserves pre-Sprint-016 behavior.
         self._breaker = breaker
+        # Shared GPU-node secret sent as X-GPU-Secret header (Phase 9a).
+        self._gpu_secret = gpu_secret
+        # Seconds to wait between first failure and retry (Phase 9d).
+        self._tts_retry_wait_s = tts_retry_wait_s
 
     async def synthesize_stream(
         self,
@@ -113,45 +150,32 @@ class VeenaAdapter:
             tts_requests_total.labels(status="rejected").inc()
             raise RuntimeError(f"GPU Scheduler rejected VRAM for {self._model_name} ({self._vram_mb} MB)")
 
-        splitter = ClauseSplitter()
         start = time.monotonic()
         first_yielded = False
 
-        # Pipeline: start TTS on clause N while LLM still generates clause N+1.
-        # pending_text holds the most-recently-completed clause waiting for TTS.
-        # We synthesize it only when the next clause arrives (so we know it is
-        # not the final clause) or when the stream ends (so we can mark it final).
-        pending_text: str | None = None
-        clause_idx = 0
-
-        async def _yield_clause(text: str, is_final: bool) -> AsyncIterator[AudioClause]:
-            nonlocal first_yielded, clause_idx
-            async for audio_clause in self._stream_clause(text, voice_config, clause_idx, is_final):
-                if not first_yielded:
-                    tts_first_clause_latency_ms.observe((time.monotonic() - start) * 1000)
-                    first_yielded = True
-                tts_clauses_total.inc()
-                yield audio_clause
-            clause_idx += 1
-
+        # Phase C (Sprint-030): the adapter no longer splits text. Sentence
+        # segmentation is performed by the single authoritative ClauseSplitter
+        # in TrueStreamingPipeline. The adapter concatenates all incoming
+        # text_chunks into one clause and issues one Veena request.
         try:
+            parts: list[str] = []
             async for chunk in text_chunks:
-                for clause_text in splitter.feed(chunk):
-                    if pending_text is not None:
-                        async for ac in _yield_clause(pending_text, is_final=False):
-                            yield ac
-                    pending_text = clause_text
+                if chunk:
+                    parts.append(chunk)
+            clause_text = "".join(parts).strip()
 
-            final_text = splitter.flush()
-            if final_text:
-                if pending_text is not None:
-                    async for ac in _yield_clause(pending_text, is_final=False):
-                        yield ac
-                pending_text = final_text
-
-            if pending_text is not None:
-                async for ac in _yield_clause(pending_text, is_final=True):
-                    yield ac
+            if clause_text:
+                async for audio_clause in self._stream_clause(
+                    clause_text,
+                    voice_config,
+                    clause_idx=0,
+                    is_final_clause=True,
+                ):
+                    if not first_yielded:
+                        tts_first_clause_latency_ms.observe((time.monotonic() - start) * 1000)
+                        first_yielded = True
+                    tts_clauses_total.inc()
+                    yield audio_clause
 
             tts_full_synthesis_latency_ms.observe((time.monotonic() - start) * 1000)
             tts_requests_total.labels(status="success").inc()
@@ -199,15 +223,41 @@ class VeenaAdapter:
 
         pending: bytes | None = None
         url = f"{self._base_url}/synthesize"
+        _gpu_headers: dict[str, str] | None = {"X-GPU-Secret": self._gpu_secret} if self._gpu_secret else None
 
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             # See vLLMAdapter._open_stream: the breaker guards only connection
             # establishment, never the streaming body (preserves true
             # chunk-by-chunk playback, V1 Ch15-17).
-            if self._breaker is not None:
-                resp = await self._breaker.call(self._open_stream, client, url, payload)
-            else:
-                resp = await self._open_stream(client, url, payload)
+            # Phase 9d: one retry on connection timeout, with tts_retry_wait_s
+            # pause between attempts. After both attempts fail, raise
+            # TTSFailureError so the orchestrator can hang up cleanly.
+            import asyncio as _asyncio
+            resp = None
+            for _attempt in range(2):
+                try:
+                    if self._breaker is not None:
+                        resp = await self._breaker.call(self._open_stream, client, url, payload, _gpu_headers)
+                    else:
+                        resp = await self._open_stream(client, url, payload, _gpu_headers)
+                    break
+                except Exception as _tts_exc:
+                    if _attempt == 0:
+                        from src.services.media_gateway.metrics import record_retry_attempt
+                        record_retry_attempt("tts_provider")
+                        logger.warning(
+                            "TTS connection failed on first attempt (%s: %s), "
+                            "retrying after %.1fs",
+                            type(_tts_exc).__name__,
+                            _tts_exc,
+                            self._tts_retry_wait_s,
+                        )
+                        await _asyncio.sleep(self._tts_retry_wait_s)
+                    else:
+                        raise TTSFailureError(
+                            f"TTS failed after retry: {_tts_exc}"
+                        ) from _tts_exc
+            assert resp is not None
             try:
                 async for raw_chunk in resp.aiter_bytes():
                     if not raw_chunk:
@@ -235,13 +285,20 @@ class VeenaAdapter:
             )
 
     @staticmethod
-    async def _open_stream(client: httpx.AsyncClient, url: str, payload: Mapping[str, object]) -> httpx.Response:
+    async def _open_stream(
+        client: httpx.AsyncClient,
+        url: str,
+        payload: Mapping[str, object],
+        headers: Mapping[str, str] | None = None,
+    ) -> httpx.Response:
         """Open the streaming POST to Veena and validate the response status.
 
         This is the unit the circuit breaker wraps — see
         ``vLLMAdapter._open_stream`` for the identical rationale.
+        The optional ``headers`` argument carries the X-GPU-Secret auth header
+        (Phase 9a) when a shared GPU secret is configured.
         """
-        request = client.build_request("POST", url, json=payload)
+        request = client.build_request("POST", url, json=payload, headers=dict(headers) if headers else {})
         response = await client.send(request, stream=True)
         response.raise_for_status()
         return response

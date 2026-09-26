@@ -1,0 +1,62 @@
+{{- if .Values.jobs.monthlyInvoicing.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "voiceos-platform.jobs.fullname" . }}-monthly-invoicing
+  namespace: {{ .Values.jobs.namespace }}
+  labels:
+    {{- include "voiceos-platform.jobs.labels" . | nindent 4 }}
+    app.kubernetes.io/name: monthly-invoicing
+    app.kubernetes.io/component: background-job
+spec:
+  schedule: {{ .Values.jobs.monthlyInvoicing.schedule | quote }}
+  # Forbid concurrent runs: invoice generation is idempotent (ON CONFLICT by design)
+  # but concurrent writes waste DB resources without benefit.
+  concurrencyPolicy: Forbid
+  # Invoice generation is time-sensitive on the 1st of each month; allow up to
+  # 30 min late start before skipping (billing team SLA for invoice delivery).
+  startingDeadlineSeconds: 1800
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: {{ .Values.jobs.monthlyInvoicing.activeDeadlineSeconds }}
+      backoffLimit: {{ .Values.jobs.monthlyInvoicing.backoffLimit }}
+      template:
+        metadata:
+          labels:
+            {{- include "voiceos-platform.jobs.labels" . | nindent 12 }}
+            app.kubernetes.io/name: monthly-invoicing
+        spec:
+          restartPolicy: OnFailure
+          priorityClassName: {{ .Values.jobs.priorityClassName }}
+          nodeSelector:
+            voiceos.io/node-pool: cpu
+          serviceAccountName: {{ include "voiceos-platform.jobs.fullname" . }}
+          containers:
+            - name: monthly-invoicing
+              image: "{{ .Values.jobs.image.repository }}:{{ .Values.jobs.image.tag }}"
+              imagePullPolicy: {{ .Values.jobs.image.pullPolicy }}
+              command: ["python", "-m", "scripts.jobs.run_monthly_invoicing"]
+              env:
+                - name: POSTGRES_DSN
+                  valueFrom:
+                    secretKeyRef:
+                      name: voiceos-postgres-credentials
+                      key: dsn
+              resources:
+                requests:
+                  cpu: {{ .Values.jobs.monthlyInvoicing.resources.cpu }}
+                  memory: {{ .Values.jobs.monthlyInvoicing.resources.memory }}
+                limits:
+                  cpu: {{ .Values.jobs.monthlyInvoicing.resources.cpu }}
+                  memory: {{ .Values.jobs.monthlyInvoicing.resources.memory }}
+              securityContext:
+                readOnlyRootFilesystem: true
+                allowPrivilegeEscalation: false
+                runAsNonRoot: true
+                capabilities:
+                  drop: ["ALL"]
+          securityContext:
+            runAsNonRoot: true
+{{- end }}

@@ -1,0 +1,71 @@
+# VoiceOS v2 -- MongoDB Prometheus exporter.
+# MongoDB credentials are injected at deployment time; none are committed.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongodb-exporter
+  namespace: voiceos-ops
+  labels:
+    app.kubernetes.io/name: mongodb-exporter
+    app.kubernetes.io/part-of: voiceos-ops
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mongodb-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mongodb-exporter
+    spec:
+      priorityClassName: high
+      containers:
+        - name: mongodb-exporter
+          image: "percona/mongodb_exporter:0.53"
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--mongodb.uri=$(MONGODB_URI)"
+            - "--collect-all"
+            - "--web.listen-address=:9216"
+          env:
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-exporter-credentials
+                  key: MONGODB_URI
+          ports:
+            - name: metrics
+              containerPort: 9216
+          resources:
+            requests: {cpu: "50m", memory: "64Mi"}
+            limits: {cpu: "250m", memory: "256Mi"}
+          readinessProbe:
+            httpGet: {path: /metrics, port: metrics}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /metrics, port: metrics}
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: {drop: ["ALL"]}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-exporter
+  namespace: voiceos-ops
+  labels:
+    app.kubernetes.io/name: mongodb-exporter
+    app.kubernetes.io/part-of: voiceos-ops
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: mongodb-exporter
+  ports:
+    - name: metrics
+      port: 9216
+      targetPort: metrics
