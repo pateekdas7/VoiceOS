@@ -18,12 +18,24 @@ const request  = require('supertest');
 const { adminCookie, tenantBCookie, makeToken, authCookie } = require('../helpers');
 
 const mockRedis = {
-  ping: jest.fn().mockResolvedValue('PONG'), set: jest.fn().mockResolvedValue('OK'),
-  get: jest.fn().mockResolvedValue(null), del: jest.fn().mockResolvedValue(1),
-  hget: jest.fn().mockResolvedValue(null), hset: jest.fn().mockResolvedValue(1),
-  hdel: jest.fn().mockResolvedValue(1), expire: jest.fn().mockResolvedValue(1),
-  zadd: jest.fn().mockResolvedValue(1), lpush: jest.fn().mockResolvedValue(1),
-  on: jest.fn().mockReturnThis(), disconnect: jest.fn(),
+  ping: jest.fn().mockResolvedValue('PONG'),
+  set: jest.fn().mockResolvedValue('OK'),
+  get: jest.fn().mockResolvedValue(null),
+  del: jest.fn().mockResolvedValue(1),
+  hget: jest.fn().mockResolvedValue(null),
+  hset: jest.fn().mockResolvedValue(1),
+  hlen: jest.fn().mockResolvedValue(0),
+  hdel: jest.fn().mockResolvedValue(1),
+  expire: jest.fn().mockResolvedValue(1),
+  ttl: jest.fn().mockResolvedValue(-1),
+  exists: jest.fn().mockResolvedValue(0),
+  incr: jest.fn().mockResolvedValue(1),
+  zadd: jest.fn().mockResolvedValue(1),
+  zcard: jest.fn().mockResolvedValue(0),
+  lpush: jest.fn().mockResolvedValue(1),
+  llen: jest.fn().mockResolvedValue(0),
+  on: jest.fn().mockReturnThis(),
+  disconnect: jest.fn(),
   connect: jest.fn().mockResolvedValue(undefined),
 };
 Redis.mockImplementation(() => mockRedis);
@@ -94,25 +106,25 @@ describe('Tenant isolation — campaign routes', () => {
     expect(res.body).toEqual([]); // empty — no data leakage
     // Verify tenant B's tenant_id was used in the query, not tenant A's
     const [sql, params] = mockPool.query.mock.calls[0];
-    expect(params).toContain('tenant-test-002'); // tenant B's id
-    expect(params).not.toContain('tenant-test-001'); // tenant A's id not used
+    expect(params).toContain('bbbbbbbb-0002-0002-0002-000000000002'); // tenant B's id
+    expect(params).not.toContain('bbbbbbbb-0001-0001-0001-000000000001'); // tenant A's id not used
   });
 
   it('GET /campaigns list — each tenant sees only their own campaigns', async () => {
     // Tenant A request
-    mockPool.query.mockResolvedValueOnce({ rows: [{ campaign_id: TENANT_A_CAMPAIGN_ID, tenant_id: 'tenant-test-001' }] });
+    mockPool.query.mockResolvedValueOnce({ rows: [{ campaign_id: TENANT_A_CAMPAIGN_ID, tenant_id: 'bbbbbbbb-0001-0001-0001-000000000001' }] });
     const resA = await request(app).get('/campaigns').set('Cookie', adminCookie());
     expect(resA.status).toBe(200);
     const [sqlA, paramsA] = mockPool.query.mock.calls[0];
-    expect(paramsA).toContain('tenant-test-001');
+    expect(paramsA).toContain('bbbbbbbb-0001-0001-0001-000000000001');
 
     jest.clearAllMocks();
     mockPool.query.mockResolvedValueOnce({ rows: [] }); // tenant B has no campaigns
     const resB = await request(app).get('/campaigns').set('Cookie', tenantBCookie());
     expect(resB.status).toBe(200);
     const [sqlB, paramsB] = mockPool.query.mock.calls[0];
-    expect(paramsB).toContain('tenant-test-002');
-    expect(paramsB).not.toContain('tenant-test-001');
+    expect(paramsB).toContain('bbbbbbbb-0002-0002-0002-000000000002');
+    expect(paramsB).not.toContain('bbbbbbbb-0001-0001-0001-000000000001');
   });
 });
 
@@ -123,7 +135,7 @@ describe('Tenant isolation — lead imports', () => {
     // Import found for tenant A but query scopes to tenant B → returns empty
     mockPool.query.mockResolvedValueOnce({ rows: [] });
     const res = await request(app)
-      .post(`/campaigns/${TENANT_A_CAMPAIGN_ID}/leads/imports/imp-A-001/resume`)
+      .post(`/campaigns/${TENANT_A_CAMPAIGN_ID}/leads/imports/cccccccc-aaaa-aaaa-aaaa-000000000aaa/resume`)
       .set('Cookie', tenantBCookie());
     expect(res.status).toBe(404);
   });

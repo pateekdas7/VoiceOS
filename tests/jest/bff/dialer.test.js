@@ -26,12 +26,24 @@ const Redis    = require('ioredis');
 const request  = require('supertest');
 
 const mockRedis = {
-  ping: jest.fn().mockResolvedValue('PONG'), set: jest.fn().mockResolvedValue('OK'),
-  get: jest.fn().mockResolvedValue(null), del: jest.fn().mockResolvedValue(1),
-  hget: jest.fn().mockResolvedValue(null), hset: jest.fn().mockResolvedValue(1),
-  hdel: jest.fn().mockResolvedValue(1), expire: jest.fn().mockResolvedValue(1),
-  zadd: jest.fn().mockResolvedValue(1), lpush: jest.fn().mockResolvedValue(1),
-  on: jest.fn().mockReturnThis(), disconnect: jest.fn(),
+  ping: jest.fn().mockResolvedValue('PONG'),
+  set: jest.fn().mockResolvedValue('OK'),
+  get: jest.fn().mockResolvedValue(null),
+  del: jest.fn().mockResolvedValue(1),
+  hget: jest.fn().mockResolvedValue(null),
+  hset: jest.fn().mockResolvedValue(1),
+  hlen: jest.fn().mockResolvedValue(0),
+  hdel: jest.fn().mockResolvedValue(1),
+  expire: jest.fn().mockResolvedValue(1),
+  ttl: jest.fn().mockResolvedValue(-1),
+  exists: jest.fn().mockResolvedValue(0),
+  incr: jest.fn().mockResolvedValue(1),
+  zadd: jest.fn().mockResolvedValue(1),
+  zcard: jest.fn().mockResolvedValue(0),
+  lpush: jest.fn().mockResolvedValue(1),
+  llen: jest.fn().mockResolvedValue(0),
+  on: jest.fn().mockReturnThis(),
+  disconnect: jest.fn(),
   connect: jest.fn().mockResolvedValue(undefined),
 };
 Redis.mockImplementation(() => mockRedis);

@@ -32,13 +32,24 @@ const { adminCookie } = require('../helpers');
 
 const mockRedis = {
   ping: jest.fn().mockResolvedValue('PONG'),
-  set: jest.fn().mockResolvedValue('OK'), get: jest.fn().mockResolvedValue(null),
-  del: jest.fn().mockResolvedValue(1), hget: jest.fn().mockResolvedValue(null),
-  hset: jest.fn().mockResolvedValue(1), hdel: jest.fn().mockResolvedValue(1),
-  expire: jest.fn().mockResolvedValue(1), zadd: jest.fn().mockResolvedValue(1),
-  lpush: jest.fn().mockResolvedValue(1), on: jest.fn().mockReturnThis(),
-  disconnect: jest.fn(), connect: jest.fn().mockResolvedValue(undefined),
-  rpop: jest.fn().mockResolvedValue(null), brpop: jest.fn().mockResolvedValue(null),
+  set: jest.fn().mockResolvedValue('OK'),
+  get: jest.fn().mockResolvedValue(null),
+  del: jest.fn().mockResolvedValue(1),
+  hget: jest.fn().mockResolvedValue(null),
+  hset: jest.fn().mockResolvedValue(1),
+  hlen: jest.fn().mockResolvedValue(0),
+  hdel: jest.fn().mockResolvedValue(1),
+  expire: jest.fn().mockResolvedValue(1),
+  ttl: jest.fn().mockResolvedValue(-1),
+  exists: jest.fn().mockResolvedValue(0),
+  incr: jest.fn().mockResolvedValue(1),
+  zadd: jest.fn().mockResolvedValue(1),
+  zcard: jest.fn().mockResolvedValue(0),
+  lpush: jest.fn().mockResolvedValue(1),
+  llen: jest.fn().mockResolvedValue(0),
+  on: jest.fn().mockReturnThis(),
+  disconnect: jest.fn(),
+  connect: jest.fn().mockResolvedValue(undefined),
 };
 Redis.mockImplementation(() => mockRedis);
 
@@ -72,7 +83,7 @@ describe('GET /team', () => {
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
     const [sql, params] = mockPool.query.mock.calls[0];
-    expect(params).toContain('tenant-test-001');
+    expect(params).toContain('bbbbbbbb-0001-0001-0001-000000000001');
   });
 });
 
@@ -90,7 +101,7 @@ describe('GET /users/me', () => {
   beforeEach(() => jest.clearAllMocks());
 
   it('returns current user profile', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'u1', email: 'admin@test.com', name: 'Admin', tenant_id: 'tenant-test-001' }] });
+    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'u1', email: 'admin@test.com', name: 'Admin', tenant_id: 'bbbbbbbb-0001-0001-0001-000000000001' }] });
     const res = await request(app).get('/users/me').set('Cookie', adminCookie());
     expect(res.status).toBe(200);
     // actor_kind from JWT; test token omits it → undefined is stripped from JSON
@@ -112,7 +123,7 @@ describe('Enrichment config routes', () => {
   it('GET /campaigns/:id/enrichment-config returns 404 for unknown campaign', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [] });
     const res = await request(app)
-      .get('/campaigns/c-001/enrichment-config')
+      .get('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/enrichment-config')
       .set('Cookie', adminCookie());
     expect(res.status).toBe(404);
   });
@@ -120,7 +131,7 @@ describe('Enrichment config routes', () => {
   it('GET /campaigns/:id/enrichment-config returns config', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [{ enrichment_config: { enabled: true } }] });
     const res = await request(app)
-      .get('/campaigns/c-001/enrichment-config')
+      .get('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/enrichment-config')
       .set('Cookie', adminCookie());
     expect(res.status).toBe(200);
   });
@@ -128,7 +139,7 @@ describe('Enrichment config routes', () => {
   it('PUT /campaigns/:id/enrichment-config returns 404 for unknown campaign', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [] });
     const res = await request(app)
-      .put('/campaigns/c-001/enrichment-config')
+      .put('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/enrichment-config')
       .set('Cookie', adminCookie())
       .send({ enabled: false });
     expect(res.status).toBe(404);
@@ -137,7 +148,7 @@ describe('Enrichment config routes', () => {
   it('PUT /campaigns/:id/enrichment-config updates config', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [{ enrichment_config: { enabled: false } }] });
     const res = await request(app)
-      .put('/campaigns/c-001/enrichment-config')
+      .put('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/enrichment-config')
       .set('Cookie', adminCookie())
       .send({ enabled: false });
     expect(res.status).toBe(200);
@@ -146,7 +157,7 @@ describe('Enrichment config routes', () => {
   it('GET /campaigns/:id/enrichment-history returns list', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [{ log_id: 'lg-1', provider: 'crm', result: 'MATCHED' }] });
     const res = await request(app)
-      .get('/campaigns/c-001/enrichment-history')
+      .get('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/enrichment-history')
       .set('Cookie', adminCookie());
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
@@ -159,18 +170,18 @@ describe('Qualification rules CRUD', () => {
   it('GET /campaigns/:id/qualification-rules returns list', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [{ rule_id: 'r-1', field: 'score', operator: '>=', value: '50' }] });
     const res = await request(app)
-      .get('/campaigns/c-001/qualification-rules')
+      .get('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/qualification-rules')
       .set('Cookie', adminCookie());
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
     const [, params] = mockPool.query.mock.calls[0];
-    expect(params).toContain('tenant-test-001');
+    expect(params).toContain('bbbbbbbb-0001-0001-0001-000000000001');
   });
 
   it('POST /campaigns/:id/qualification-rules creates rule', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [{ rule_id: 'r-new', field: 'score', operator: '>=', value: '60' }] });
     const res = await request(app)
-      .post('/campaigns/c-001/qualification-rules')
+      .post('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/qualification-rules')
       .set('Cookie', adminCookie())
       .send({ field: 'score', operator: '>=', value: '60' });
     expect(res.status).toBe(201);
@@ -178,7 +189,7 @@ describe('Qualification rules CRUD', () => {
 
   it('POST /campaigns/:id/qualification-rules returns 400 for missing fields', async () => {
     const res = await request(app)
-      .post('/campaigns/c-001/qualification-rules')
+      .post('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/qualification-rules')
       .set('Cookie', adminCookie())
       .send({ field: 'score' }); // missing operator and value
     expect(res.status).toBe(400);
@@ -187,7 +198,7 @@ describe('Qualification rules CRUD', () => {
   it('DELETE /campaigns/:id/qualification-rules/:ruleId deletes rule', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [] });
     const res = await request(app)
-      .delete('/campaigns/c-001/qualification-rules/r-001')
+      .delete('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/qualification-rules/aaaaaaaa-aaaa-0001-aaaa-aaaaaaaaaaaa')
       .set('Cookie', adminCookie());
     expect(res.status).toBe(200);
   });
@@ -199,7 +210,7 @@ describe('Distribution rules CRUD', () => {
   it('GET /campaigns/:id/distribution-rules returns list', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [] });
     const res = await request(app)
-      .get('/campaigns/c-001/distribution-rules')
+      .get('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/distribution-rules')
       .set('Cookie', adminCookie());
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
@@ -208,7 +219,7 @@ describe('Distribution rules CRUD', () => {
   it('POST /campaigns/:id/distribution-rules creates rule', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [{ rule_id: 'dr-1', pipeline_id: 'p-001' }] });
     const res = await request(app)
-      .post('/campaigns/c-001/distribution-rules')
+      .post('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/distribution-rules')
       .set('Cookie', adminCookie())
       .send({ pipeline_id: 'p-001', min_score: 0, max_score: 100 });
     expect(res.status).toBe(201);
@@ -216,7 +227,7 @@ describe('Distribution rules CRUD', () => {
 
   it('POST /campaigns/:id/distribution-rules returns 400 when pipeline_id missing', async () => {
     const res = await request(app)
-      .post('/campaigns/c-001/distribution-rules')
+      .post('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/distribution-rules')
       .set('Cookie', adminCookie())
       .send({ min_score: 0 });
     expect(res.status).toBe(400);
@@ -225,7 +236,7 @@ describe('Distribution rules CRUD', () => {
   it('DELETE /campaigns/:id/distribution-rules/:ruleId deletes rule', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [] });
     const res = await request(app)
-      .delete('/campaigns/c-001/distribution-rules/dr-001')
+      .delete('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/distribution-rules/aaaaaaaa-aaaa-0002-aaaa-aaaaaaaaaaaa')
       .set('Cookie', adminCookie());
     expect(res.status).toBe(200);
   });
@@ -237,7 +248,7 @@ describe('Execution events routes', () => {
   it('GET /campaigns/:id/execution-events returns list', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [{ event_id: 'ev-1', event_type: 'CALL_INITIATED' }] });
     const res = await request(app)
-      .get('/campaigns/c-001/execution-events')
+      .get('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/execution-events')
       .set('Cookie', adminCookie());
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
@@ -246,7 +257,7 @@ describe('Execution events routes', () => {
   it('GET /campaigns/:id/leads/:leadId/events returns lead events', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [{ event_id: 'ev-2', event_type: 'CALL_COMPLETED' }] });
     const res = await request(app)
-      .get('/campaigns/c-001/leads/l-001/events')
+      .get('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/leads/eeeeeeee-0001-0001-0001-000000000001/events')
       .set('Cookie', adminCookie());
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
@@ -261,11 +272,11 @@ describe('Analytics routes', () => {
       rows: [{ total_leads: '100', calls_made: '80', completed: '60', avg_duration: '45' }],
     });
     const res = await request(app)
-      .get('/analytics/campaigns/c-001/summary')
+      .get('/analytics/campaigns/aaaaaaaa-0001-0001-0001-000000000001/summary')
       .set('Cookie', adminCookie());
     expect(res.status).toBe(200);
     const [, params] = mockPool.query.mock.calls[0];
-    expect(params).toContain('tenant-test-001');
+    expect(params).toContain('bbbbbbbb-0001-0001-0001-000000000001');
   });
 
   it('GET /dialer/queue-stats returns queue statistics', async () => {
@@ -283,7 +294,7 @@ describe('Pipeline sub-routes', () => {
   it('GET /campaigns/:id/pipelines/:pipelineId returns 404 for unknown pipeline', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [] });
     const res = await request(app)
-      .get('/campaigns/c-001/pipelines/p-999')
+      .get('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/pipelines/dddddddd-9999-9999-9999-000000000999')
       .set('Cookie', adminCookie());
     expect(res.status).toBe(404);
   });
@@ -291,7 +302,7 @@ describe('Pipeline sub-routes', () => {
   it('GET /campaigns/:id/pipelines/:pipelineId returns pipeline', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [{ pipeline_id: 'p-001', name: 'Pipe 1', status: 'ACTIVE' }] });
     const res = await request(app)
-      .get('/campaigns/c-001/pipelines/p-001')
+      .get('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/pipelines/dddddddd-0001-0001-0001-000000000001')
       .set('Cookie', adminCookie());
     expect(res.status).toBe(200);
     expect(res.body.pipeline_id).toBe('p-001');
@@ -300,7 +311,7 @@ describe('Pipeline sub-routes', () => {
   it('PATCH /campaigns/:id/pipelines/:pipelineId updates pipeline', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [{ pipeline_id: 'p-001', name: 'Updated', status: 'ACTIVE' }] });
     const res = await request(app)
-      .patch('/campaigns/c-001/pipelines/p-001')
+      .patch('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/pipelines/dddddddd-0001-0001-0001-000000000001')
       .set('Cookie', adminCookie())
       .send({ name: 'Updated' });
     expect(res.status).toBe(200);
@@ -308,7 +319,7 @@ describe('Pipeline sub-routes', () => {
 
   it('PATCH /campaigns/:id/pipelines/:pipelineId returns 400 with no updates', async () => {
     const res = await request(app)
-      .patch('/campaigns/c-001/pipelines/p-001')
+      .patch('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/pipelines/dddddddd-0001-0001-0001-000000000001')
       .set('Cookie', adminCookie())
       .send({});
     expect(res.status).toBe(400);

@@ -20,12 +20,24 @@ const request  = require('supertest');
 const { adminCookie } = require('../helpers');
 
 const mockRedis = {
-  ping: jest.fn().mockResolvedValue('PONG'), set: jest.fn().mockResolvedValue('OK'),
-  get: jest.fn().mockResolvedValue(null), del: jest.fn().mockResolvedValue(1),
-  hget: jest.fn().mockResolvedValue(null), hset: jest.fn().mockResolvedValue(1),
-  hdel: jest.fn().mockResolvedValue(1), expire: jest.fn().mockResolvedValue(1),
-  zadd: jest.fn().mockResolvedValue(1), lpush: jest.fn().mockResolvedValue(1),
-  on: jest.fn().mockReturnThis(), disconnect: jest.fn(),
+  ping: jest.fn().mockResolvedValue('PONG'),
+  set: jest.fn().mockResolvedValue('OK'),
+  get: jest.fn().mockResolvedValue(null),
+  del: jest.fn().mockResolvedValue(1),
+  hget: jest.fn().mockResolvedValue(null),
+  hset: jest.fn().mockResolvedValue(1),
+  hlen: jest.fn().mockResolvedValue(0),
+  hdel: jest.fn().mockResolvedValue(1),
+  expire: jest.fn().mockResolvedValue(1),
+  ttl: jest.fn().mockResolvedValue(-1),
+  exists: jest.fn().mockResolvedValue(0),
+  incr: jest.fn().mockResolvedValue(1),
+  zadd: jest.fn().mockResolvedValue(1),
+  zcard: jest.fn().mockResolvedValue(0),
+  lpush: jest.fn().mockResolvedValue(1),
+  llen: jest.fn().mockResolvedValue(0),
+  on: jest.fn().mockReturnThis(),
+  disconnect: jest.fn(),
   connect: jest.fn().mockResolvedValue(undefined),
 };
 Redis.mockImplementation(() => mockRedis);
@@ -48,14 +60,14 @@ Pool.mockImplementation(() => mockPool);
 const { app } = require('../../../bff');
 
 const CAMPAIGN = {
-  campaign_id: 'c-001', tenant_id: 'tenant-test-001', name: 'Test', status: 'ACTIVE',
+  campaign_id: 'aaaaaaaa-0001-0001-0001-000000000001', tenant_id: 'bbbbbbbb-0001-0001-0001-000000000001', name: 'Test', status: 'ACTIVE',
   daily_start_hour: 9, daily_end_hour: 21, timezone: 'Asia/Kolkata',
 };
 
 describe('POST /campaigns/:id/leads/suggest-mapping', () => {
   it('returns suggested column mapping', async () => {
     const res = await request(app)
-      .post('/campaigns/c-001/leads/suggest-mapping')
+      .post('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/leads/suggest-mapping')
       .set('Cookie', adminCookie())
       .send({ columns: ['Phone Number', 'Full Name', 'Email ID'] });
     expect(res.status).toBe(200);
@@ -72,7 +84,7 @@ describe('POST /campaigns/:id/leads/upload', () => {
 
   it('returns 400 for multipart/form-data', async () => {
     const res = await request(app)
-      .post('/campaigns/c-001/leads/upload')
+      .post('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/leads/upload')
       .set('Cookie', adminCookie())
       .set('Content-Type', 'multipart/form-data')
       .send('');
@@ -81,7 +93,7 @@ describe('POST /campaigns/:id/leads/upload', () => {
 
   it('returns 400 when rows array is empty', async () => {
     const res = await request(app)
-      .post('/campaigns/c-001/leads/upload')
+      .post('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/leads/upload')
       .set('Cookie', adminCookie())
       .send({ filename: 'test.csv', columns: ['phone'], rows: [], column_mapping: {} });
     expect(res.status).toBe(400);
@@ -94,7 +106,7 @@ describe('POST /campaigns/:id/leads/upload', () => {
       .set('Cookie', adminCookie())
       .send({ rows: [{ phone: '9999999999' }] });
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe('invalid_campaign_id');
+    expect(res.body.error).toBe('invalid_uuid');
   });
 
   it('returns 404 when campaign does not exist', async () => {
@@ -113,7 +125,7 @@ describe('POST /campaigns/:id/leads/upload', () => {
     mockClientQuery = jest.fn()
       .mockResolvedValueOnce({ rows: [CAMPAIGN] })         // campaign fetch
       .mockResolvedValueOnce({ rows: [] })                  // BEGIN
-      .mockResolvedValueOnce({ rows: [{ import_id: 'imp-001' }] }) // INSERT lead_imports
+      .mockResolvedValueOnce({ rows: [{ import_id: 'cccccccc-0001-0001-0001-000000000001' }] }) // INSERT lead_imports
       .mockResolvedValueOnce({ rows: [] })                  // enrichLead
       .mockResolvedValueOnce({ rows: [] })                  // qualifyLead rules
       .mockResolvedValueOnce({ rows: [] })                  // distributeLeadToPipeline
@@ -144,25 +156,25 @@ describe('POST /campaigns/:id/leads/imports/:importId/resume', () => {
   it('returns 404 for unknown import', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [] }); // import not found
     const res = await request(app)
-      .post('/campaigns/c-001/leads/imports/imp-999/resume')
+      .post('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/leads/imports/cccccccc-9999-9999-9999-000000000999/resume')
       .set('Cookie', adminCookie());
     expect(res.status).toBe(404);
     expect(res.body.error).toBe('not_found');
   });
 
   it('returns 400 for a DONE import', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [{ import_id: 'imp-001', status: 'DONE', rows_data: [] }] });
+    mockPool.query.mockResolvedValueOnce({ rows: [{ import_id: 'cccccccc-0001-0001-0001-000000000001', status: 'DONE', rows_data: [] }] });
     const res = await request(app)
-      .post('/campaigns/c-001/leads/imports/imp-001/resume')
+      .post('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/leads/imports/cccccccc-0001-0001-0001-000000000001/resume')
       .set('Cookie', adminCookie());
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('import_already_complete');
   });
 
   it('returns 400 when rows_data is empty', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [{ import_id: 'imp-001', status: 'FAILED', rows_data: [], last_processed_row: 0 }] });
+    mockPool.query.mockResolvedValueOnce({ rows: [{ import_id: 'cccccccc-0001-0001-0001-000000000001', status: 'FAILED', rows_data: [], last_processed_row: 0 }] });
     const res = await request(app)
-      .post('/campaigns/c-001/leads/imports/imp-001/resume')
+      .post('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/leads/imports/cccccccc-0001-0001-0001-000000000001/resume')
       .set('Cookie', adminCookie());
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('no_rows_data');
@@ -170,10 +182,10 @@ describe('POST /campaigns/:id/leads/imports/:importId/resume', () => {
 
   it('returns 404 when campaign not found during resume', async () => {
     mockPool.query
-      .mockResolvedValueOnce({ rows: [{ import_id: 'imp-001', status: 'FAILED', rows_data: [{ phone: '999' }], last_processed_row: 0, failed_rows: [], column_mapping: {}, filename: 'x.csv' }] })
+      .mockResolvedValueOnce({ rows: [{ import_id: 'cccccccc-0001-0001-0001-000000000001', status: 'FAILED', rows_data: [{ phone: '999' }], last_processed_row: 0, failed_rows: [], column_mapping: {}, filename: 'x.csv' }] })
       .mockResolvedValueOnce({ rows: [] }); // campaign not found
     const res = await request(app)
-      .post('/campaigns/c-001/leads/imports/imp-001/resume')
+      .post('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/leads/imports/cccccccc-0001-0001-0001-000000000001/resume')
       .set('Cookie', adminCookie());
     expect(res.status).toBe(404);
     expect(res.body.error).toBe('campaign_not_found');
@@ -181,10 +193,10 @@ describe('POST /campaigns/:id/leads/imports/:importId/resume', () => {
 
   it('finalizes when all rows already processed (startRow >= rows.length)', async () => {
     mockPool.query
-      .mockResolvedValueOnce({ rows: [{ import_id: 'imp-001', status: 'PROCESSING', rows_data: [{ phone: '999' }], last_processed_row: 1, failed_rows: [], column_mapping: {}, filename: 'x.csv' }] })
+      .mockResolvedValueOnce({ rows: [{ import_id: 'cccccccc-0001-0001-0001-000000000001', status: 'PROCESSING', rows_data: [{ phone: '999' }], last_processed_row: 1, failed_rows: [], column_mapping: {}, filename: 'x.csv' }] })
       .mockResolvedValueOnce({ rows: [] }); // UPDATE DONE
     const res = await request(app)
-      .post('/campaigns/c-001/leads/imports/imp-001/resume')
+      .post('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/leads/imports/cccccccc-0001-0001-0001-000000000001/resume')
       .set('Cookie', adminCookie());
     expect(res.status).toBe(200);
     expect(res.body.message).toBe('already_processed');
@@ -195,9 +207,9 @@ describe('GET /campaigns/:id/leads/imports', () => {
   beforeEach(() => jest.clearAllMocks());
 
   it('returns list of imports for the campaign', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [{ import_id: 'imp-001', status: 'DONE' }] });
+    mockPool.query.mockResolvedValueOnce({ rows: [{ import_id: 'cccccccc-0001-0001-0001-000000000001', status: 'DONE' }] });
     const res = await request(app)
-      .get('/campaigns/c-001/leads/imports')
+      .get('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/leads/imports')
       .set('Cookie', adminCookie());
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
@@ -210,20 +222,20 @@ describe('GET /campaigns/:id/leads', () => {
   it('returns lead list scoped to tenant and campaign', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [{ lead_id: 'l-001', phone: '9999999999' }] });
     const res = await request(app)
-      .get('/campaigns/c-001/leads')
+      .get('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/leads')
       .set('Cookie', adminCookie());
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
     // Verify tenant isolation in the query
     const [sql, params] = mockPool.query.mock.calls[0];
-    expect(params).toContain('tenant-test-001');
-    expect(params).toContain('c-001');
+    expect(params).toContain('bbbbbbbb-0001-0001-0001-000000000001');
+    expect(params).toContain('aaaaaaaa-0001-0001-0001-000000000001');
   });
 
   it('supports status filter', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [] });
     const res = await request(app)
-      .get('/campaigns/c-001/leads?status=QUALIFIED')
+      .get('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/leads?status=QUALIFIED')
       .set('Cookie', adminCookie());
     expect(res.status).toBe(200);
     const [sql, params] = mockPool.query.mock.calls[0];
@@ -237,12 +249,12 @@ describe('GET /campaigns/:id/leads/stats', () => {
   it('returns aggregated stats scoped to tenant and campaign', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [{ total: '10', valid: '8', rejected: '2', avg_score: '75' }] });
     const res = await request(app)
-      .get('/campaigns/c-001/leads/stats')
+      .get('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/leads/stats')
       .set('Cookie', adminCookie());
     expect(res.status).toBe(200);
     expect(res.body).toBeDefined();
     const [sql, params] = mockPool.query.mock.calls[0];
-    expect(params).toContain('tenant-test-001');
+    expect(params).toContain('bbbbbbbb-0001-0001-0001-000000000001');
   });
 });
 
@@ -258,7 +270,7 @@ describe('POST /campaigns/:id/leads/:leadId/assign-pipeline', () => {
       .mockResolvedValueOnce({ rows: [] })  // UPDATE leads → 0 rows
       .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
     const res = await request(app)
-      .post('/campaigns/c-001/leads/l-999/assign-pipeline')
+      .post('/campaigns/aaaaaaaa-0001-0001-0001-000000000001/leads/eeeeeeee-9999-9999-9999-000000000999/assign-pipeline')
       .set('Cookie', adminCookie())
       .send({ pipeline_id: 'p-001' });
     expect(res.status).toBe(404);

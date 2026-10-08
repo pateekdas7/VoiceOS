@@ -458,12 +458,15 @@ class CrashReconciler {
           (status = 'INITIATED'   AND call_sid IS NULL
            AND initiated_at < NOW() - ($2 || ' seconds')::INTERVAL)
           OR
+          (status = 'INITIATED'   AND call_sid IS NOT NULL
+           AND initiated_at < NOW() - ($4 || ' seconds')::INTERVAL)
+          OR
           (status = 'IN_PROGRESS'
            AND initiated_at < NOW() - ($3 || ' seconds')::INTERVAL)
         )
       ORDER BY initiated_at ASC
       LIMIT 50
-    `, [WORKER_ID, RECONCILE_INITIATED_THRESHOLD_S, RECONCILE_IN_PROGRESS_THRESHOLD_S]);
+    `, [WORKER_ID, RECONCILE_INITIATED_THRESHOLD_S, RECONCILE_IN_PROGRESS_THRESHOLD_S, RECONCILE_FORCE_THRESHOLD_S]);
 
     // Filter out attempts from workers whose heartbeat is still alive.
     // Cache per-worker result so Redis is only queried once per worker per scan.
@@ -575,9 +578,10 @@ class CrashReconciler {
       const durationMs = Date.now() - startMs;
       await this._pool.query(
         `INSERT INTO recovery_log
-           (call_id, failure_class, strategy_name, outcome, detail, started_at, completed_at, duration_ms)
-         VALUES ($1,$2,'crash_reconciliation','success',$3::jsonb,$4,NOW(),$5)`,
+           (tenant_id, call_id, failure_class, strategy_name, outcome, detail, started_at, completed_at, duration_ms)
+         VALUES ($1,$2,$3,'crash_reconciliation','success',$4::jsonb,$5,NOW(),$6)`,
         [
+          attempt.tenant_id,
           attempt.call_sid || attempt.attempt_id,
           failureClass,
           JSON.stringify({

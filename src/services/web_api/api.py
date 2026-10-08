@@ -40,7 +40,7 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse, RedirectResponse, StreamingResponse
+from starlette.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from src.libs.audit.event import AuditEvent
@@ -311,6 +311,10 @@ def create_web_api(
         response.delete_cookie(_ACTOR_KIND_COOKIE)
         return response
 
+    async def _prometheus_metrics(_request: Request) -> Response:
+        from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+        return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
     async def system_health(_request: Request) -> JSONResponse:
         if health_aggregator is None:
             return JSONResponse([])
@@ -327,6 +331,7 @@ def create_web_api(
         Route("/auth/google/callback", google_callback, methods=["GET"]),
         Route("/auth/logout", logout, methods=["GET", "POST"]),
         Route("/system/health", system_health, methods=["GET"]),
+        Route("/metrics", _prometheus_metrics, methods=["GET"]),
         *_build_team_routes(user_service),
     ]
 
@@ -1870,9 +1875,9 @@ def _build_realtime_analytics_routes(analytics_service: AnalyticsService) -> lis
         try:
             session = require_tenant_permission(request, PERM_VIEW_ANALYTICS)
         except SessionRequiredError:
-            return _error(401, "UNAUTHENTICATED", "sign in required")
+            return JSONResponse({"code": "UNAUTHENTICATED", "message": "sign in required"}, status_code=401)
         except ForbiddenError as exc:
-            return _error(403, "FORBIDDEN", str(exc))
+            return JSONResponse({"code": "FORBIDDEN", "message": str(exc)}, status_code=403)
 
         tenant_id = _require_tenant_id(session)
         campaign_id_param = request.query_params.get("campaign_id")

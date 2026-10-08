@@ -11,7 +11,7 @@ const { randomUUID } = require('crypto');
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const app          = express();
-const PORT         = 8000;
+const PORT         = parseInt(process.env.PORT) || 8000;
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
   process.stderr.write(JSON.stringify({ timestamp: new Date().toISOString(), level: 'ERROR', service: 'voiceos-bff', event: 'startup.fatal', error: 'JWT_SECRET not set' }) + '\n');
@@ -37,7 +37,6 @@ const log = {
 };
 
 // ─── Trace-ID propagation middleware ─────────────────────────────────────────
-const { randomUUID } = require('crypto');
 app.use((req, _res, next) => {
   req.traceId = req.headers['x-trace-id'] || randomUUID();
   next();
@@ -67,7 +66,7 @@ async function bffAudit(client, { req, action, resourceType, resourceId, outcome
 const _DB_STATEMENT_TIMEOUT  = parseInt(process.env.DB_STATEMENT_TIMEOUT_MS  || '30000');
 const _DB_CONNECTION_TIMEOUT = parseInt(process.env.DB_CONNECTION_TIMEOUT_MS || '5000');
 const _poolCommon = {
-  max: 10,
+  max: parseInt(process.env.PG_POOL_MAX || "10"),
   connectionTimeoutMillis: _DB_CONNECTION_TIMEOUT,
   idleTimeoutMillis:       30000,
   options:                 `-c statement_timeout=${_DB_STATEMENT_TIMEOUT}`,
@@ -130,7 +129,7 @@ app.use((_req, res, next) => {
 
 // ─── Phase 9 / 12c: soft JWT parse + JTI revocation check ────────────────────
 app.use(async (req, _res, next) => {
-  const token = req.cookies?.[SESSION_COOKIE];
+  const token = req.cookies?.[SESSION_COOKIE] || req.cookies?.["voiceos_token"] || (req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7) : null);
   if (token) {
     try {
       const decoded = jwt.verify(token, JWT_SECRET);
@@ -178,7 +177,8 @@ app.use(async (req, res, next) => {
   if (!req.user || req.user.actor_kind !== 'tenant') return next();
   try {
     const r = await pool.query('SELECT status FROM tenants WHERE tenant_id=$1', [req.user.tenant_id]);
-    if (!r.rows.length || r.rows[0].status !== 'ACTIVE') {
+    const _INACTIVE = ['SUSPENDED','CANCELLED','DELETING','DELETED'];
+      if (!r.rows.length || _INACTIVE.includes(r.rows[0].status)) {
       log.warn('tenant.inactive', { tenant_id: req.user.tenant_id, status: r.rows[0]?.status, trace_id: req.traceId });
       return res.status(403).json({ error: 'tenant_suspended' });
     }
@@ -786,7 +786,8 @@ app.post('/auth/password/login', async (req, res) => {
       await clearLoginRateLimit(req.ip);
       await bffAudit(pool, { req, action: 'auth.login', resourceType: 'user', resourceId: em, outcome: 'SUCCESS' });
       log.info('auth.login', { actor_kind: 'platform', trace_id: req.traceId });
-      return res.json({ ok: true, name, role: platform_role, actor_kind: 'platform' });
+      const isNonProd = process.env.NODE_ENV !== "production";
+      return res.json({ ok: true, name, role: platform_role, actor_kind: "platform", ...(isNonProd ? { token, tenant_id: null } : {}) });
     }
 
     const tu = await pool.query(
@@ -801,7 +802,8 @@ app.post('/auth/password/login', async (req, res) => {
       await clearLoginRateLimit(req.ip);
       await bffAudit(pool, { req, action: 'auth.login', resourceType: 'user', resourceId: em, outcome: 'SUCCESS' });
       log.info('auth.login', { actor_kind: 'tenant', trace_id: req.traceId });
-      return res.json({ ok: true, name, role: 'TENANT_ADMIN', actor_kind: 'tenant' });
+      const isNonProd2 = process.env.NODE_ENV !== "production";
+      return res.json({ ok: true, name, role: "TENANT_ADMIN", actor_kind: "tenant", tenant_id, ...(isNonProd2 ? { token } : {}) });
     }
 
     await recordLoginFailure(req.ip);
@@ -814,10 +816,13 @@ app.post('/auth/password/login', async (req, res) => {
 });
 
 app.get('/auth/session', (req, res) => {
-  const token = req.cookies[SESSION_COOKIE];
-  if (!token) return res.status(401).json({ error: 'no_session' });
-  try { res.json({ ok: true, ...jwt.verify(token, JWT_SECRET) }); }
-  catch { res.status(401).json({ error: 'invalid_session' }); }
+  // Phase 12c: use req.user (set by the global JTI-revocation middleware) so that
+  // a revoked session is rejected here just as it is on all requireAuth routes.
+  if (!req.user) {
+    const hasCookie = !!req.cookies[SESSION_COOKIE];
+    return res.status(401).json({ error: hasCookie ? 'invalid_session' : 'no_session' });
+  }
+  res.json({ ok: true, ...req.user });
 });
 
 // Phase 10e: Refresh — reissue a fresh 7-day token from a valid existing session
@@ -852,6 +857,34 @@ app.get('/auth/logout', async (req, res) => {
   log.info('auth.logout', { trace_id: req.traceId });
   res.clearCookie(SESSION_COOKIE); res.clearCookie(ACTOR_KIND_COOKIE);
   res.redirect((process.env.FRONTEND_BASE_URL || 'http://localhost:3000') + '/login');
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// PROMETHEUS /metrics
+// ═════════════════════════════════════════════════════════════════════════════
+const promClient = require('prom-client');
+promClient.collectDefaultMetrics({ prefix: 'voiceos_bff_' });
+
+const bffHttpRequestsTotal = new promClient.Counter({
+  name: 'voiceos_bff_http_requests_total',
+  help: 'Total HTTP requests handled by BFF',
+  labelNames: ['method', 'route', 'status'],
+});
+
+// Instrument all responses
+app.use((req, res, next) => {
+  const originalEnd = res.end.bind(res);
+  res.end = function(...args) {
+    const route = req.route ? req.route.path : req.path;
+    bffHttpRequestsTotal.labels(req.method, route, String(res.statusCode)).inc();
+    return originalEnd(...args);
+  };
+  next();
+});
+
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', promClient.register.contentType);
+  res.end(await promClient.register.metrics());
 });
 
 // ═════════════════════════════════════════════════════════════════════════════

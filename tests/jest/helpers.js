@@ -10,7 +10,7 @@ const SECRET = process.env.JWT_SECRET;
 function makeToken(overrides = {}) {
   const payload = {
     user_id:   'user-test-001',
-    tenant_id: 'tenant-test-001',
+    tenant_id: 'bbbbbbbb-0001-0001-0001-000000000001',
     email:     'admin@test.example',
     role:      'ADMIN',
     ...overrides,
@@ -30,7 +30,7 @@ function adminCookie(overrides = {}) {
 
 /** Tenant B cookie — different tenant from the default. */
 function tenantBCookie() {
-  return authCookie(makeToken({ tenant_id: 'tenant-test-002', user_id: 'user-b-001' }));
+  return authCookie(makeToken({ tenant_id: 'bbbbbbbb-0002-0002-0002-000000000002', user_id: 'user-b-001' }));
 }
 
 // ── Shared mock factories ────────────────────────────────────────────────────
