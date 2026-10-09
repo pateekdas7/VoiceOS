@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { LoginForm } from "@/components/auth/login-form";
 
 export default function LoginPage() {
@@ -8,7 +9,9 @@ export default function LoginPage() {
           <p className="text-lg font-semibold">VoiceOS</p>
           <p className="text-sm text-muted">Sign in to continue</p>
         </div>
-        <LoginForm />
+        <Suspense>
+          <LoginForm />
+        </Suspense>
         <p className="text-xs text-muted">
           Invited to a workspace?{" "}
           <a href="/signup" className="text-brand underline">
