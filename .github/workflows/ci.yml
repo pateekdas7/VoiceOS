@@ -2,7 +2,7 @@ name: VoiceOS CI
 
 on:
   push:
-    branches: ["main", "feature/**", "fix/**", "hotfix/**"]
+    branches: ["main", "feature/**", "fix/**", "hotfix/**", "claude/**"]
   pull_request:
     branches: ["main"]
 

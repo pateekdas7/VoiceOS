@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 
-const GOOGLE_AUTH_URL = "/webapi/auth/google/start";
+const GOOGLE_AUTH_URL = "/bff/auth/google/start";
 
 const ERROR_MESSAGES: Record<string, string> = {
   google_auth_failed: "Google sign-in failed. Please try again.",

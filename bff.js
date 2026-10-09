@@ -774,6 +774,48 @@ async function crmMatchPhones(dbClient, phones, tenantId) {
 // ═════════════════════════════════════════════════════════════════════════════
 // AUTH ROUTES
 // ═════════════════════════════════════════════════════════════════════════════
+// ─── Google OAuth — proxy to webapi which owns the OAuth dance ──────────────
+// BFF proxies these so the frontend never needs to reach webapi directly.
+// BFF_PUBLIC_URL must be set to the publicly reachable URL of this server
+// so Google can redirect back to /auth/google/callback here.
+const _WEBAPI_BASE = process.env.WEBAPI_BASE_URL || 'http://127.0.0.1:8001';
+
+app.get('/auth/google/start', async (_req, res) => {
+  try {
+    const upstream = await fetch(`${_WEBAPI_BASE}/auth/google/start`, {
+      redirect: 'manual',
+      headers: _makeInternalHeaders({}),
+    });
+    const location = upstream.headers.get('location');
+    if (!location) {
+      return res.redirect('/login?error=google_auth_failed');
+    }
+    return res.redirect(location);
+  } catch (e) {
+    log.error('google_oauth.start_error', { error: e.message });
+    return res.redirect('/login?error=google_auth_failed');
+  }
+});
+
+app.get('/auth/google/callback', async (req, res) => {
+  try {
+    const qs = new URLSearchParams(req.query).toString();
+    const upstream = await fetch(`${_WEBAPI_BASE}/auth/google/callback?${qs}`, {
+      redirect: 'manual',
+      headers: _makeInternalHeaders({}),
+    });
+    const location = upstream.headers.get('location');
+    // Webapi sets a session cookie and redirects to the frontend.
+    // Forward all set-cookie headers, then redirect.
+    const cookies = upstream.headers.getSetCookie ? upstream.headers.getSetCookie() : [];
+    cookies.forEach(c => res.append('Set-Cookie', c));
+    return res.redirect(location || '/login?error=google_auth_failed');
+  } catch (e) {
+    log.error('google_oauth.callback_error', { error: e.message });
+    return res.redirect('/login?error=google_auth_failed');
+  }
+});
+
 app.post('/auth/password/login', async (req, res) => {
   try {
     const { email, password } = req.body;
