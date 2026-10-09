@@ -284,7 +284,7 @@ class TestConversationBuckets:
         out = engine.generate_reply(session, plan, context, "50000 ek baar mein de dunga", _LENDER)
 
         assert out.bucket == Bucket.GIVES_AMOUNT
-        assert "clear हो जाएगा" in out.reply_text
+        assert "clear ho jaayega" in out.reply_text
 
     def test_bare_ack_before_confirm_re_anchors(self) -> None:
         engine, session, context = self._in_conversation()

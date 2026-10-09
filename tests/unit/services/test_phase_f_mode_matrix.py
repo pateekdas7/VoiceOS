@@ -396,6 +396,10 @@ async def test_streaming_mode_generation_race_drops_stale() -> None:
         await asyncio.sleep(0)
     await asyncio.sleep(0.05)
 
+    # Enqueue a dummy clause so flush() advances generation (Option-1 guard
+    # skips bump on empty queue — barge-in in real calls always has audio).
+    from src.libs.contracts.streaming import AudioClause
+    await p.enqueue(AudioClause(audio_data=b"\x00"*8, sample_rate=8000, text="dummy", clause_index=0, is_final=False, generation=0))
     await p.flush()
     p.clear_barge_in()
     release.set()
@@ -428,6 +432,8 @@ async def test_buffered_streaming_mode_generation_race_drops_stale() -> None:
         await asyncio.sleep(0)
     await asyncio.sleep(0.05)
 
+    from src.libs.contracts.streaming import AudioClause as _AC
+    await p.enqueue(_AC(audio_data=b"\x00"*8, sample_rate=8000, text="dummy", clause_index=0, is_final=False, generation=0))
     await p.flush()
     p.clear_barge_in()
     release.set()
@@ -459,6 +465,8 @@ async def test_blocking_mode_generation_race_drops_stale() -> None:
         await asyncio.sleep(0)
     await asyncio.sleep(0.05)
 
+    from src.libs.contracts.streaming import AudioClause as _AC2
+    await p.enqueue(_AC2(audio_data=b"\x00"*8, sample_rate=8000, text="dummy", clause_index=0, is_final=False, generation=0))
     await p.flush()
     p.clear_barge_in()
     release.set()
@@ -567,6 +575,8 @@ async def test_production_send_clause_drops_pre_stale_clause() -> None:
     """A clause whose generation is already behind the scheduler at entry
     to _send_clause: not a single frame reaches the adapter."""
     p = PlaybackScheduler()
+    from src.libs.contracts.streaming import AudioClause as _AC
+    await p.enqueue(_AC(audio_data=b"\x00"*8, sample_rate=8000, text="d", clause_index=0, is_final=False, generation=0))
     await p.flush()  # scheduler now at gen 1
     p.clear_barge_in()
     adapter = _CapturingWebSocketAdapter()
@@ -605,6 +615,10 @@ async def test_production_send_clause_aborts_on_mid_clause_flush() -> None:
 
     adapter = _FlushingAdapter(p, flush_after=3)
     orch = _bare_orchestrator(p, adapter)
+
+    # Pre-populate so the mid-clause flush() advances the generation.
+    from src.libs.contracts.streaming import AudioClause as _AC2
+    await p.enqueue(_AC2(audio_data=b"\x00"*8, sample_rate=8000, text="d", clause_index=0, is_final=False, generation=0))
 
     # 400 ms → 20 total frames if uninterrupted.
     clause = AudioClause(

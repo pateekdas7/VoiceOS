@@ -25,6 +25,7 @@ be inventing a security-relevant design point rather than reusing one.
 from __future__ import annotations
 
 import base64
+import os
 import json
 import logging
 import secrets
@@ -112,6 +113,7 @@ from src.services.user_management.invitation import (
 from src.services.user_management.service import UserService
 
 from .auth_middleware import (
+    InternalAuthMiddleware,
     ForbiddenError,
     SessionRequiredError,
     WebSessionMiddleware,
@@ -222,6 +224,7 @@ def create_web_api(
     system_x_service: Any = None,
     call_summary_repository: Any = None,
     callback_scheduler: Any = None,
+    db_conn: Any = None,
     frontend_base_url: str,
     bff_public_url: str,
     health_aggregator: HealthAggregator | None = None,
@@ -350,6 +353,9 @@ def create_web_api(
     if crm_service is not None:
         routes.extend(_build_crm_routes(crm_service))
 
+    if db_conn is not None:
+        routes.extend(_build_crm_sync_routes(db_conn))
+
     if collections_workflow is not None:
         routes.extend(_build_collections_routes(collections_workflow))
 
@@ -436,6 +442,8 @@ def create_web_api(
         routes=routes,
         lifespan=_lifespan,
         middleware=[
+            # W10: Internal service auth — gates /internal/* routes to BFF only
+            Middleware(InternalAuthMiddleware, token=os.environ.get("BFF_INTERNAL_TOKEN")),
             # Outermost: the frontend (a different origin -- e.g. localhost:3000 vs.
             # this BFF's localhost:8100 in dev, app.voiceos.ai vs. api.voiceos.ai in
             # prod) sends every request with credentials: "include". Without this,
@@ -452,6 +460,361 @@ def create_web_api(
             Middleware(WebSessionMiddleware, session_codec=session_codec),
         ],
     )
+
+
+
+def _build_crm_sync_routes(conn: Any) -> list[Route]:
+    """Phase 4 CRM sync/import routes — LeadSquared credentials, sync log, import jobs."""
+
+    import uuid as _uuid_mod
+    import json as _json_mod
+
+    def _tid(request: Request) -> str | None:
+        try:
+            s = require_tenant_permission(request, "read:all")
+            return _require_tenant_id(s)
+        except Exception:
+            return None
+
+    def _tid_write(request: Request) -> str | None:
+        try:
+            s = require_tenant_permission(request, "write:all")
+            return _require_tenant_id(s)
+        except Exception:
+            return None
+
+    async def crm_get_config(request: Request) -> JSONResponse:
+        try:
+            s = require_tenant_permission(request, PERM_READ_ALL)
+        except SessionRequiredError:
+            return _error(401, "UNAUTHENTICATED", "sign in required")
+        except ForbiddenError as exc:
+            return _error(403, "FORBIDDEN", str(exc))
+        tid = _require_tenant_id(s)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT cred_id::text, api_base_url, is_active, created_at::text, updated_at::text,
+                              LEFT(access_key,8)||'...' AS access_key_preview
+                       FROM leadsquared_credentials WHERE tenant_id=%s""",
+                    (tid,)
+                )
+                row = cur.fetchone()
+            if row:
+                cols = ['cred_id','api_base_url','is_active','created_at','updated_at','access_key_preview']
+                return JSONResponse({'config': dict(zip(cols, row))})
+            return JSONResponse({'config': None})
+        except Exception as e:
+            conn.rollback()
+            return JSONResponse({'error': str(e)}, status_code=500)
+
+    async def crm_put_config(request: Request) -> JSONResponse:
+        try:
+            s = require_tenant_permission(request, PERM_WRITE_ALL)
+        except SessionRequiredError:
+            return _error(401, "UNAUTHENTICATED", "sign in required")
+        except ForbiddenError as exc:
+            return _error(403, "FORBIDDEN", str(exc))
+        tid = _require_tenant_id(s)
+        try:
+            body = await request.json()
+        except Exception:
+            return _error(400, "MALFORMED_PAYLOAD", "request body is not valid JSON")
+        ak = body.get('access_key')
+        sk = body.get('secret_key')
+        if not ak or not sk:
+            return _error(422, "VALIDATION_ERROR", "access_key and secret_key required")
+        base = body.get('api_base_url', 'https://api.leadsquared.com')
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO leadsquared_credentials (tenant_id, access_key, secret_key, api_base_url)
+                       VALUES (%s,%s,%s,%s)
+                       ON CONFLICT (tenant_id) DO UPDATE SET
+                         access_key=EXCLUDED.access_key, secret_key=EXCLUDED.secret_key,
+                         api_base_url=EXCLUDED.api_base_url, is_active=TRUE, updated_at=NOW()
+                       RETURNING cred_id::text, api_base_url, is_active, updated_at::text""",
+                    (tid, ak, sk, base)
+                )
+                row = cur.fetchone()
+            conn.commit()
+            cols = ['cred_id','api_base_url','is_active','updated_at']
+            return JSONResponse({'config': dict(zip(cols, row))})
+        except Exception as e:
+            conn.rollback()
+            return JSONResponse({'error': str(e)}, status_code=500)
+
+    async def crm_delete_config(request: Request) -> JSONResponse:
+        try:
+            s = require_tenant_permission(request, PERM_WRITE_ALL)
+        except SessionRequiredError:
+            return _error(401, "UNAUTHENTICATED", "sign in required")
+        except ForbiddenError as exc:
+            return _error(403, "FORBIDDEN", str(exc))
+        tid = _require_tenant_id(s)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE leadsquared_credentials SET is_active=FALSE, updated_at=NOW() WHERE tenant_id=%s",
+                    (tid,)
+                )
+            conn.commit()
+            return JSONResponse({'ok': True})
+        except Exception as e:
+            conn.rollback()
+            return JSONResponse({'error': str(e)}, status_code=500)
+
+    async def crm_sync_status(request: Request) -> JSONResponse:
+        try:
+            s = require_tenant_permission(request, PERM_READ_ALL)
+        except SessionRequiredError:
+            return _error(401, "UNAUTHENTICATED", "sign in required")
+        except ForbiddenError as exc:
+            return _error(403, "FORBIDDEN", str(exc))
+        tid = _require_tenant_id(s)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT entity_type,
+                              COUNT(*) FILTER (WHERE sync_status='PENDING')  AS pending,
+                              COUNT(*) FILTER (WHERE sync_status='SYNCED')   AS synced,
+                              COUNT(*) FILTER (WHERE sync_status='FAILED')   AS failed,
+                              COUNT(*) FILTER (WHERE sync_status='SKIPPED')  AS skipped,
+                              MAX(synced_at)::text AS last_sync_at
+                       FROM crm_sync_log WHERE tenant_id=%s GROUP BY entity_type""",
+                    (tid,)
+                )
+                summary_rows = cur.fetchall()
+                cur.execute(
+                    """SELECT entity_type, entity_id::text, last_error, attempt_count, updated_at::text
+                       FROM crm_sync_log WHERE tenant_id=%s AND sync_status='FAILED'
+                       ORDER BY updated_at DESC LIMIT 10""",
+                    (tid,)
+                )
+                fail_rows = cur.fetchall()
+            sc = ['entity_type','pending','synced','failed','skipped','last_sync_at']
+            fc = ['entity_type','entity_id','last_error','attempt_count','updated_at']
+            return JSONResponse({
+                'summary': [dict(zip(sc, r)) for r in summary_rows],
+                'recent_failures': [dict(zip(fc, r)) for r in fail_rows],
+            })
+        except Exception as e:
+            return JSONResponse({'error': str(e)}, status_code=500)
+
+    async def crm_trigger_disposition(request: Request) -> JSONResponse:
+        try:
+            s = require_tenant_permission(request, PERM_WRITE_ALL)
+        except SessionRequiredError:
+            return _error(401, "UNAUTHENTICATED", "sign in required")
+        except ForbiddenError as exc:
+            return _error(403, "FORBIDDEN", str(exc))
+        tid = _require_tenant_id(s)
+        call_id = request.path_params['call_id']
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO crm_sync_log (tenant_id, entity_type, entity_id, sync_status)
+                       VALUES (%s,'disposition',%s::uuid,'PENDING')
+                       ON CONFLICT (tenant_id,entity_type,entity_id) DO UPDATE
+                       SET sync_status='PENDING', attempt_count=0, updated_at=NOW()""",
+                    (tid, call_id)
+                )
+            conn.commit()
+            return JSONResponse({'queued': True, 'entity_id': call_id})
+        except Exception as e:
+            conn.rollback()
+            return JSONResponse({'error': str(e)}, status_code=500)
+
+    async def crm_trigger_ptp(request: Request) -> JSONResponse:
+        try:
+            s = require_tenant_permission(request, PERM_WRITE_ALL)
+        except SessionRequiredError:
+            return _error(401, "UNAUTHENTICATED", "sign in required")
+        except ForbiddenError as exc:
+            return _error(403, "FORBIDDEN", str(exc))
+        tid = _require_tenant_id(s)
+        ptp_id = request.path_params['ptp_id']
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO crm_sync_log (tenant_id, entity_type, entity_id, sync_status)
+                       VALUES (%s,'ptp',%s::uuid,'PENDING')
+                       ON CONFLICT (tenant_id,entity_type,entity_id) DO UPDATE
+                       SET sync_status='PENDING', attempt_count=0, updated_at=NOW()""",
+                    (tid, ptp_id)
+                )
+            conn.commit()
+            return JSONResponse({'queued': True, 'entity_id': ptp_id})
+        except Exception as e:
+            conn.rollback()
+            return JSONResponse({'error': str(e)}, status_code=500)
+
+    async def crm_trigger_settlement(request: Request) -> JSONResponse:
+        try:
+            s = require_tenant_permission(request, PERM_WRITE_ALL)
+        except SessionRequiredError:
+            return _error(401, "UNAUTHENTICATED", "sign in required")
+        except ForbiddenError as exc:
+            return _error(403, "FORBIDDEN", str(exc))
+        tid = _require_tenant_id(s)
+        sid = request.path_params['settlement_id']
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO crm_sync_log (tenant_id, entity_type, entity_id, sync_status)
+                       VALUES (%s,'settlement',%s::uuid,'PENDING')
+                       ON CONFLICT (tenant_id,entity_type,entity_id) DO UPDATE
+                       SET sync_status='PENDING', attempt_count=0, updated_at=NOW()""",
+                    (tid, sid)
+                )
+            conn.commit()
+            return JSONResponse({'queued': True, 'entity_id': sid})
+        except Exception as e:
+            conn.rollback()
+            return JSONResponse({'error': str(e)}, status_code=500)
+
+    async def crm_import_leads(request: Request) -> JSONResponse:
+        try:
+            s = require_tenant_permission(request, PERM_WRITE_ALL)
+        except SessionRequiredError:
+            return _error(401, "UNAUTHENTICATED", "sign in required")
+        except ForbiddenError as exc:
+            return _error(403, "FORBIDDEN", str(exc))
+        tid = _require_tenant_id(s)
+        try:
+            body = await request.json()
+        except Exception:
+            return _error(400, "MALFORMED_PAYLOAD", "request body is not valid JSON")
+        cid = body.get('campaign_id')
+        filters = body.get('filters', [])
+        max_leads = body.get('max_leads', 1000)
+        try:
+            with conn.cursor() as cur:
+                # Verify LS credentials
+                cur.execute(
+                    "SELECT cred_id FROM leadsquared_credentials WHERE tenant_id=%s AND is_active=TRUE",
+                    (tid,)
+                )
+                if not cur.fetchone():
+                    return JSONResponse(
+                        {'error': 'leadsquared_not_configured',
+                         'detail': 'Set credentials via PUT /crm/sync/config first'},
+                        status_code=422
+                    )
+                cur.execute(
+                    """INSERT INTO leadsquared_import_log
+                         (tenant_id, campaign_id, status, filters)
+                       VALUES (%s, %s, 'QUEUED', %s::jsonb)
+                       RETURNING import_id::text""",
+                    (tid, cid or None, _json_mod.dumps({'filters': filters, 'max_leads': max_leads}))
+                )
+                import_id = cur.fetchone()[0]
+            conn.commit()
+            return JSONResponse({'import_id': import_id, 'status': 'QUEUED'}, status_code=202)
+        except Exception as e:
+            conn.rollback()
+            return JSONResponse({'error': str(e)}, status_code=500)
+
+    async def crm_import_status(request: Request) -> JSONResponse:
+        try:
+            s = require_tenant_permission(request, PERM_READ_ALL)
+        except SessionRequiredError:
+            return _error(401, "UNAUTHENTICATED", "sign in required")
+        except ForbiddenError as exc:
+            return _error(403, "FORBIDDEN", str(exc))
+        tid = _require_tenant_id(s)
+        try:
+            limit = min(50, int(request.query_params.get('limit', '10')))
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT import_id::text, status, leads_fetched, leads_created,
+                              leads_updated, leads_skipped, error_message,
+                              started_at::text, completed_at::text
+                       FROM leadsquared_import_log
+                       WHERE tenant_id=%s ORDER BY started_at DESC LIMIT %s""",
+                    (tid, limit)
+                )
+                rows = cur.fetchall()
+            cols = ['import_id','status','leads_fetched','leads_created',
+                    'leads_updated','leads_skipped','error_message','started_at','completed_at']
+            return JSONResponse({'imports': [dict(zip(cols, r)) for r in rows]})
+        except Exception as e:
+            return JSONResponse({'error': str(e)}, status_code=500)
+
+    async def crm_get_field_mapping(request: Request) -> JSONResponse:
+        try:
+            s = require_tenant_permission(request, PERM_READ_ALL)
+        except SessionRequiredError:
+            return _error(401, "UNAUTHENTICATED", "sign in required")
+        except ForbiddenError as exc:
+            return _error(403, "FORBIDDEN", str(exc))
+        tid = _require_tenant_id(s)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT d.voiceos_field,
+                              COALESCE(t.ls_field, d.ls_field) AS ls_field,
+                              d.description,
+                              (t.mapping_id IS NOT NULL) AS is_overridden
+                       FROM leadsquared_default_field_mapping d
+                       LEFT JOIN leadsquared_field_mapping t
+                         ON t.voiceos_field=d.voiceos_field AND t.tenant_id=%s AND t.is_active=TRUE
+                       ORDER BY d.voiceos_field""",
+                    (tid,)
+                )
+                rows = cur.fetchall()
+            cols = ['voiceos_field','ls_field','description','is_overridden']
+            return JSONResponse({'mappings': [dict(zip(cols, r)) for r in rows]})
+        except Exception as e:
+            return JSONResponse({'error': str(e)}, status_code=500)
+
+    async def crm_put_field_mapping(request: Request) -> JSONResponse:
+        try:
+            s = require_tenant_permission(request, PERM_WRITE_ALL)
+        except SessionRequiredError:
+            return _error(401, "UNAUTHENTICATED", "sign in required")
+        except ForbiddenError as exc:
+            return _error(403, "FORBIDDEN", str(exc))
+        tid = _require_tenant_id(s)
+        try:
+            body = await request.json()
+        except Exception:
+            return _error(400, "MALFORMED_PAYLOAD", "request body is not valid JSON")
+        vf = body.get('voiceos_field')
+        lf = body.get('ls_field')
+        if not vf or not lf:
+            return _error(422, "VALIDATION_ERROR", "voiceos_field and ls_field required")
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO leadsquared_field_mapping (tenant_id, voiceos_field, ls_field)
+                       VALUES (%s,%s,%s)
+                       ON CONFLICT (tenant_id, voiceos_field) DO UPDATE SET
+                         ls_field=EXCLUDED.ls_field, is_active=TRUE
+                       RETURNING mapping_id::text, voiceos_field, ls_field""",
+                    (tid, vf, lf)
+                )
+                row = cur.fetchone()
+            conn.commit()
+            cols = ['mapping_id','voiceos_field','ls_field']
+            return JSONResponse({'mapping': dict(zip(cols, row))})
+        except Exception as e:
+            conn.rollback()
+            return JSONResponse({'error': str(e)}, status_code=500)
+
+    return [
+        Route("/crm/sync/config",                            crm_get_config,          methods=["GET"]),
+        Route("/crm/sync/config",                            crm_put_config,          methods=["PUT"]),
+        Route("/crm/sync/config",                            crm_delete_config,       methods=["DELETE"]),
+        Route("/crm/sync/status",                            crm_sync_status,         methods=["GET"]),
+        Route("/crm/sync/disposition/{call_id}",             crm_trigger_disposition, methods=["POST"]),
+        Route("/crm/sync/ptp/{ptp_id}",                      crm_trigger_ptp,         methods=["POST"]),
+        Route("/crm/sync/settlement/{settlement_id}",        crm_trigger_settlement,  methods=["POST"]),
+        Route("/crm/import/leadsquared",                     crm_import_leads,        methods=["POST"]),
+        Route("/crm/import/status",                          crm_import_status,       methods=["GET"]),
+        Route("/crm/field-mapping",                          crm_get_field_mapping,   methods=["GET"]),
+        Route("/crm/field-mapping",                          crm_put_field_mapping,   methods=["PUT"]),
+    ]
 
 
 def _build_client_routes(tenant_service: TenantService) -> list[Route]:

@@ -370,6 +370,7 @@ def create_app() -> Starlette:
         health_aggregator=health_aggregator,
         cookie_secure=os.environ.get("WEB_API_COOKIE_SECURE", "true").lower() != "false",
         twilio_auth_token=os.environ.get("TWILIO_AUTH_TOKEN") or None,
+        db_conn=conn,
     )
 
 

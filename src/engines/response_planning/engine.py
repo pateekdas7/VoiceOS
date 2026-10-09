@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, UTC
 
 from src.libs.contracts.context import CustomerContext
 from src.libs.contracts.decision import (
@@ -574,7 +574,7 @@ class ResponsePlanningEngine:
         # Assemble ResponsePlan
         # ------------------------------------------------------------------
         plan_id = str(uuid.uuid4())
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
 
         # Adjust strategy if adaptive engine recommends escalation.
         final_strategy_label = _ENGINE_STRATEGY_TO_LABEL.get(strategy_sel.action, StrategyLabel.ASK)

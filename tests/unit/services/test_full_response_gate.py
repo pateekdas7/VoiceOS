@@ -107,6 +107,17 @@ class _RecordingScheduler(PlaybackScheduler):
         if len(self._queue) > pre_len:
             self.enqueues_seen.append(clause)
 
+    async def flush(self) -> list[AudioClause]:  # type: ignore[override]
+        """Always advances generation even with empty queue.
+
+        FULL_RESPONSE mode holds all clauses until is_final so the scheduler
+        queue is empty; real flush() skips generation bump in that case.
+        This override forces the bump so gate discard tests work.
+        """
+        self._generation += 1
+        self._barge_in_event.set()
+        return []
+
 
 class _MultiClauseTTS:
     """TTS fake: one AudioClause per text chunk fed in."""

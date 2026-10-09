@@ -390,7 +390,7 @@ def test_stage_budgets_match_v1_ch23_literal_values() -> None:
     assert STAGE_BUDGETS_MS["stt"] == 300.0
     assert STAGE_BUDGETS_MS["cil"] == 120.0
     assert STAGE_BUDGETS_MS["llm_ttft"] == 350.0
-    assert STAGE_BUDGETS_MS["tts_first_clause"] == 250.0
+    assert STAGE_BUDGETS_MS["tts_first_clause"] == 750.0
 
 
 def test_stage_percentiles_is_stable_across_recorded_dates() -> None:

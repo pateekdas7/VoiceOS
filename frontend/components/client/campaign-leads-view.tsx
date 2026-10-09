@@ -514,7 +514,7 @@ export function CampaignLeadsView({ campaignId, pipelines = [] }: { campaignId: 
                   <TableHeaderCell>Invalid</TableHeaderCell>
                   <TableHeaderCell>Duplicates</TableHeaderCell>
                   <TableHeaderCell>Date</TableHeaderCell>
-                  <TableHeaderCell></TableHeaderCell>
+                  <TableHeaderCell>&nbsp;</TableHeaderCell>
                 </TableRow>
               </TableHead>
               <TableBody>

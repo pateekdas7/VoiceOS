@@ -1,0 +1,49 @@
+# /opt/voiceos/app/deployment/cpu/prometheus.yml
+# VoiceOS bare-metal Prometheus config (no Kubernetes SD).
+# Paths inside the container (see restore.sh bind mounts).
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: voiceos-cpu-node
+    environment: production
+
+rule_files:
+  - /etc/prometheus/recording_rules.yml
+  - /etc/prometheus/rules/slo_alerts.yml
+  - /etc/prometheus/rules/infrastructure.yml
+  - /etc/prometheus/rules/application.yml
+  - /etc/prometheus/rules/business.yml
+  - /etc/prometheus/rules/ai_services.yml
+  - /etc/prometheus/rules/voiceos_bff_dialer.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: [host.docker.internal:9093]
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: [localhost:9090]
+
+  - job_name: node-exporter
+    static_configs:
+      - targets: [host.docker.internal:9100]
+        labels:
+          instance: cpu-node
+
+  - job_name: voiceos-bff
+    metrics_path: /metrics
+    static_configs:
+      - targets: [host.docker.internal:8000]
+        labels:
+          service: bff
+
+  - job_name: voiceos-webapi
+    metrics_path: /metrics/
+    static_configs:
+      - targets: [host.docker.internal:8001]
+        labels:
+          service: webapi

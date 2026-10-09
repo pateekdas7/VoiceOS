@@ -139,9 +139,45 @@ def require_tenant_permission(request: Request, permission: str) -> WebSession:
     return session
 
 
+
+
+# ─── W10: Internal service auth middleware ─────────────────────────────────
+class InternalAuthMiddleware:
+    """Validates X-Internal-Token on routes prefixed with /internal/.
+
+    When BFF_INTERNAL_TOKEN is set in the environment, any request to a path
+    starting with /internal/ must carry the matching header or receive 401.
+    Requests from the browser (no such header) are rejected — only BFF can
+    reach internal routes.
+    """
+
+    _INTERNAL_PREFIX = "/internal/"
+
+    def __init__(self, app: ASGIApp, token: str | None) -> None:
+        self._app = app
+        self._token = token
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or self._token is None:
+            await self._app(scope, receive, send)
+            return
+        path: str = scope.get("path", "")
+        if not path.startswith(self._INTERNAL_PREFIX):
+            await self._app(scope, receive, send)
+            return
+        headers = dict(scope.get("headers", []))
+        supplied = headers.get(b"x-internal-token", b"").decode()
+        if supplied != self._token:
+            from starlette.responses import Response
+            await Response(status_code=401, content=b"Unauthorized")(scope, receive, send)
+            return
+        await self._app(scope, receive, send)
+
+
 __all__ = [
     "ForbiddenError",
     "SessionRequiredError",
+    "InternalAuthMiddleware",
     "WebSessionMiddleware",
     "get_session",
     "require_platform_permission",

@@ -941,7 +941,7 @@ class ConversationEngine:
                 # stream remaining clauses concurrently (buffered_streaming mode).
                 clauses = await self._run_llm_streaming_path(
                     prompt_text, response_plan, playback, customer_name,
-                    tts_mode="buffered_streaming",
+                    tts_mode="full_response",
                     cancel_event=cancel_event,
                 )
                 all_clauses.extend(clauses)
@@ -952,13 +952,13 @@ class ConversationEngine:
                 # clause releases after threshold_ms is buffered, rest stream behind.
                 all_clauses.extend(await self.speak_scripted_text(
                     full_output_text, playback, response_plan,
-                    tts_mode="buffered_streaming",
+                    tts_mode="full_response",
                 ))
         else:
             # buffered_streaming: legacy no-dialogue-response path.
             clauses = await self._run_llm_streaming_path(
                 prompt_text, response_plan, playback, customer_name,
-                tts_mode="buffered_streaming",
+                tts_mode="full_response",
                 cancel_event=cancel_event,
             )
             all_clauses.extend(clauses)

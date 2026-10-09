@@ -114,18 +114,32 @@ app.use(cors({
   credentials: true,
 }));
 
-// ─── Phase 9d: Security headers ───────────────────────────────────────────────
+// ─── W10: Security headers ────────────────────────────────────────────────────
 app.use((_req, res, next) => {
   res.set('X-Content-Type-Options', 'nosniff');
   res.set('X-Frame-Options', 'DENY');
   res.set('X-XSS-Protection', '0');
   res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
-  if (process.env.NODE_ENV === 'production') {
-    res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  res.set(
+    'Content-Security-Policy',
+    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+  );
+  if (process.env.VOICEOS_ENVIRONMENT === 'production' || process.env.NODE_ENV === 'production') {
+    res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
   }
   next();
 });
+
+// ─── W10: Internal service auth (BFF → webapi) ──────────────────────────────
+// Any outbound request from BFF to webapi includes X-Internal-Token so webapi
+// can reject spoofed internal calls from outside the trust boundary.
+const _BFF_INTERNAL_TOKEN = process.env.BFF_INTERNAL_TOKEN || null;
+function _makeInternalHeaders(extra) {
+  const h = { 'Content-Type': 'application/json', ...extra };
+  if (_BFF_INTERNAL_TOKEN) h['X-Internal-Token'] = _BFF_INTERNAL_TOKEN;
+  return h;
+}
 
 // ─── Phase 9 / 12c: soft JWT parse + JTI revocation check ────────────────────
 app.use(async (req, _res, next) => {
@@ -1923,26 +1937,668 @@ app.get('/enrichment/stats', requireAuth, async (req, res) => {
   } catch (e) { throw e; }
 });
 
-// ─── Analytics API ────────────────────────────────────────────────────────────
-app.get('/analytics/campaigns/:id/summary', requireAuth, async (req, res) => {
+
+
+// ── W8: Analytics Platform ────────────────────────────────────────────────────
+
+// GET /analytics/overview — tenant-wide KPIs for 24h / 7d / 30d windows
+app.get('/analytics/overview', requireAuth, async (req, res) => {
   try {
     const tid = req.user.tenant_id;
-    const r = await pool.query(
+    const windows = [
+      { label: '24h', pg: "NOW() - INTERVAL '24 hours'" },
+      { label: '7d',  pg: "NOW() - INTERVAL '7 days'"  },
+      { label: '30d', pg: "NOW() - INTERVAL '30 days'" },
+    ];
+    const result = {};
+    for (const w of windows) {
+      const [callR, ptpR, costR, cbR, retR] = await Promise.all([
+        pool.query(
+          `SELECT
+              COUNT(*)                                                       AS total_calls,
+              COUNT(*) FILTER (WHERE ca.status = 'COMPLETED')               AS calls_connected,
+              COUNT(*) FILTER (WHERE ca.status = 'NO_ANSWER')               AS calls_no_answer,
+              COUNT(*) FILTER (WHERE ca.status IN ('FAILED','BUSY'))         AS calls_failed,
+              COALESCE(AVG(ca.duration_s) FILTER (WHERE ca.status='COMPLETED'),0)::int AS avg_duration_s,
+              COALESCE(SUM(ca.duration_s) FILTER (WHERE ca.status='COMPLETED'),0) AS total_duration_s,
+              COUNT(DISTINCT ca.lead_id)                                    AS unique_leads_called,
+              COUNT(DISTINCT ca.campaign_id)                                AS active_campaigns
+             FROM call_attempts ca
+            WHERE ca.tenant_id = $1 AND ca.initiated_at > ${w.pg}`,
+          [tid]
+        ),
+        pool.query(
+          `SELECT
+              COUNT(*) AS ptp_count,
+              COALESCE(SUM(ptp.promised_amount_minor),0) AS amount_pending_minor,
+              COALESCE(SUM(ptp.promised_amount_minor) FILTER (WHERE ptp.status='FULFILLED'),0) AS amount_collected_minor
+             FROM promises_to_pay ptp
+            WHERE ptp.tenant_id=$1 AND ptp.recorded_at > ${w.pg}`,
+          [tid]
+        ),
+        pool.query(
+          `SELECT COALESCE(SUM(ue.total_cost_minor),0) AS total_cost_minor
+             FROM usage_events ue
+            WHERE ue.tenant_id=$1 AND ue.created_at > ${w.pg}`,
+          [tid]
+        ),
+        pool.query(
+          `SELECT COUNT(DISTINCT lee.lead_id) AS callback_count
+             FROM lead_execution_events lee
+            WHERE lee.tenant_id=$1
+              AND lee.event_type IN ('CALLBACK_SCHEDULED','CALL_DEFERRED')
+              AND lee.created_at > ${w.pg}`,
+          [tid]
+        ),
+        pool.query(
+          `SELECT COUNT(DISTINCT lead_id) AS retry_leads
+             FROM (
+               SELECT lead_id FROM call_attempts
+                WHERE tenant_id=$1 AND initiated_at > ${w.pg}
+                GROUP BY lead_id HAVING COUNT(*) > 1
+             ) t`,
+          [tid]
+        ),
+      ]);
+      const d   = callR.rows[0];
+      const p   = ptpR.rows[0];
+      const c   = costR.rows[0];
+      const total       = parseInt(d.total_calls)         || 0;
+      const connected   = parseInt(d.calls_connected)     || 0;
+      const ptps        = parseInt(p.ptp_count)           || 0;
+      const cost        = parseInt(c.total_cost_minor)    || 0;
+      const callbacks   = parseInt(cbR.rows[0].callback_count) || 0;
+      const retryLeads  = parseInt(retR.rows[0].retry_leads)   || 0;
+      const uniqueLeads = parseInt(d.unique_leads_called) || 0;
+      result[w.label] = {
+        total_calls:                   total,
+        calls_connected:               connected,
+        calls_no_answer:               parseInt(d.calls_no_answer)  || 0,
+        calls_failed:                  parseInt(d.calls_failed)     || 0,
+        avg_duration_s:                parseInt(d.avg_duration_s)   || 0,
+        total_duration_s:              parseInt(d.total_duration_s) || 0,
+        unique_leads_called:           uniqueLeads,
+        active_campaigns:              parseInt(d.active_campaigns) || 0,
+        answer_rate_pct:               total > 0 ? Math.round((connected / total) * 1000) / 10 : 0,
+        ptp_count:                     ptps,
+        ptp_rate_pct:                  connected > 0 ? Math.round((ptps / connected) * 1000) / 10 : 0,
+        amount_collected_minor:        parseInt(p.amount_collected_minor) || 0,
+        amount_pending_minor:          parseInt(p.amount_pending_minor)   || 0,
+        total_cost_minor:              cost,
+        cost_per_connected_call_minor: connected > 0 ? Math.round(cost / connected) : 0,
+        cost_per_ptp_minor:            ptps > 0 ? Math.round(cost / ptps) : 0,
+        callback_count:                callbacks,
+        callback_rate_pct:             connected > 0 ? Math.round((callbacks / connected) * 1000) / 10 : 0,
+        retry_leads:                   retryLeads,
+        retry_rate_pct:                uniqueLeads > 0 ? Math.round((retryLeads / uniqueLeads) * 1000) / 10 : 0,
+      };
+    }
+    res.json(result);
+  } catch (e) { throw e; }
+});
+
+// GET /analytics/time-series?days=30 — daily breakdown for charts
+app.get('/analytics/time-series', requireAuth, async (req, res) => {
+  try {
+    const tid = req.user.tenant_id;
+    const days = Math.min(Math.max(parseInt(req.query.days) || 30, 1), 90);
+    const { rows } = await pool.query(
       `SELECT
-         COUNT(*) FILTER (WHERE status='COMPLETED') as completed,
-         COUNT(*) FILTER (WHERE queue_status='QUEUED') as queued,
-         COUNT(*) FILTER (WHERE qualified=true) as qualified,
-         COUNT(*) as total
-       FROM leads WHERE campaign_id=$1 AND tenant_id=$2`,
-      [req.params.id, tid]
+          (ca.initiated_at AT TIME ZONE 'Asia/Kolkata')::date          AS day,
+          COUNT(*)                                                      AS total_calls,
+          COUNT(*) FILTER (WHERE ca.status = 'COMPLETED')              AS calls_connected,
+          COUNT(*) FILTER (WHERE ca.status = 'NO_ANSWER')              AS calls_no_answer,
+          COUNT(*) FILTER (WHERE ca.status IN ('FAILED','BUSY'))        AS calls_failed,
+          COALESCE(AVG(ca.duration_s) FILTER (WHERE ca.status='COMPLETED'),0)::int AS avg_duration_s,
+          COALESCE(SUM(ca.duration_s) FILTER (WHERE ca.status='COMPLETED'),0) AS total_duration_s,
+          COUNT(DISTINCT ca.lead_id)                                   AS unique_leads
+         FROM call_attempts ca
+        WHERE ca.tenant_id = $1
+          AND ca.initiated_at > NOW() - ($2 || ' days')::interval
+        GROUP BY 1 ORDER BY 1 ASC`,
+      [tid, days]
     );
-    const d = r.rows[0];
-    const total = parseInt(d.total) || 1;
+    const { rows: ptpRows } = await pool.query(
+      `SELECT
+          (lee.created_at AT TIME ZONE 'Asia/Kolkata')::date AS day,
+          COUNT(*) AS ptp_count
+         FROM lead_execution_events lee
+        WHERE lee.tenant_id=$1 AND lee.event_type='PTP_RECORDED'
+          AND lee.created_at > NOW() - ($2 || ' days')::interval
+        GROUP BY 1`,
+      [tid, days]
+    );
+    const ptpMap = Object.fromEntries(ptpRows.map(r => [String(r.day), parseInt(r.ptp_count)]));
+    res.json(rows.map(r => {
+      const total = parseInt(r.total_calls) || 0;
+      const conn  = parseInt(r.calls_connected) || 0;
+      const ptps  = ptpMap[String(r.day)] || 0;
+      return {
+        day:              r.day,
+        total_calls:      total,
+        calls_connected:  conn,
+        calls_no_answer:  parseInt(r.calls_no_answer) || 0,
+        calls_failed:     parseInt(r.calls_failed) || 0,
+        avg_duration_s:   parseInt(r.avg_duration_s) || 0,
+        total_duration_s: parseInt(r.total_duration_s) || 0,
+        unique_leads:     parseInt(r.unique_leads) || 0,
+        ptp_count:        ptps,
+        answer_rate_pct:  total > 0 ? Math.round((conn  / total) * 1000) / 10 : 0,
+        ptp_rate_pct:     conn  > 0 ? Math.round((ptps  / conn)  * 1000) / 10 : 0,
+      };
+    }));
+  } catch (e) { throw e; }
+});
+
+// GET /analytics/campaigns — per-campaign analytics
+app.get('/analytics/campaigns', requireAuth, async (req, res) => {
+  try {
+    const tid = req.user.tenant_id;
+    const { rows } = await pool.query(
+      `SELECT
+          c.campaign_id,
+          c.name         AS campaign_name,
+          c.status       AS campaign_status,
+          c.created_at,
+          COUNT(ca.attempt_id)                                               AS total_calls,
+          COUNT(ca.attempt_id) FILTER (WHERE ca.status='COMPLETED')         AS calls_connected,
+          COUNT(ca.attempt_id) FILTER (WHERE ca.status='NO_ANSWER')         AS calls_no_answer,
+          COUNT(ca.attempt_id) FILTER (WHERE ca.status IN ('FAILED','BUSY')) AS calls_failed,
+          COALESCE(AVG(ca.duration_s) FILTER (WHERE ca.status='COMPLETED'),0)::int AS avg_duration_s,
+          COALESCE(SUM(ca.duration_s) FILTER (WHERE ca.status='COMPLETED'),0)      AS total_duration_s,
+          COUNT(DISTINCT ca.lead_id)                                         AS unique_leads_called,
+          (SELECT COUNT(*) FROM leads l
+            WHERE l.campaign_id=c.campaign_id AND l.tenant_id=$1)            AS total_leads,
+          (SELECT COUNT(*) FROM lead_execution_events lee
+            WHERE lee.campaign_id=c.campaign_id AND lee.tenant_id=$1
+              AND lee.event_type='PTP_RECORDED')                              AS ptp_count,
+          (SELECT COUNT(DISTINCT lee2.lead_id) FROM lead_execution_events lee2
+            WHERE lee2.campaign_id=c.campaign_id AND lee2.tenant_id=$1
+              AND lee2.event_type IN ('CALLBACK_SCHEDULED','CALL_DEFERRED'))  AS callback_count,
+          (SELECT COUNT(DISTINCT t.lead_id)
+            FROM (SELECT lead_id FROM call_attempts ca2i
+                  WHERE ca2i.campaign_id=c.campaign_id AND ca2i.tenant_id=$1
+                  GROUP BY lead_id HAVING COUNT(*)>1) t)                      AS retry_leads
+         FROM campaigns c
+         LEFT JOIN call_attempts ca ON ca.campaign_id=c.campaign_id AND ca.tenant_id=$1
+        WHERE c.tenant_id=$1
+        GROUP BY c.campaign_id, c.name, c.status, c.created_at
+        ORDER BY total_calls DESC NULLS LAST, c.name ASC
+        LIMIT 50`,
+      [tid]
+    );
+    res.json(rows.map(r => {
+      const total = parseInt(r.total_calls)         || 0;
+      const conn  = parseInt(r.calls_connected)     || 0;
+      const ptps  = parseInt(r.ptp_count)           || 0;
+      const cbs   = parseInt(r.callback_count)      || 0;
+      const retry = parseInt(r.retry_leads)         || 0;
+      const uniq  = parseInt(r.unique_leads_called) || 0;
+      return {
+        campaign_id:         r.campaign_id,
+        campaign_name:       r.campaign_name,
+        campaign_status:     r.campaign_status,
+        created_at:          r.created_at,
+        total_leads:         parseInt(r.total_leads) || 0,
+        total_calls:         total,
+        calls_connected:     conn,
+        calls_no_answer:     parseInt(r.calls_no_answer) || 0,
+        calls_failed:        parseInt(r.calls_failed)    || 0,
+        unique_leads_called: uniq,
+        avg_duration_s:      parseInt(r.avg_duration_s)  || 0,
+        total_duration_s:    parseInt(r.total_duration_s)|| 0,
+        answer_rate_pct:     total > 0 ? Math.round((conn  / total) * 1000) / 10 : 0,
+        ptp_count:           ptps,
+        ptp_rate_pct:        conn  > 0 ? Math.round((ptps  / conn)  * 1000) / 10 : 0,
+        callback_count:      cbs,
+        callback_rate_pct:   conn  > 0 ? Math.round((cbs   / conn)  * 1000) / 10 : 0,
+        retry_leads:         retry,
+        retry_rate_pct:      uniq  > 0 ? Math.round((retry / uniq)  * 1000) / 10 : 0,
+      };
+    }));
+  } catch (e) { throw e; }
+});
+
+// GET /analytics/export?days=30&format=csv — download analytics report
+app.get('/analytics/export', requireAuth, async (req, res) => {
+  try {
+    const tid = req.user.tenant_id;
+    const days = Math.min(Math.max(parseInt(req.query.days) || 30, 1), 365);
+    const fmt  = String(req.query.format || 'csv').toLowerCase();
+    if (!['csv', 'json'].includes(fmt)) return res.status(422).json({ error: 'format must be csv or json' });
+    const { rows } = await pool.query(
+      `SELECT
+          (ca.initiated_at AT TIME ZONE 'Asia/Kolkata')::date          AS day,
+          c.name                                                        AS campaign_name,
+          ca.campaign_id,
+          COUNT(*)                                                      AS total_calls,
+          COUNT(*) FILTER (WHERE ca.status='COMPLETED')                AS calls_connected,
+          COUNT(*) FILTER (WHERE ca.status='NO_ANSWER')                AS calls_no_answer,
+          COUNT(*) FILTER (WHERE ca.status IN ('FAILED','BUSY'))        AS calls_failed,
+          COALESCE(SUM(ca.duration_s) FILTER (WHERE ca.status='COMPLETED'),0) AS total_duration_s,
+          COALESCE(AVG(ca.duration_s) FILTER (WHERE ca.status='COMPLETED'),0)::int AS avg_duration_s
+         FROM call_attempts ca
+         LEFT JOIN campaigns c ON c.campaign_id=ca.campaign_id
+        WHERE ca.tenant_id=$1 AND ca.initiated_at > NOW() - ($2 || ' days')::interval
+        GROUP BY 1,2,3 ORDER BY 1 DESC, 2 ASC`,
+      [tid, days]
+    );
+    if (fmt === 'json') return res.json(rows);
+    const cols = ['day','campaign_name','campaign_id','total_calls','calls_connected',
+                  'calls_no_answer','calls_failed','total_duration_s','avg_duration_s'];
+    const lines = [cols.join(','), ...rows.map(r => cols.map(c => String(r[c] ?? '')).join(','))];
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="voiceos-analytics-${days}d.csv"`);
+    return res.send(lines.join('\n'));
+  } catch (e) { throw e; }
+});
+
+// POST /analytics/aggregate — compute & upsert analytics_daily rollup for a day
+app.post('/analytics/aggregate', requireAuth, async (req, res) => {
+  try {
+    const tid = req.user.tenant_id;
+    const { day, campaign_id } = req.body || {};
+    const targetDay = day || new Date().toISOString().slice(0, 10);
+
+    const statsQ = await pool.query(
+      `SELECT
+          COUNT(*) FILTER (WHERE ca.status='COMPLETED')                           AS calls_completed,
+          COALESCE(AVG(ca.duration_s) FILTER (WHERE ca.status='COMPLETED'),0)::bigint*1000 AS avg_duration_ms,
+          COALESCE(SUM(ca.duration_s) FILTER (WHERE ca.status='COMPLETED'),0)    AS total_duration_s,
+          COUNT(*)                                                                AS total_calls,
+          COUNT(*) FILTER (WHERE ca.status NOT IN ('FAILED','BUSY'))             AS contactable
+         FROM call_attempts ca
+        WHERE ca.tenant_id=$1
+          AND (ca.initiated_at AT TIME ZONE 'Asia/Kolkata')::date = $2::date
+          AND ($3::uuid IS NULL OR ca.campaign_id=$3::uuid)`,
+      [tid, targetDay, campaign_id || null]
+    );
+    const ptpQ = await pool.query(
+      `SELECT
+          COUNT(*) AS ptp_count,
+          COALESCE(SUM(ptp.promised_amount_minor) FILTER (WHERE ptp.status='FULFILLED'),0) AS amount_collected_minor
+         FROM promises_to_pay ptp
+        WHERE ptp.tenant_id=$1
+          AND (ptp.recorded_at AT TIME ZONE 'Asia/Kolkata')::date = $2::date`,
+      [tid, targetDay]
+    );
+    const s = statsQ.rows[0], p = ptpQ.rows[0];
+    const completed = parseInt(s.calls_completed) || 0;
+    const total     = parseInt(s.total_calls)     || 0;
+    const contactable = parseInt(s.contactable)   || 0;
+    const ptps      = parseInt(p.ptp_count)        || 0;
+
+    const conflictClause = campaign_id
+      ? '(tenant_id, day, campaign_id) WHERE campaign_id IS NOT NULL'
+      : '(tenant_id, day) WHERE campaign_id IS NULL';
+
+    const upsert = await pool.query(
+      `INSERT INTO analytics_daily
+           (tenant_id, day, campaign_id,
+            calls_completed, ptp_count, ptp_rate,
+            avg_duration_ms, amount_collected_minor,
+            contactability_rate, recovery_rate, avg_dpd, computed_at)
+         VALUES ($1,$2::date,$3::uuid, $4,$5,$6, $7,$8, $9,0,0, NOW())
+         ON CONFLICT ${conflictClause}
+         DO UPDATE SET
+           calls_completed       = EXCLUDED.calls_completed,
+           ptp_count             = EXCLUDED.ptp_count,
+           ptp_rate              = EXCLUDED.ptp_rate,
+           avg_duration_ms       = EXCLUDED.avg_duration_ms,
+           amount_collected_minor= EXCLUDED.amount_collected_minor,
+           contactability_rate   = EXCLUDED.contactability_rate,
+           computed_at           = NOW()
+         RETURNING *`,
+      [
+        tid, targetDay, campaign_id || null,
+        completed, ptps, completed > 0 ? ptps / completed : 0,
+        parseInt(s.avg_duration_ms) || 0,
+        parseInt(p.amount_collected_minor) || 0,
+        total > 0 ? contactable / total : 0,
+      ]
+    );
+    // Log to report_runs
+    await pool.query(
+      'INSERT INTO report_runs (tenant_id,report_day,campaign_id) VALUES ($1,$2::date,$3) ON CONFLICT DO NOTHING',
+      [tid, targetDay, campaign_id || null]
+    );
+    await bffAudit(pool, { req, action: 'analytics.aggregate', resourceType: 'analytics', resourceId: targetDay });
+    res.json({ ok: true, day: targetDay, rollup: upsert.rows[0] || null });
+  } catch (e) { throw e; }
+});
+
+// ─── Analytics API ────────────────────────────────────────────────────────────
+app.get('/analytics/campaigns/:id/summary', requireAuth, requireUUID('id'), async (req, res) => {
+  try {
+    const tid = req.user.tenant_id;
+    const cid = req.params.id;
+    const { rows } = await pool.query(
+      `SELECT
+          COUNT(*)                                                       AS total_calls,
+          COUNT(*) FILTER (WHERE ca.status = 'COMPLETED')               AS calls_connected,
+          COUNT(*) FILTER (WHERE ca.status = 'NO_ANSWER')               AS calls_no_answer,
+          COUNT(*) FILTER (WHERE ca.status = 'FAILED')                  AS calls_failed,
+          COALESCE(AVG(ca.duration_s) FILTER (WHERE ca.status='COMPLETED'),0)::int AS avg_duration_s,
+          COUNT(DISTINCT ca.lead_id)                                    AS unique_leads_called,
+          (SELECT COUNT(*) FROM leads l
+            WHERE l.campaign_id=$2 AND l.tenant_id=$1)                  AS total_leads,
+          (SELECT COUNT(*) FROM lead_execution_events lee
+            WHERE lee.campaign_id=$2 AND lee.tenant_id=$1
+              AND lee.event_type='PTP_RECORDED')                         AS ptp_count,
+          (SELECT COUNT(DISTINCT lee2.lead_id) FROM lead_execution_events lee2
+            WHERE lee2.campaign_id=$2 AND lee2.tenant_id=$1
+              AND lee2.event_type IN ('CALLBACK_SCHEDULED','CALL_DEFERRED')) AS callback_count,
+          (SELECT COUNT(DISTINCT lead_id)
+            FROM (SELECT lead_id FROM call_attempts ca2
+                  WHERE ca2.campaign_id=$2 AND ca2.tenant_id=$1
+                  GROUP BY lead_id HAVING COUNT(*)>1) t)                AS retry_leads,
+          (SELECT COALESCE(SUM(ptp.promised_amount_minor),0)
+            FROM promises_to_pay ptp
+            WHERE ptp.tenant_id=$1
+              AND ptp.call_id IN (
+                SELECT attempt_id FROM call_attempts WHERE campaign_id=$2 AND tenant_id=$1
+              )
+              AND ptp.status='FULFILLED')                                AS amount_collected_minor
+        FROM call_attempts ca
+       WHERE ca.tenant_id=$1 AND ca.campaign_id=$2`,
+      [tid, cid]
+    );
+    const r           = rows[0];
+    const total       = parseInt(r.total_calls)         || 0;
+    const connected   = parseInt(r.calls_connected)     || 0;
+    const ptps        = parseInt(r.ptp_count)           || 0;
+    const callbacks   = parseInt(r.callback_count)      || 0;
+    const retryLeads  = parseInt(r.retry_leads)         || 0;
+    const uniqueLeads = parseInt(r.unique_leads_called) || 0;
     res.json({
-      ptp_rate:           parseFloat((parseInt(d.queued) / total).toFixed(3)),
-      contactability_rate: parseFloat((parseInt(d.qualified) / total).toFixed(3)),
-      conversion_rate:    parseFloat((parseInt(d.completed) / total).toFixed(3)),
+      total_calls:             total,
+      calls_connected:         connected,
+      calls_no_answer:         parseInt(r.calls_no_answer)  || 0,
+      calls_failed:            parseInt(r.calls_failed)     || 0,
+      total_leads:             parseInt(r.total_leads)      || 0,
+      unique_leads_called:     uniqueLeads,
+      avg_duration_s:          parseInt(r.avg_duration_s)   || 0,
+      ptp_count:               ptps,
+      ptp_rate:                connected > 0 ? ptps / connected : 0,
+      contactability_rate:     total > 0 ? connected / total : 0,
+      conversion_rate:         total > 0 ? ptps / total : 0,
+      answer_rate_pct:         total > 0 ? Math.round((connected / total) * 1000) / 10 : 0,
+      ptp_rate_pct:            connected > 0 ? Math.round((ptps  / connected) * 1000) / 10 : 0,
+      callback_count:          callbacks,
+      callback_rate_pct:       connected > 0 ? Math.round((callbacks  / connected) * 1000) / 10 : 0,
+      retry_leads:             retryLeads,
+      retry_rate_pct:          uniqueLeads > 0 ? Math.round((retryLeads / uniqueLeads) * 1000) / 10 : 0,
+      amount_collected_minor:  parseInt(r.amount_collected_minor) || 0,
     });
+  } catch (e) { throw e; }
+});
+
+
+// ── W9: Compliance + Governance ───────────────────────────────────────────────
+
+// GET /compliance/dnc?limit=100&offset=0&search=<phone>
+app.get('/compliance/dnc', requireAuth, async (req, res) => {
+  try {
+    const tid = req.user.tenant_id;
+    const lim = Math.min(parseInt(req.query.limit) || 100, 500);
+    const off = parseInt(req.query.offset) || 0;
+    const search = req.query.search ? String(req.query.search).replace(/[%_]/g, '\\$&') : null;
+    const params = [tid];
+    let where = '(tenant_id=$1 OR tenant_id IS NULL)';
+    if (search) { params.push('%' + search + '%'); where += ' AND phone LIKE $' + params.length; }
+    const { rows } = await pool.query(
+      `SELECT dnc_id, phone, source, reason, added_at, expires_at,
+              tenant_id IS NULL AS is_global
+         FROM dnc_numbers WHERE ${where}
+        ORDER BY added_at DESC
+        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, lim, off]
+    );
+    const { rows: cnt } = await pool.query(
+      'SELECT COUNT(*) AS total FROM dnc_numbers WHERE (tenant_id=$1 OR tenant_id IS NULL)', [tid]
+    );
+    res.json({ total: parseInt(cnt[0].total) || 0, items: rows });
+  } catch (e) { throw e; }
+});
+
+// POST /compliance/dnc — add phone to DNC
+app.post('/compliance/dnc', requireAuth, async (req, res) => {
+  try {
+    const tid = req.user.tenant_id;
+    const { phone, reason, source = 'manual', expires_at } = req.body || {};
+    if (!phone || typeof phone !== 'string') return res.status(422).json({ error: 'phone required' });
+    const normalized = String(phone).replace(/\D/g, '').replace(/^91/, '').slice(-10);
+    if (normalized.length < 10) return res.status(422).json({ error: 'invalid phone number — need 10 digits' });
+    const validSources = ['manual','ndnc','trai','tenant_upload','opted_out'];
+    if (!validSources.includes(source)) return res.status(422).json({ error: 'invalid source' });
+    const { rows } = await pool.query(
+      `INSERT INTO dnc_numbers (phone, tenant_id, source, reason, expires_at)
+         VALUES ($1, $2, $3, $4, $5::timestamptz)
+         ON CONFLICT (phone, tenant_id) DO UPDATE SET
+           source=EXCLUDED.source, reason=EXCLUDED.reason,
+           added_at=NOW(), expires_at=EXCLUDED.expires_at
+         RETURNING *`,
+      [normalized, tid, source, reason || null, expires_at || null]
+    );
+    // Invalidate Redis DNC cache
+    await redis.del(`voiceos:dnc:${normalized}:${tid}`).catch(() => {});
+    await bffAudit(pool, { req, action: 'compliance.dnc.add', resourceType: 'dnc', resourceId: normalized });
+    res.status(201).json(rows[0]);
+  } catch (e) { throw e; }
+});
+
+// DELETE /compliance/dnc/:phone — remove from tenant DNC
+app.delete('/compliance/dnc/:phone', requireAuth, async (req, res) => {
+  try {
+    const tid  = req.user.tenant_id;
+    const normalized = String(req.params.phone).replace(/\D/g, '').replace(/^91/, '').slice(-10);
+    const { rowCount } = await pool.query(
+      'DELETE FROM dnc_numbers WHERE phone=$1 AND tenant_id=$2', [normalized, tid]
+    );
+    if (rowCount === 0) return res.status(404).json({ error: 'not_found' });
+    await redis.del(`voiceos:dnc:${normalized}:${tid}`).catch(() => {});
+    await bffAudit(pool, { req, action: 'compliance.dnc.remove', resourceType: 'dnc', resourceId: normalized });
+    res.json({ ok: true });
+  } catch (e) { throw e; }
+});
+
+// GET /compliance/violations — active + recent compliance violations
+app.get('/compliance/violations', requireAuth, async (req, res) => {
+  try {
+    const tid = req.user.tenant_id;
+    const { rows } = await pool.query(
+      `SELECT violation_id, rule_id, signal_summary, status,
+              detected_at, resolved_at, redetected_at
+         FROM compliance_violations
+        WHERE tenant_id=$1
+        ORDER BY CASE status WHEN 'ACTIVE' THEN 0 ELSE 1 END, detected_at DESC
+        LIMIT 200`,
+      [tid]
+    );
+    res.json(rows);
+  } catch (e) { throw e; }
+});
+
+// POST /compliance/violations/:id/resolve
+app.post('/compliance/violations/:id/resolve', requireAuth, requireUUID('id'), async (req, res) => {
+  try {
+    const tid = req.user.tenant_id;
+    const vid = req.params.id;
+    const { rowCount } = await pool.query(
+      `UPDATE compliance_violations
+          SET status='RESOLVED', resolved_at=NOW()
+        WHERE violation_id=$1 AND tenant_id=$2 AND status='ACTIVE'`,
+      [vid, tid]
+    );
+    if (rowCount === 0) return res.status(404).json({ error: 'violation not found or already resolved' });
+    await bffAudit(pool, { req, action: 'compliance.violation.resolve', resourceType: 'compliance_violation', resourceId: vid });
+    res.json({ ok: true });
+  } catch (e) { throw e; }
+});
+
+// GET /compliance/report — compliance health summary
+app.get('/compliance/report', requireAuth, async (req, res) => {
+  try {
+    const tid = req.user.tenant_id;
+    const [dncR, violR, auditR, oohR] = await Promise.all([
+      pool.query(
+        'SELECT COUNT(*) AS total FROM dnc_numbers WHERE tenant_id=$1 OR tenant_id IS NULL', [tid]
+      ),
+      pool.query(
+        `SELECT
+            COUNT(*) FILTER (WHERE status='ACTIVE')   AS active_count,
+            COUNT(*) FILTER (WHERE status='RESOLVED') AS resolved_count,
+            MAX(detected_at) FILTER (WHERE status='ACTIVE') AS last_active_at
+           FROM compliance_violations WHERE tenant_id=$1`,
+        [tid]
+      ),
+      pool.query(
+        `SELECT COUNT(*) AS total
+           FROM audit_log
+          WHERE tenant_id=$1 AND recorded_at > NOW() - INTERVAL '30 days'`,
+        [tid]
+      ),
+      pool.query(
+        `SELECT COUNT(DISTINCT ca.attempt_id) AS outside_hours
+           FROM call_attempts ca
+           JOIN campaigns c ON c.campaign_id=ca.campaign_id
+          WHERE ca.tenant_id=$1
+            AND ca.initiated_at > NOW() - INTERVAL '30 days'
+            AND (
+              EXTRACT(HOUR FROM ca.initiated_at AT TIME ZONE COALESCE(c.timezone,'Asia/Kolkata'))
+                < COALESCE(c.daily_start_hour, 9)
+              OR
+              EXTRACT(HOUR FROM ca.initiated_at AT TIME ZONE COALESCE(c.timezone,'Asia/Kolkata'))
+                >= COALESCE(c.daily_end_hour, 21)
+            )`,
+        [tid]
+      ),
+    ]);
+    const v = violR.rows[0];
+    res.json({
+      dnc_total:                  parseInt(dncR.rows[0].total)    || 0,
+      active_violations:          parseInt(v.active_count)        || 0,
+      resolved_violations:        parseInt(v.resolved_count)      || 0,
+      last_active_violation_at:   v.last_active_at                || null,
+      audit_events_30d:           parseInt(auditR.rows[0].total)  || 0,
+      out_of_hours_calls_30d:     parseInt(oohR.rows[0].outside_hours) || 0,
+      rbi_calling_hours:          '09:00–21:00 IST',
+      rbi_calling_hours_enforced: true,
+      dpdp_compliant:             parseInt(v.active_count) === 0,
+      compliance_score:           Math.max(0, 100 - (parseInt(v.active_count) || 0) * 10),
+    });
+  } catch (e) { throw e; }
+});
+
+// POST /compliance/data-erasure — DPDP Art.12 right-to-erasure
+app.post('/compliance/data-erasure', requireAuth, async (req, res) => {
+  try {
+    const tid = req.user.tenant_id;
+    const { customer_id, reason } = req.body || {};
+    if (!customer_id) return res.status(422).json({ error: 'customer_id required' });
+    // Mark customer record for erasure + revoke all consents in one transaction
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const custR = await client.query(
+        `UPDATE customers
+            SET data_erasure_requested=TRUE, updated_at=NOW()
+          WHERE customer_id=$1::uuid AND tenant_id=$2
+          RETURNING customer_id`,
+        [customer_id, tid]
+      );
+      if (custR.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'customer not found' });
+      }
+      // Revoke all active consents
+      await client.query(
+        `UPDATE consents SET status='REVOKED', revoked_at=NOW(), updated_at=NOW()
+          WHERE customer_id=$1::uuid AND tenant_id=$2 AND status='GRANTED'`,
+        [customer_id, tid]
+      );
+      // Add to DNC if phone exists
+      const phoneR = await pool.query(
+        'SELECT phone FROM leads WHERE crm_customer_id=$1::uuid AND tenant_id=$2 LIMIT 1',
+        [customer_id, tid]
+      );
+      const phone = phoneR.rows.length ? phoneR.rows[0].phone : null;
+      if (phone) {
+        const norm = String(phone).replace(/\D/g,'').replace(/^91/,'').slice(-10);
+        if (norm.length >= 10) {
+          await client.query(
+            `INSERT INTO dnc_numbers (phone, tenant_id, source, reason)
+               VALUES ($1, $2, 'opted_out', $3)
+               ON CONFLICT (phone, tenant_id) DO UPDATE SET source='opted_out', reason=EXCLUDED.reason, added_at=NOW()`,
+            [norm, tid, reason || 'DPDP Art.12 erasure request']
+          );
+          await redis.del(`voiceos:dnc:${norm}:${tid}`).catch(() => {});
+        }
+      }
+      await client.query('COMMIT');
+    } catch (err) { await client.query('ROLLBACK'); throw err; }
+    finally { client.release(); }
+    await bffAudit(pool, {
+      req, action: 'compliance.data_erasure.requested',
+      resourceType: 'customer', resourceId: customer_id,
+      metadata: { reason: reason || 'DPDP Art.12' },
+    });
+    res.status(202).json({
+      ok: true,
+      customer_id,
+      message: 'Erasure queued. PII will be purged within 72 hours per DPDP Art. 12.',
+      requested_at: new Date().toISOString(),
+    });
+  } catch (e) { throw e; }
+});
+
+// GET /compliance/consent/:customerId — consent records for a customer
+app.get('/compliance/consent/:customerId', requireAuth, requireUUID('customerId'), async (req, res) => {
+  try {
+    const tid = req.user.tenant_id;
+    const cid = req.params.customerId;
+    const { rows } = await pool.query(
+      `SELECT consent_id, consent_type, status, granted_at, revoked_at, expires_at
+         FROM consents
+        WHERE tenant_id=$1 AND customer_id=$2::uuid
+        ORDER BY created_at DESC`,
+      [tid, cid]
+    );
+    res.json(rows);
+  } catch (e) { throw e; }
+});
+
+// POST /compliance/consent/:customerId/revoke — revoke all consent (opt-out)
+app.post('/compliance/consent/:customerId/revoke', requireAuth, requireUUID('customerId'), async (req, res) => {
+  try {
+    const tid = req.user.tenant_id;
+    const cid = req.params.customerId;
+    const { reason } = req.body || {};
+    const { rowCount } = await pool.query(
+      `UPDATE consents SET status='REVOKED', revoked_at=NOW(), updated_at=NOW()
+        WHERE tenant_id=$1 AND customer_id=$2::uuid AND status='GRANTED'`,
+      [tid, cid]
+    );
+    // Add to DNC
+    const { rows: custRows } = await pool.query(
+      'SELECT phone FROM leads WHERE crm_customer_id=$1::uuid AND tenant_id=$2 LIMIT 1',
+      [cid, tid]
+    );
+    if (custRows.length && custRows[0].phone) {
+      const norm = String(custRows[0].phone).replace(/\D/g,'').replace(/^91/,'').slice(-10);
+      if (norm.length >= 10) {
+        await pool.query(
+          `INSERT INTO dnc_numbers (phone, tenant_id, source, reason)
+             VALUES ($1, $2, 'opted_out', $3)
+             ON CONFLICT (phone, tenant_id) DO UPDATE SET
+               source='opted_out', reason=EXCLUDED.reason, added_at=NOW()`,
+          [norm, tid, reason || 'Consent revoked']
+        ).catch(() => {});
+        await redis.del(`voiceos:dnc:${norm}:${tid}`).catch(() => {});
+      }
+    }
+    await bffAudit(pool, { req, action: 'compliance.consent.revoke', resourceType: 'customer', resourceId: cid });
+    res.json({ ok: true, consents_revoked: rowCount });
   } catch (e) { throw e; }
 });
 
@@ -2189,6 +2845,616 @@ app.post('/campaigns/:id/leads/:leadId/schedule-callback', requireAuth, async (r
   } catch (e) { throw e; }
 });
 
+
+// ── Team invite + deactivate ──────────────────────────────────────────────────
+
+// POST /team/invite — invite a team member by email
+app.post('/team/invite', requireAuth, async (req, res) => {
+  try {
+    const { email, role_id, scope_type = 'TENANT' } = req.body;
+    if (!email || !role_id) {
+      return res.status(422).json({ error: 'email and role_id required' });
+    }
+    const tid = req.user.tenant_id;
+    // Verify role belongs to tenant
+    const roleCheck = await pool.query(
+      'SELECT role_id FROM roles WHERE role_id=$1 AND tenant_id=$2',
+      [role_id, tid]
+    );
+    if (!roleCheck.rows.length) {
+      return res.status(422).json({ error: 'unknown role_id' });
+    }
+    // Ensure no active pending invite for same email
+    await pool.query(
+      "UPDATE invitations SET status='EXPIRED' WHERE tenant_id=$1 AND email=$2 AND status='PENDING'",
+      [tid, email.toLowerCase()]
+    );
+    // Generate token — raw shown once, only hash persisted
+    const rawToken = secrets.token_urlsafe(32);
+    const tokenHash = require('crypto').createHash('sha256').update(rawToken).digest('hex');
+    const expiresAt = new Date(Date.now() + 72 * 3600 * 1000);
+    const { rows } = await pool.query(
+      `INSERT INTO invitations
+         (tenant_id, email, role_id, org_scope_type, org_scope_id, token_hash, status, invited_by, expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6,'PENDING',$7,$8)
+       RETURNING invitation_id, email, role_id, status, expires_at`,
+      [tid, email.toLowerCase(), role_id, scope_type, tid,
+       tokenHash, req.user.sub, expiresAt]
+    );
+    log.info('team.invite', { tenant_id: tid, email, role_id });
+    res.status(201).json({
+      ...rows[0],
+      invitation_token: rawToken,
+      note: 'Share this token with the invitee — it is shown only once'
+    });
+  } catch (e) { throw e; }
+});
+
+// DELETE /team/:id — deactivate team member
+app.delete('/team/:id', requireAuth, requireUUID('id'), async (req, res) => {
+  try {
+    const tid = req.user.tenant_id;
+    const { rowCount } = await pool.query(
+      'UPDATE users SET is_active=FALSE WHERE user_id=$1 AND tenant_id=$2',
+      [req.params.id, tid]
+    );
+    if (!rowCount) return res.status(404).json({ error: 'user not found' });
+    log.info('team.deactivate', { tenant_id: tid, user_id: req.params.id });
+    res.json({ user_id: req.params.id, is_active: false });
+  } catch (e) { throw e; }
+});
+
+// ── API Key Management ────────────────────────────────────────────────────────
+
+// GET /api-keys — list all API keys for tenant
+app.get('/api-keys', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT api_key_id, role, scopes, plan_tier, is_revoked,
+              created_at, expires_at, revoked_at
+       FROM api_keys WHERE tenant_id=$1 ORDER BY created_at DESC`,
+      [req.user.tenant_id]
+    );
+    res.json(rows);
+  } catch (e) { throw e; }
+});
+
+// POST /api-keys — issue a new API key
+app.post('/api-keys', requireAuth, async (req, res) => {
+  try {
+    const tid = req.user.tenant_id;
+    const { role = '', scopes = [], plan_tier = '', expires_at } = req.body;
+    // Generate raw key — show once, store hash only
+    const crypto = require('crypto');
+    const rawKey = crypto.randomBytes(32).toString('base64url');
+    const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
+    const { rows } = await pool.query(
+      `INSERT INTO api_keys (tenant_id, key_hash, role, scopes, plan_tier, expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       RETURNING api_key_id, role, scopes, plan_tier, is_revoked, created_at, expires_at`,
+      [tid, keyHash, role, scopes, plan_tier, expires_at || null]
+    );
+    log.info('api_key.issued', { tenant_id: tid, api_key_id: rows[0].api_key_id });
+    res.status(201).json({
+      ...rows[0],
+      raw_key: rawKey,
+      note: 'Store this key — it is shown only once'
+    });
+  } catch (e) { throw e; }
+});
+
+// POST /api-keys/:id/rotate — replace credential material for an API key
+app.post('/api-keys/:id/rotate', requireAuth, requireUUID('id'), async (req, res) => {
+  try {
+    const tid = req.user.tenant_id;
+    const crypto = require('crypto');
+    const rawKey = crypto.randomBytes(32).toString('base64url');
+    const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
+    const { rowCount } = await pool.query(
+      `UPDATE api_keys SET key_hash=$1 WHERE api_key_id=$2 AND tenant_id=$3 AND is_revoked=FALSE`,
+      [keyHash, req.params.id, tid]
+    );
+    if (!rowCount) return res.status(404).json({ error: 'api key not found or already revoked' });
+    log.info('api_key.rotated', { tenant_id: tid, api_key_id: req.params.id });
+    res.json({ api_key_id: req.params.id, raw_key: rawKey,
+               note: 'Store this key — it is shown only once' });
+  } catch (e) { throw e; }
+});
+
+// POST /api-keys/:id/revoke — permanently revoke an API key
+app.post('/api-keys/:id/revoke', requireAuth, requireUUID('id'), async (req, res) => {
+  try {
+    const tid = req.user.tenant_id;
+    const { rowCount } = await pool.query(
+      `UPDATE api_keys SET is_revoked=TRUE, revoked_at=NOW()
+       WHERE api_key_id=$1 AND tenant_id=$2 AND is_revoked=FALSE`,
+      [req.params.id, tid]
+    );
+    if (!rowCount) return res.status(404).json({ error: 'api key not found or already revoked' });
+    log.info('api_key.revoked', { tenant_id: tid, api_key_id: req.params.id });
+    res.json({ api_key_id: req.params.id, revoked: true });
+  } catch (e) { throw e; }
+});
+
+
+// ── Phase 7: Campaign Audience View (Leads) ───────────────────────────────────
+
+// GET /leads?campaign_id=... — campaign_audiences joined with customers
+app.get('/leads', requireAuth, async (req, res) => {
+  try {
+    const { campaign_id } = req.query;
+    if (!campaign_id) return res.status(422).json({ error: 'campaign_id required' });
+    const tid = req.user.tenant_id;
+    const { rows } = await pool.query(
+      `SELECT ca.campaign_audience_id, ca.campaign_id, ca.customer_id,
+              c.name AS customer_name,
+              cc.value AS primary_contact,
+              ca.dnd, ca.included_at, ca.excluded_reason
+       FROM campaign_audiences ca
+       LEFT JOIN customers c ON c.customer_id = ca.customer_id AND c.tenant_id = $1
+       LEFT JOIN customer_contacts cc ON cc.customer_id = ca.customer_id
+         AND cc.is_primary = TRUE AND cc.tenant_id = $1
+       WHERE ca.campaign_id = $2 AND ca.tenant_id = $1
+       ORDER BY ca.included_at DESC LIMIT 500`,
+      [tid, campaign_id]
+    );
+    res.json(rows);
+  } catch (e) { throw e; }
+});
+
+// ── Phase 7: Collections / Escalations ───────────────────────────────────────
+
+// GET /collections/escalations — list tenant escalations
+app.get('/collections/escalations', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT escalation_id, tenant_id, call_id, customer_id,
+              reason, escalated_to, escalated_at, resolved_at, resolution_notes
+       FROM escalation_records WHERE tenant_id=$1
+       ORDER BY escalated_at DESC LIMIT 200`,
+      [req.user.tenant_id]
+    );
+    res.json(rows);
+  } catch (e) { throw e; }
+});
+
+// POST /collections/escalations/:id/resolve — mark escalation resolved
+app.post('/collections/escalations/:id/resolve', requireAuth, requireUUID('id'), async (req, res) => {
+  try {
+    const { resolution_notes = '' } = req.body;
+    const { rowCount, rows } = await pool.query(
+      `UPDATE escalation_records
+         SET resolved_at = NOW(), resolution_notes = $1
+       WHERE escalation_id = $2 AND tenant_id = $3 AND resolved_at IS NULL
+       RETURNING *`,
+      [resolution_notes, req.params.id, req.user.tenant_id]
+    );
+    if (!rowCount) return res.status(404).json({ error: 'escalation not found or already resolved' });
+    res.json(rows[0]);
+  } catch (e) { throw e; }
+});
+
+// ── Phase 7: HITL Queue ───────────────────────────────────────────────────────
+
+// GET /hitl/queue — list pending + claimed HITL items for tenant
+app.get('/hitl/queue', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT hitl_item_id, call_id, reason, priority, status,
+              context, enqueued_at, claimed_by, claimed_at, resolved_at,
+              sla_deadline_at, sla_breached
+       FROM hitl_queue
+       WHERE tenant_id = $1 AND status != 'RESOLVED'
+       ORDER BY
+         CASE priority WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2 ELSE 3 END,
+         sla_deadline_at ASC`,
+      [req.user.tenant_id]
+    );
+    res.json(rows);
+  } catch (e) { throw e; }
+});
+
+// POST /hitl/queue/claim-next — atomically claim highest-priority pending item
+app.post('/hitl/queue/claim-next', requireAuth, async (req, res) => {
+  try {
+    const { rows, rowCount } = await pool.query(
+      `UPDATE hitl_queue
+         SET status = 'CLAIMED', claimed_by = $1, claimed_at = NOW()
+       WHERE hitl_item_id = (
+         SELECT hitl_item_id FROM hitl_queue
+         WHERE tenant_id = $2 AND status = 'PENDING'
+         ORDER BY
+           CASE priority WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2 ELSE 3 END,
+           sla_deadline_at ASC
+         LIMIT 1
+         FOR UPDATE SKIP LOCKED
+       )
+       RETURNING *`,
+      [req.user.sub, req.user.tenant_id]
+    );
+    if (!rowCount) return res.status(404).json({ error: 'no pending items' });
+    res.json(rows[0]);
+  } catch (e) { throw e; }
+});
+
+// POST /hitl/items/:id/decision — record supervisor decision and resolve item
+app.post('/hitl/items/:id/decision', requireAuth, requireUUID('id'), async (req, res) => {
+  try {
+    const { decision, rationale } = req.body;
+    if (!decision || !rationale) {
+      return res.status(422).json({ error: 'decision and rationale required' });
+    }
+    const tid = req.user.tenant_id;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rowCount } = await client.query(
+        `UPDATE hitl_queue SET status='RESOLVED', resolved_at=NOW()
+         WHERE hitl_item_id=$1 AND tenant_id=$2`,
+        [req.params.id, tid]
+      );
+      if (!rowCount) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'item not found' });
+      }
+      const { rows } = await client.query(
+        `INSERT INTO hitl_decisions
+           (hitl_item_id, tenant_id, supervisor_id, decision, rationale, decided_at)
+         VALUES ($1, $2, $3, $4, $5, NOW())
+         RETURNING *`,
+        [req.params.id, tid, req.user.sub, decision, rationale]
+      );
+      await client.query('COMMIT');
+      res.status(201).json(rows[0]);
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+  } catch (e) { throw e; }
+});
+
+// ── Phase 7: Report Runs ──────────────────────────────────────────────────────
+
+// GET /reports/runs — list aggregation run history for tenant
+app.get('/reports/runs', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT tenant_id, campaign_id, report_day AS day, ran_at
+       FROM report_runs WHERE tenant_id=$1
+       ORDER BY ran_at DESC LIMIT 100`,
+      [req.user.tenant_id]
+    );
+    res.json(rows);
+  } catch (e) { throw e; }
+});
+
+// POST /reports/runs — trigger a new aggregation run for a given day
+app.post('/reports/runs', requireAuth, async (req, res) => {
+  try {
+    const { day, campaign_id } = req.body;
+    if (!day) return res.status(422).json({ error: 'day required (YYYY-MM-DD)' });
+    const { rows } = await pool.query(
+      `INSERT INTO report_runs (tenant_id, report_day, campaign_id)
+       VALUES ($1, $2::date, $3)
+       RETURNING tenant_id, campaign_id, report_day AS day, ran_at`,
+      [req.user.tenant_id, day, campaign_id || null]
+    );
+    res.status(201).json(rows[0]);
+  } catch (e) { throw e; }
+});
+
+// ── Phase 7: Tenant-Facing Audit Log ─────────────────────────────────────────
+
+// GET /audit-logs — return this tenant's own audit trail
+app.get('/audit-logs', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT audit_id, actor_id, action, resource_type, resource_id, outcome, recorded_at
+       FROM audit_log WHERE tenant_id=$1
+       ORDER BY recorded_at DESC LIMIT 200`,
+      [req.user.tenant_id]
+    );
+    res.json(rows);
+  } catch (e) { throw e; }
+});
+
+
+// ── Phase 7b: Tenant Self-Service Profile ─────────────────────────────────────
+
+const ALLOWED_TIMEZONES = new Set([
+  'Asia/Kolkata', 'Asia/Dubai', 'Asia/Singapore', 'Asia/Bangkok',
+  'Asia/Tokyo', 'Asia/Karachi', 'Asia/Dhaka', 'UTC',
+  'America/New_York', 'America/Chicago', 'America/Los_Angeles',
+  'Europe/London', 'Europe/Paris', 'Europe/Berlin',
+  'Australia/Sydney', 'Pacific/Auckland',
+]);
+
+const ALLOWED_CURRENCIES = new Set(['INR', 'USD', 'AED', 'EUR', 'GBP', 'SGD', 'THB', 'JPY', 'AUD', 'BDT', 'PKR']);
+
+// GET /tenants/me — return current tenant's full profile
+app.get('/tenants/me', requireAuth, async (req, res) => {
+  try {
+    const tid = req.user.tenant_id;
+    if (!tid) return res.status(403).json({ error: 'platform users have no tenant profile' });
+    const { rows } = await pool.query(
+      `SELECT tenant_id, slug, display_name, subscription_tier, isolation_profile,
+              status, timezone, currency, max_concurrent_calls, feature_flags,
+              created_at, updated_at
+       FROM tenants WHERE tenant_id = $1`,
+      [tid]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'tenant not found' });
+    res.json(rows[0]);
+  } catch (e) { throw e; }
+});
+
+// PUT /tenants/me — update editable profile fields (display_name, timezone, currency)
+// slug, max_concurrent_calls, subscription_tier are platform-managed — not updatable here
+app.put('/tenants/me', requireAuth, async (req, res) => {
+  try {
+    const tid = req.user.tenant_id;
+    if (!tid) return res.status(403).json({ error: 'platform users have no tenant profile' });
+    const { display_name, timezone, currency } = req.body;
+    if (!display_name?.trim()) return res.status(422).json({ error: 'display_name required' });
+    if (!timezone) return res.status(422).json({ error: 'timezone required' });
+    if (!currency) return res.status(422).json({ error: 'currency required' });
+    if (!ALLOWED_TIMEZONES.has(timezone)) {
+      return res.status(422).json({ error: `invalid timezone: ${timezone}` });
+    }
+    if (!ALLOWED_CURRENCIES.has(currency.toUpperCase())) {
+      return res.status(422).json({ error: `invalid currency: ${currency}` });
+    }
+    const { rows } = await pool.query(
+      `UPDATE tenants
+         SET display_name = $1, timezone = $2, currency = $3, updated_at = NOW()
+       WHERE tenant_id = $4
+       RETURNING tenant_id, slug, display_name, subscription_tier, isolation_profile,
+                 status, timezone, currency, max_concurrent_calls, feature_flags,
+                 created_at, updated_at`,
+      [display_name.trim(), timezone, currency.toUpperCase(), tid]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'tenant not found' });
+    log.info('tenant.profile_updated', { tenant_id: tid, display_name: display_name.trim(), timezone, currency });
+    res.json(rows[0]);
+  } catch (e) { throw e; }
+});
+
+
+// ── Phase 8: Call History ─────────────────────────────────────────────────────
+
+app.get('/calls', requireAuth, async (req, res) => {
+  try {
+    const tid = req.user.tenant_id;
+    const { campaign_id, status, limit: lq, offset: oq } = req.query;
+    const lim = Math.min(parseInt(lq) || 100, 500);
+    const off = parseInt(oq) || 0;
+    const conds = ['ca.tenant_id = $1'], vals = [tid];
+    if (campaign_id) { vals.push(campaign_id); conds.push('ca.campaign_id = $' + vals.length); }
+    if (status)      { vals.push(status);      conds.push('ca.status = $'      + vals.length); }
+    vals.push(lim, off);
+    const pNum = vals.length;
+    const { rows } = await pool.query(
+      `SELECT ca.attempt_id, ca.call_sid, ca.campaign_id, ca.lead_id, ca.pipeline_id,
+              ca.status, ca.disposition, ca.duration_s,
+              ca.initiated_at, ca.answered_at, ca.ended_at, ca.error_message,
+              l.name AS lead_name, l.phone AS lead_phone,
+              tr.recording_id, tr.state AS recording_state
+         FROM call_attempts ca
+         LEFT JOIN leads l ON l.lead_id = ca.lead_id
+         LEFT JOIN telephony_recordings tr ON tr.call_attempt_id = ca.attempt_id
+        WHERE ${conds.join(' AND ')}
+        ORDER BY ca.initiated_at DESC
+        LIMIT $${pNum - 1} OFFSET $${pNum}`,
+      vals
+    );
+    res.json(rows);
+  } catch (e) { throw e; }
+});
+
+app.get('/campaigns/:id/calls', requireAuth, requireUUID('id'), async (req, res) => {
+  try {
+    const tid = req.user.tenant_id;
+    const { status, limit: lq, offset: oq } = req.query;
+    const lim = Math.min(parseInt(lq) || 100, 500);
+    const off = parseInt(oq) || 0;
+    const conds = ['ca.tenant_id = $1', 'ca.campaign_id = $2'], vals = [tid, req.params.id];
+    if (status) { vals.push(status); conds.push('ca.status = $' + vals.length); }
+    vals.push(lim, off);
+    const pNum = vals.length;
+    const { rows } = await pool.query(
+      `SELECT ca.attempt_id, ca.call_sid, ca.campaign_id, ca.lead_id, ca.pipeline_id,
+              ca.status, ca.disposition, ca.duration_s,
+              ca.initiated_at, ca.answered_at, ca.ended_at, ca.error_message,
+              l.name AS lead_name, l.phone AS lead_phone,
+              tr.recording_id, tr.state AS recording_state
+         FROM call_attempts ca
+         LEFT JOIN leads l ON l.lead_id = ca.lead_id
+         LEFT JOIN telephony_recordings tr ON tr.call_attempt_id = ca.attempt_id
+        WHERE ${conds.join(' AND ')}
+        ORDER BY ca.initiated_at DESC
+        LIMIT $${pNum - 1} OFFSET $${pNum}`,
+      vals
+    );
+    res.json(rows);
+  } catch (e) { throw e; }
+});
+
+// ── Phase 8: Campaign / Pipeline CRM ─────────────────────────────────────────
+
+app.get('/campaigns/:id/customers', requireAuth, requireUUID('id'), async (req, res) => {
+  try {
+    const tid = req.user.tenant_id;
+    const cam = await pool.query(
+      'SELECT campaign_id FROM campaigns WHERE campaign_id=$1 AND tenant_id=$2',
+      [req.params.id, tid]
+    );
+    if (!cam.rows.length) return res.status(404).json({ error: 'campaign_not_found' });
+    const { rows } = await pool.query(
+      `SELECT c.customer_id, c.name, c.crm_id,
+              cc.value AS primary_contact,
+              ca.dnd, ca.included_at, ca.excluded_reason,
+              ca.campaign_audience_id
+         FROM campaign_audiences ca
+         JOIN customers c ON c.customer_id = ca.customer_id AND c.tenant_id = $1
+         LEFT JOIN customer_contacts cc
+           ON cc.customer_id = ca.customer_id AND cc.is_primary = TRUE AND cc.tenant_id = $1
+        WHERE ca.campaign_id = $2 AND ca.tenant_id = $1
+        ORDER BY ca.included_at DESC LIMIT 300`,
+      [tid, req.params.id]
+    );
+    res.json(rows);
+  } catch (e) { throw e; }
+});
+
+app.get('/campaigns/:id/pipelines/:pipelineId/customers', requireAuth, requireUUID('id', 'pipelineId'), async (req, res) => {
+  try {
+    const tid = req.user.tenant_id;
+    const pl = await pool.query(
+      'SELECT pipeline_id FROM pipelines WHERE pipeline_id=$1 AND campaign_id=$2 AND tenant_id=$3',
+      [req.params.pipelineId, req.params.id, tid]
+    );
+    if (!pl.rows.length) return res.status(404).json({ error: 'pipeline_not_found' });
+    const { rows } = await pool.query(
+      `SELECT DISTINCT
+              COALESCE(c.customer_id::text, l.lead_id::text) AS customer_id,
+              COALESCE(c.name, l.name) AS name,
+              c.crm_id,
+              l.phone AS primary_contact,
+              l.status
+         FROM leads l
+         LEFT JOIN customers c ON c.customer_id = l.crm_customer_id AND c.tenant_id = $1
+        WHERE l.pipeline_id = $2 AND l.campaign_id = $3 AND l.tenant_id = $1
+        ORDER BY 2 LIMIT 300`,
+      [tid, req.params.pipelineId, req.params.id]
+    );
+    res.json(rows);
+  } catch (e) { throw e; }
+});
+
+// ── Phase 8: Pipeline Model Config ───────────────────────────────────────────
+
+const VALID_STT_P8   = new Set(['whisper','deepgram','google_stt']);
+const VALID_LLM_P8   = new Set(['vllm','openai','anthropic']);
+const VALID_TTS_P8   = new Set(['veena','elevenlabs','google_tts','amazon_polly']);
+const VALID_VOICE_P8 = new Set(['kavya','default','priya','aarav','Rachel','Domi','Bella','Antoni']);
+
+app.get('/campaigns/:id/pipelines/:pipelineId/model-config', requireAuth, requireUUID('id', 'pipelineId'), async (req, res) => {
+  try {
+    const tid = req.user.tenant_id;
+    const pl = await pool.query(
+      'SELECT pipeline_id FROM pipelines WHERE pipeline_id=$1 AND campaign_id=$2 AND tenant_id=$3',
+      [req.params.pipelineId, req.params.id, tid]
+    );
+    if (!pl.rows.length) return res.status(404).json({ error: 'pipeline_not_found' });
+    const r = await pool.query(
+      `SELECT model_config_id, stt_adapter, stt_model, llm_adapter, llm_model,
+              llm_temperature, tts_adapter, tts_voice, updated_at,
+              CASE WHEN pipeline_id IS NOT NULL THEN 'pipeline'
+                   WHEN campaign_id  IS NOT NULL THEN 'campaign'
+                   ELSE 'tenant' END AS config_level
+         FROM model_configs
+        WHERE tenant_id = $1
+          AND (pipeline_id = $2
+               OR (pipeline_id IS NULL AND campaign_id = $3)
+               OR (pipeline_id IS NULL AND campaign_id IS NULL))
+        ORDER BY
+          CASE WHEN pipeline_id = $2 THEN 1
+               WHEN campaign_id = $3 THEN 2 ELSE 3 END
+        LIMIT 1`,
+      [tid, req.params.pipelineId, req.params.id]
+    );
+    if (!r.rows.length) {
+      return res.json({ model_config_id: null,
+        stt_adapter: 'whisper', stt_model: 'whisper-large-v3-turbo',
+        llm_adapter: 'vllm',    llm_model: 'qwen2.5-7b-instruct-fp8',
+        llm_temperature: 0.3,   tts_adapter: 'veena', tts_voice: 'kavya',
+        config_level: 'default' });
+    }
+    res.json(r.rows[0]);
+  } catch (e) { throw e; }
+});
+
+app.put('/campaigns/:id/pipelines/:pipelineId/model-config', requireAuth, requireUUID('id', 'pipelineId'), async (req, res) => {
+  try {
+    const tid = req.user.tenant_id;
+    const pl = await pool.query(
+      'SELECT pipeline_id FROM pipelines WHERE pipeline_id=$1 AND campaign_id=$2 AND tenant_id=$3',
+      [req.params.pipelineId, req.params.id, tid]
+    );
+    if (!pl.rows.length) return res.status(404).json({ error: 'pipeline_not_found' });
+    const { stt_adapter, stt_model, llm_adapter, llm_model, llm_temperature, tts_adapter, tts_voice } = req.body || {};
+    if (stt_adapter && !VALID_STT_P8.has(stt_adapter))   return res.status(422).json({ error: 'invalid stt_adapter' });
+    if (llm_adapter && !VALID_LLM_P8.has(llm_adapter))   return res.status(422).json({ error: 'invalid llm_adapter' });
+    if (tts_adapter && !VALID_TTS_P8.has(tts_adapter))   return res.status(422).json({ error: 'invalid tts_adapter' });
+    if (tts_voice   && !VALID_VOICE_P8.has(tts_voice))   return res.status(422).json({ error: 'invalid tts_voice' });
+    if (llm_temperature !== undefined && (isNaN(+llm_temperature) || +llm_temperature < 0 || +llm_temperature > 2))
+      return res.status(422).json({ error: 'llm_temperature must be 0-2' });
+    const { rows } = await pool.query(
+      `INSERT INTO model_configs
+           (tenant_id, campaign_id, pipeline_id, stt_adapter, stt_model,
+            llm_adapter, llm_model, llm_temperature, tts_adapter, tts_voice)
+         VALUES ($1,$2,$3,
+           COALESCE($4,'whisper'),  COALESCE($5,'whisper-large-v3-turbo'),
+           COALESCE($6,'vllm'),     COALESCE($7,'qwen2.5-7b-instruct-fp8'),
+           COALESCE($8,0.3),        COALESCE($9,'veena'), COALESCE($10,'kavya'))
+         ON CONFLICT (tenant_id, pipeline_id) WHERE pipeline_id IS NOT NULL
+         DO UPDATE SET
+           stt_adapter     = COALESCE(EXCLUDED.stt_adapter,     model_configs.stt_adapter),
+           stt_model       = COALESCE(EXCLUDED.stt_model,       model_configs.stt_model),
+           llm_adapter     = COALESCE(EXCLUDED.llm_adapter,     model_configs.llm_adapter),
+           llm_model       = COALESCE(EXCLUDED.llm_model,       model_configs.llm_model),
+           llm_temperature = COALESCE(EXCLUDED.llm_temperature, model_configs.llm_temperature),
+           tts_adapter     = COALESCE(EXCLUDED.tts_adapter,     model_configs.tts_adapter),
+           tts_voice       = COALESCE(EXCLUDED.tts_voice,       model_configs.tts_voice),
+           updated_at      = NOW()
+         RETURNING model_config_id, stt_adapter, stt_model, llm_adapter, llm_model,
+                   llm_temperature, tts_adapter, tts_voice, updated_at`,
+      [tid, req.params.id, req.params.pipelineId,
+       stt_adapter||null, stt_model||null, llm_adapter||null, llm_model||null,
+       llm_temperature||null, tts_adapter||null, tts_voice||null]
+    );
+    await bffAudit(pool, { req, action: 'pipeline.model_config.update', resourceType: 'pipeline', resourceId: req.params.pipelineId });
+    res.json({ ...rows[0], config_level: 'pipeline' });
+  } catch (e) { throw e; }
+});
+
+// ── Phase 8: Pipeline Analytics ──────────────────────────────────────────────
+
+app.get('/campaigns/:id/pipelines/:pipelineId/analytics', requireAuth, requireUUID('id', 'pipelineId'), async (req, res) => {
+  try {
+    const tid = req.user.tenant_id;
+    const pl = await pool.query(
+      `SELECT calls_completed, calls_no_answer, calls_failed, total_duration_s
+         FROM pipelines WHERE pipeline_id=$1 AND campaign_id=$2 AND tenant_id=$3`,
+      [req.params.pipelineId, req.params.id, tid]
+    );
+    if (!pl.rows.length) return res.status(404).json({ error: 'pipeline_not_found' });
+    const p = pl.rows[0];
+    const ev = await pool.query(
+      `SELECT COUNT(*)                                             AS total_events,
+              COUNT(*) FILTER (WHERE status='SUCCESS')            AS successes,
+              COUNT(*) FILTER (WHERE status='FAILURE')            AS failures,
+              COUNT(*) FILTER (WHERE event_type='PTP_RECORDED')   AS ptps,
+              COUNT(*) FILTER (WHERE event_type='LEAD_SKIPPED')   AS skipped,
+              COUNT(DISTINCT lead_id)                             AS unique_leads
+         FROM lead_execution_events WHERE pipeline_id=$1 AND tenant_id=$2`,
+      [req.params.pipelineId, tid]
+    );
+    const e = ev.rows[0];
+    const totalCalls = +p.calls_completed + +p.calls_no_answer + +p.calls_failed;
+    const contactRate = totalCalls > 0 ? Math.round((+p.calls_completed / totalCalls) * 1000) / 10 : 0;
+    const ptpRate = +e.unique_leads > 0 ? Math.round((+e.ptps / +e.unique_leads) * 1000) / 10 : 0;
+    const avgDuration = +p.calls_completed > 0 ? Math.round(+p.total_duration_s / +p.calls_completed) : 0;
+    res.json({ calls_completed: +p.calls_completed, calls_no_answer: +p.calls_no_answer,
+      calls_failed: +p.calls_failed,     total_duration_s: +p.total_duration_s,
+      avg_duration_s: avgDuration,        contact_rate_pct: contactRate,
+      ptp_count: +e.ptps,                ptp_rate_pct: ptpRate,
+      unique_leads: +e.unique_leads,      total_events: +e.total_events,
+      successes: +e.successes,            failures: +e.failures, skipped: +e.skipped });
+  } catch (e) { throw e; }
+});
 // ─── Catch-all ────────────────────────────────────────────────────────────────
 app.all('/{*path}', (req, res) => { res.status(404).json({ error: 'not_found' }); });
 

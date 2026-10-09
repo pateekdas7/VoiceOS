@@ -196,6 +196,8 @@ async def test_scheduler_flush_increments_generation() -> None:
     assert p.generation == 0
     await p.flush()
     assert p.generation == 1
+    p.clear_barge_in()
+    await p.enqueue(_clause(2, generation=1))
     await p.flush()
     assert p.generation == 2
 
@@ -207,6 +209,7 @@ async def test_clear_barge_in_does_not_reset_generation() -> None:
     the fail-closed check work — a delayed producer that resumes AFTER
     the next turn cleared the event still sees the advanced generation."""
     p = PlaybackScheduler()
+    await p.enqueue(_clause(0, generation=0))
     await p.flush()
     assert p.generation == 1
     p.clear_barge_in()
@@ -222,6 +225,7 @@ async def test_clear_barge_in_does_not_reset_generation() -> None:
 @pytest.mark.asyncio
 async def test_scheduler_enqueue_drops_stale_generation() -> None:
     p = PlaybackScheduler()
+    await p.enqueue(_clause(0, generation=0))  # make queue non-empty for flush
     await p.flush()  # generation now 1
     p.clear_barge_in()
     # Stale gen-0 clause arriving after the flush + clear must be dropped.
@@ -234,6 +238,7 @@ async def test_scheduler_enqueue_drops_stale_generation() -> None:
 @pytest.mark.asyncio
 async def test_scheduler_enqueue_accepts_current_generation() -> None:
     p = PlaybackScheduler()
+    await p.enqueue(_clause(1, generation=0))  # non-empty so flush advances gen
     await p.flush()
     p.clear_barge_in()
     fresh = _clause(10, idx=0, generation=1)
@@ -246,6 +251,7 @@ async def test_scheduler_enqueue_never_rewrites_clause_generation() -> None:
     """A dropped clause must NOT be silently forwarded with a rewritten
     generation. The scheduler drops it; nothing shifts the mismatch away."""
     p = PlaybackScheduler()
+    await p.enqueue(_clause(1, generation=0))  # non-empty so flush advances gen
     await p.flush()  # gen 1
     stale = _clause(10, generation=0)
     await p.enqueue(stale)
@@ -296,6 +302,7 @@ def test_gate_default_bytes_per_sample_is_two() -> None:
 async def test_gate_snapshots_generation_at_construction_when_omitted() -> None:
     p = PlaybackScheduler()
     # Advance scheduler before gate construction.
+    await p.enqueue(_clause(1, generation=0))  # non-empty so flush advances gen
     await p.flush()
     g = StartupBufferGate(playback=p, mode=TTSMode.BUFFERED_STREAMING, threshold_ms=400)
     assert g.scope_generation == p.generation == 1
@@ -312,6 +319,7 @@ def test_gate_accepts_explicit_generation() -> None:
 @pytest.mark.asyncio
 async def test_gate_drops_stale_clause_on_enqueue() -> None:
     gate, playback = _mk_gate(generation=0)
+    await playback.enqueue(_clause(1, generation=0))  # non-empty so flush advances gen
     await playback.flush()  # playback now gen 1, gate scope still gen 0
     playback.clear_barge_in()
     stale = _clause(50, generation=0)
@@ -351,6 +359,7 @@ async def test_gate_release_drops_all_when_generation_advanced_before_release() 
     await gate.enqueue(_clause(100, idx=2, generation=0))
     assert gate.buffered_clauses == 3
     # Barge-in fires; scheduler advances; next turn clears the event.
+    await playback.enqueue(_clause(1, generation=0))  # non-empty so flush advances gen
     await playback.flush()
     playback.clear_barge_in()
     # Now call flush_final(): release must abort and drop everything.
@@ -377,6 +386,7 @@ async def test_gate_release_stops_mid_drain_on_generation_advance() -> None:
     assert g.buffered_clauses == 5
 
     # Advance the scheduler before release runs.
+    await p.enqueue(_clause(1, generation=0))  # non-empty so flush advances gen
     await p.flush()  # gen 1
     p.clear_barge_in()
 
@@ -408,8 +418,10 @@ async def test_pipeline_stamps_synthesised_clauses_with_scope_generation() -> No
     p = PlaybackScheduler()
     # Move the scheduler to gen 2 before pipeline starts, so we can
     # verify the pipeline picked up the LIVE generation, not a hard-coded 0.
+    await p.enqueue(_clause(1, generation=0))  # non-empty so flush advances gen
     await p.flush()
     p.clear_barge_in()
+    await p.enqueue(_clause(1, generation=1))  # non-empty so flush advances gen
     await p.flush()
     p.clear_barge_in()
     assert p.generation == 2
@@ -493,6 +505,7 @@ async def test_deterministic_race_gen_n_coroutine_resumes_after_invalidation() -
     assert p.depth == 0
 
     # Barge-in: flush the scheduler (advances generation).
+    await p.enqueue(_clause(1, generation=0))  # non-empty so flush advances gen
     await p.flush()
     assert p.generation == 1
     # Next turn clears the event — this is the key part of the race.
@@ -523,6 +536,7 @@ async def test_race_direct_scheduler_enqueue_after_flush_clear() -> None:
     then the coroutine enqueues → scheduler drops it fail-closed."""
     p = PlaybackScheduler()
     stale = _clause(50, generation=0)  # gen-N snapshot
+    await p.enqueue(_clause(1, generation=0))  # non-empty so flush advances gen
     await p.flush()
     assert p.generation == 1
     p.clear_barge_in()
@@ -540,6 +554,7 @@ async def test_race_gate_buffered_then_flush_release_yields_zero() -> None:
     await gate.enqueue(_clause(100, idx=0, generation=0))
     await gate.enqueue(_clause(100, idx=1, generation=0))
     await gate.enqueue(_clause(100, idx=2, generation=0))
+    await p.enqueue(_clause(1, generation=0))  # non-empty so flush advances gen
     await p.flush()
     p.clear_barge_in()
     await gate.flush_final()
@@ -644,6 +659,7 @@ async def test_send_clause_aborts_between_frames_on_generation_advance() -> None
         generation=0,
     )
     # After 2 frames, simulate barge-in (flush + clear event) mid-clause.
+    await p.enqueue(_clause(1, generation=0))  # non-empty so mid-clause flush advances gen
     await orch.send_clause(clause, mid_clause_flush_after=2)
     assert orch.aborted_mid_clause == [True]
     # Exactly the 2 pre-flush frames must have been sent; ZERO after.
@@ -656,6 +672,7 @@ async def test_send_clause_drops_pre_stale_clause_immediately() -> None:
     """A clause that is ALREADY stale by the time _send_clause runs must
     not emit a single Twilio frame."""
     p = PlaybackScheduler()
+    await p.enqueue(_clause(1, generation=0))  # non-empty so flush advances gen
     await p.flush()  # gen 1
     p.clear_barge_in()
     fake = _FakeAdapter()

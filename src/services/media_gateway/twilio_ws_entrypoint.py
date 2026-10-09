@@ -49,7 +49,7 @@ import logging
 import re
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, UTC
 from collections import deque
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -647,7 +647,7 @@ class CallOrchestrator:
                 role=TurnRole.CUSTOMER,
                 transcript=transcript,
                 segments=segments,
-                created_at=datetime.utcnow(),
+                created_at=datetime.now(UTC),
                 correlation_id="",
                 trace_id="",
                 turn_index=self._turn_index,
@@ -1136,7 +1136,7 @@ class CallOrchestrator:
         with _tts_ctx:
             synth_task = asyncio.create_task(
                 self._deps.conversation_engine.speak_scripted_text(
-                    greeting, self._playback, tts_mode="streaming"
+                    greeting, self._playback, tts_mode="full_response"
                 )
             )
             self._vad.set_playback_active(True, playback_seq=self._turn_index)

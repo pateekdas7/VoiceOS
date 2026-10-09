@@ -13,7 +13,7 @@ max_ttl_min: 60, requires_approval: 2}``), §4.18.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 
 from .decision import PolicyDecision, PolicyOutcome
 
@@ -51,7 +51,7 @@ class BreakGlassPolicy:
         Denies when: fewer than ``required_approvals`` distinct approvers, or
         the directive has exceeded ``max_ttl_minutes`` since it was requested.
         """
-        now = now if now is not None else datetime.utcnow()
+        now = now if now is not None else datetime.now(UTC)
         distinct_approvers = set(directive.approvers)
 
         if len(distinct_approvers) < self._required_approvals:

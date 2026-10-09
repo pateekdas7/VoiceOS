@@ -20,7 +20,7 @@ from src.libs.contracts.streaming import WordHypothesis
 from src.services.gpu_scheduler.admission import AdmissionDecision
 from src.services.gpu_scheduler.scheduler import GPUScheduler
 from src.services.gpu_scheduler.vram_ledger import AllocationToken
-from src.services.stt.adapters.whisper_http_adapter import WhisperHTTPAdapter
+from src.services.stt.adapters.whisper_http_adapter import STTRetryExhaustedError, WhisperHTTPAdapter
 from src.services.stt.protocol import STTAdapter
 
 # ---------------------------------------------------------------------------
@@ -200,7 +200,7 @@ async def test_raises_on_http_error_status(monkeypatch: pytest.MonkeyPatch) -> N
     adapter = WhisperHTTPAdapter(gpu_scheduler=scheduler)
 
     gen = await adapter.transcribe_stream(_frames_gen([_make_frame()]), language="en")
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(STTRetryExhaustedError):
         async for _ in gen:
             pass
     # VRAM must still be released even though the HTTP call failed.

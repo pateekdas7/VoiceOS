@@ -81,6 +81,13 @@ jobs:
       - name: Install dev dependencies
         run: pip install -e ".[dev]"
 
+      - name: Check for uncommitted Alembic migrations
+        run: |
+          pip install alembic psycopg2-binary --quiet 2>&1 | tail -1
+          alembic check
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL || 'sqlite://:memory:' }}
+
       - name: Run unit tests
         env:
           # Distinct data-file name so this job's raw coverage data can be
@@ -307,7 +314,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
-        continue-on-error: true  # Non-blocking until license configured
 
       - name: Install trufflehog
         uses: trufflesecurity/trufflehog@main
@@ -360,3 +366,105 @@ jobs:
 
       - name: check_performance_regression.py — RegressionDetector CI gate (blocking, Sprint-028)
         run: python scripts/check_performance_regression.py
+
+  # ---------------------------------------------------------------------------
+  # Stage 8 — W10: npm dependency vulnerability audit (blocking)
+  # ---------------------------------------------------------------------------
+  npm-audit:
+    name: npm Audit (High/Critical)
+    runs-on: ubuntu-latest
+    needs: static-analysis
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline
+
+      - name: npm audit — fail on high/critical vulnerabilities
+        run: npm audit --audit-level=high
+
+  # ---------------------------------------------------------------------------
+  # Stage 9 — W10: Python SAST (bandit) + dependency safety (blocking)
+  # ---------------------------------------------------------------------------
+  python-security-scan:
+    name: Python Security Scan (bandit + safety)
+    runs-on: ubuntu-latest
+    needs: static-analysis
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dev dependencies + security tools
+        run: |
+          pip install -e ".[dev]"
+          pip install bandit safety
+
+      - name: bandit — SAST scan (skip tests/, block on HIGH severity)
+        run: bandit -r src/ -ll -ii --exclude src/tests -f json -o bandit-report.json || bandit -r src/ -ll -ii --exclude src/tests
+
+      - name: safety — dependency vulnerability check
+        run: safety check --full-report
+        continue-on-error: true  # safety DB rate-limits unauthenticated; warn but don't block
+
+      - name: Upload bandit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bandit-security-report
+          path: bandit-report.json
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # Stage 10 — W10: Container / image vulnerability scan (Trivy, blocking)
+  # ---------------------------------------------------------------------------
+  container-scan:
+    name: Container Image Scan (Trivy)
+    runs-on: ubuntu-latest
+    needs: docker-build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image for scanning
+        run: docker build -t voiceos-app:ci-scan -f Dockerfile .
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: voiceos-app:ci-scan
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+
+      - name: Run Trivy — output sarif for GitHub Security tab
+        uses: aquasecurity/trivy-action@master
+        if: always()
+        with:
+          image-ref: voiceos-app:ci-scan
+          format: sarif
+          output: trivy-results.sarif
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+
+  # ---------------------------------------------------------------------------
+  # Stage 10 — W10: Container / image vulnerability scan (Trivy, blocking)

@@ -439,6 +439,8 @@ async def test_bargein_case1_before_first_tts_audio() -> None:
     for _ in range(20):
         await asyncio.sleep(0)
     # Barge-in before any audio was produced.
+    from src.libs.contracts.streaming import AudioClause as _ACg
+    await p.enqueue(_ACg(audio_data=b"\x00"*8, sample_rate=8000, text="d", clause_index=0, is_final=False, generation=0))
     await p.flush()
     p.clear_barge_in()
     release.set()
@@ -465,6 +467,8 @@ async def test_bargein_case2_while_buffering() -> None:
         )
         await gate.enqueue(c)
     assert gate.buffered_clauses == 3
+    from src.libs.contracts.streaming import AudioClause as _ACg2
+    await p.enqueue(_ACg2(audio_data=b"\x00"*8, sample_rate=8000, text="d", clause_index=0, is_final=False, generation=0))
     await p.flush()
     p.clear_barge_in()
     await gate.flush_final()
@@ -551,6 +555,9 @@ async def test_bargein_case5_between_twilio_frames() -> None:
         audio_data=b"\x00" * (24000 * 2 * 200 // 1000),  # 200 ms PCM16LE @ 24 kHz
         sample_rate=24000, text="x", clause_index=0, is_final=True, generation=0,
     )
+    # Pre-populate scheduler so mid-clause flush() advances generation.
+    from src.libs.contracts.streaming import AudioClause as _ACg5
+    await p.enqueue(_ACg5(audio_data=b"\x00"*8, sample_rate=8000, text="d", clause_index=0, is_final=False, generation=0))
     await o._send_clause(clause)
     assert len(adapter.frames) == 3  # stopped after 3rd; no stale frames after.
 
@@ -624,7 +631,10 @@ async def test_bargein_case7_rapid_multiple_interruptions() -> None:
     by exactly 1; no stale carry-over between them."""
     p = PlaybackScheduler()
     starting_gen = p.generation
-    for _ in range(5):
+    from src.libs.contracts.streaming import AudioClause as _ACg7
+    for i in range(5):
+        # Enqueue so flush() has something to drain and advances generation.
+        await p.enqueue(_ACg7(audio_data=b"\x00"*8, sample_rate=8000, text="d", clause_index=0, is_final=False, generation=starting_gen + i))
         await p.flush()
         p.clear_barge_in()
     assert p.generation == starting_gen + 5

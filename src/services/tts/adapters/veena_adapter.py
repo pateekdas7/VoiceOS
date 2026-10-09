@@ -44,7 +44,7 @@ import time
 from collections.abc import AsyncIterator, Mapping
 from typing import TYPE_CHECKING
 
-from src.libs.circuit_breaker.breaker import CircuitBreaker
+from src.libs.circuit_breaker.breaker import CircuitBreaker, CircuitOpenError, CircuitState
 from src.libs.contracts.streaming import AudioClause, VoiceConfig
 from src.services.gpu_scheduler.admission import AdmissionDecision
 from src.services.gpu_scheduler.scheduler import GPUScheduler
@@ -242,7 +242,16 @@ class VeenaAdapter:
                         resp = await self._open_stream(client, url, payload, _gpu_headers)
                     break
                 except Exception as _tts_exc:
+                    if isinstance(_tts_exc, CircuitOpenError):
+                        raise  # circuit open — fail fast, never retry
                     if _attempt == 0:
+                        # If this failure just tripped the breaker open, propagate
+                        # the original error immediately instead of retrying.
+                        if (
+                            self._breaker is not None
+                            and self._breaker.state == CircuitState.OPEN
+                        ):
+                            raise
                         logger.warning(
                             "TTS connection failed on first attempt (%s: %s), "
                             "retrying after %.1fs",

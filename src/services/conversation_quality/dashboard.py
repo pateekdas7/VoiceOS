@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, UTC
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ class QualityDashboard:
             grade=grade,
             weighted_score=weighted_score,
             turn_count=turn_count,
-            recorded_at=datetime.utcnow(),
+            recorded_at=datetime.now(UTC),
         )
         self._records.append(rec)
         logger.debug("QualityDashboard: recorded call %s grade=%s", call_id, grade)

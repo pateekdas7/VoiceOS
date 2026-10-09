@@ -173,21 +173,21 @@ def record_callback_auth_failure(source: str) -> None:
 # ---------------------------------------------------------------------------
 
 stt_latency_ms = Histogram(
-    "voiceos_stt_latency_ms",
+    "voiceos_stt_endtoend_latency_ms",
     "STT transcription latency from first frame to final transcript.",
     buckets=(100, 200, 400, 700, 1000, 1500, 2500, 5000),
     labelnames=["language", "result"],
 )
 
 llm_latency_ms = Histogram(
-    "voiceos_llm_latency_ms",
+    "voiceos_llm_endtoend_latency_ms",
     "LLM response latency from TurnInput to first AudioClause.",
     buckets=(100, 200, 400, 700, 1000, 1500, 2500, 5000),
     labelnames=["dialogue_state"],
 )
 
 tts_latency_ms = Histogram(
-    "voiceos_tts_latency_ms",
+    "voiceos_tts_endtoend_latency_ms",
     "TTS synthesis latency from text clause to first audio frame (TTFA).",
     buckets=(100, 250, 500, 1000, 2500, 5000, 10000, 20000),
     labelnames=["cached"],

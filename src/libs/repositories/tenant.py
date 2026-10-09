@@ -10,7 +10,7 @@ Architecture: V5 Ch2 (Multi-Tenant Architecture); V5 Ch3 (Tenant Lifecycle).
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Any
 
 from ..contracts.models.tenant import IsolationProfile, Tenant, TenantStatus
@@ -98,7 +98,7 @@ class TenantRepository(BaseRepository):
     ) -> int:
         """Persist a lifecycle transition. Returns the affected row count (0 or 1)."""
         set_columns = ["status", "updated_at"]
-        set_values: list[Any] = [status.value, datetime.utcnow()]
+        set_values: list[Any] = [status.value, datetime.now(UTC)]
         if activated_at is not None:
             set_columns.append("activated_at")
             set_values.append(activated_at)

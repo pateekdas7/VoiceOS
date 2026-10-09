@@ -198,6 +198,7 @@ async def test_run_turns_processes_one_turn_and_sends_audio_out() -> None:
     await orch._handle_vad_event(VADSpeechStart(tenant_id=_tenant(), call_id="call-1", start_ms=0, energy_db=-10.0))
     assert orch._current_turn_queue is not None
     orch._current_turn_queue.put_nowait(None)  # immediately end the (empty-audio) turn
+    orch._vad_speech_ended.set()  # simulate VADSpeechEnd so _run_turns_one_iteration unblocks
 
     async def _stop_after_one() -> None:
         await orch._run_turns_one_iteration()
@@ -227,6 +228,7 @@ async def test_empty_transcript_turn_skips_conversation_engine() -> None:
     await orch._handle_vad_event(VADSpeechStart(tenant_id=_tenant(), call_id="call-1", start_ms=0, energy_db=-10.0))
     assert orch._current_turn_queue is not None
     orch._current_turn_queue.put_nowait(None)
+    orch._vad_speech_ended.set()  # simulate VADSpeechEnd so _run_turns_one_iteration unblocks
 
     await orch._run_turns_one_iteration()
 

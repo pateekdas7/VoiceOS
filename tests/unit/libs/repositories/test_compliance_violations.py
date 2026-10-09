@@ -142,7 +142,7 @@ class TestComplianceViolationRepositoryResolve:
         repo.resolve(TenantId("t-1"), "consent.denied")
 
         assert "UPDATE compliance_violations" in conn._cursor.last_sql
-        assert "RESOLVED" in conn._cursor.last_sql
+        assert "RESOLVED" in conn._cursor.last_params
 
     def test_resolve_scopes_to_rule_id(self) -> None:
         conn = _FakeConn()

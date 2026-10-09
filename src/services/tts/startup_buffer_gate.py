@@ -57,6 +57,7 @@ _ALLOWED_THRESHOLD_MS: frozenset[int] = frozenset({0, 400, 600, 800, 1000})
 # in this gate must match the wire format the rest of the system uses.
 _DEFAULT_BYTES_PER_SAMPLE = 2
 _DEFAULT_MAX_BUFFERED_CLAUSES = 128  # bounded buffer cap (runaway guard).
+_FULL_RESPONSE_MAX_CAP = 4096  # ~5.8 min of Veena 85ms clauses; fail-closed on hit.
 
 
 class TTSMode(str, enum.Enum):
@@ -65,6 +66,7 @@ class TTSMode(str, enum.Enum):
     STREAMING = "streaming"
     BUFFERED_STREAMING = "buffered_streaming"
     BLOCKING = "blocking"
+    FULL_RESPONSE = "full_response"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> TTSMode:
@@ -151,14 +153,19 @@ class StartupBufferGate:
         mode: TTSMode,
         threshold_ms: int,
         *,
-        max_buffered_clauses: int = _DEFAULT_MAX_BUFFERED_CLAUSES,
+        max_buffered_clauses: int | None = None,
         bytes_per_sample: int = _DEFAULT_BYTES_PER_SAMPLE,
         generation: int | None = None,
     ) -> None:
         self._playback = playback
         self._mode = mode
         self._threshold_ms = max(0, int(threshold_ms))
-        self._max_buffered_clauses = max(1, int(max_buffered_clauses))
+        _cap = (
+            max_buffered_clauses if max_buffered_clauses is not None
+            else (_FULL_RESPONSE_MAX_CAP if mode == TTSMode.FULL_RESPONSE
+                  else _DEFAULT_MAX_BUFFERED_CLAUSES)
+        )
+        self._max_buffered_clauses = max(1, int(_cap))
         self._bytes_per_sample = max(1, int(bytes_per_sample))
         self._buffer: deque[AudioClause] = deque()
         self._buffered_ms: float = 0.0
@@ -278,14 +285,22 @@ class StartupBufferGate:
         # letting the deque grow without limit. This preserves ordering:
         # existing buffered clauses flush first, then the new clause.
         if len(self._buffer) >= self._max_buffered_clauses:
-            logger.warning(
-                "StartupBufferGate: buffer cap %d hit (buffered_ms=%.1f, "
-                "mode=%s) — forcing release",
-                self._max_buffered_clauses, self._buffered_ms, self._mode.value,
-            )
-            await self._release_buffered()
-            if not self._discarded:
-                await self._playback.enqueue(clause)
+            if self._mode == TTSMode.FULL_RESPONSE:
+                logger.warning(
+                    "StartupBufferGate: FULL_RESPONSE cap %d hit "
+                    "(buffered_ms=%.1f) — failing closed (discard)",
+                    self._max_buffered_clauses, self._buffered_ms,
+                )
+                self.discard()
+            else:
+                logger.warning(
+                    "StartupBufferGate: buffer cap %d hit (buffered_ms=%.1f, "
+                    "mode=%s) — forcing release",
+                    self._max_buffered_clauses, self._buffered_ms, self._mode.value,
+                )
+                await self._release_buffered()
+                if not self._discarded:
+                    await self._playback.enqueue(clause)
             return
 
         self._buffer.append(clause)

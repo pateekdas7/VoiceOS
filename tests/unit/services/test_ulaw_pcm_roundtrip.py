@@ -98,7 +98,10 @@ class TestOutboundCodecFidelity:
         the codec (e.g. lin2alaw instead of lin2ulaw) would push SNR
         deep into the single digits and trip this test immediately."""
         pcm_24k = _sine_pcm16(_SRC_RATE_HZ, _TONE_HZ, _DURATION_S, _AMPLITUDE)
-        pcm_8k_reference = _sine_pcm16(_WIRE_RATE_HZ, _TONE_HZ, _DURATION_S, _AMPLITUDE)
+        # AudioOutput.convert applies a +25% volume boost (amplitude * 5 // 4)
+        # so the roundtripped signal will be at the boosted amplitude.
+        _amp_boosted = int(_AMPLITUDE * 5 // 4)
+        pcm_8k_reference = _sine_pcm16(_WIRE_RATE_HZ, _TONE_HZ, _DURATION_S, _amp_boosted)
 
         ulaw = AudioOutput().convert(self._make_clause(pcm_24k), fmt="ulaw")
         pcm_8k_roundtripped = audioop.ulaw2lin(ulaw, 2)
@@ -154,7 +157,9 @@ class TestFullLoopback:
 
     def test_full_loopback_snr_above_codec_floor(self) -> None:
         pcm_24k = _sine_pcm16(_SRC_RATE_HZ, _TONE_HZ, _DURATION_S, _AMPLITUDE)
-        pcm_8k_reference = _sine_pcm16(_WIRE_RATE_HZ, _TONE_HZ, _DURATION_S, _AMPLITUDE)
+        # AudioOutput.convert applies a +25% volume boost (amplitude * 5 // 4)
+        _amp_boosted = int(_AMPLITUDE * 5 // 4)
+        pcm_8k_reference = _sine_pcm16(_WIRE_RATE_HZ, _TONE_HZ, _DURATION_S, _amp_boosted)
 
         clause = AudioClause(
             audio_data=pcm_24k,

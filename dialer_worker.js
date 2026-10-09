@@ -48,7 +48,15 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 const QUEUE_POLL_TIMEOUT_S  = 2;
 const SCHEDULE_REQUEUE_DELAY_S = 600; // re-enqueue outside-window leads after 10 min
 const MAX_RETRY_ATTEMPTS   = 3;
-const RETRY_DELAY_S        = [60, 300, 900]; // 1 min, 5 min, 15 min backoff
+const RETRY_DELAY_S        = [60, 300, 900]; // fallback
+// Disposition-specific retry backoff (seconds), indexed by attempt (0-based)
+const RETRY_DELAY_BY_DISPOSITION = {
+  BUSY:      [30,   120,   300],
+  NO_ANSWER: [60,   300,   900],
+  FAILED:    [300,  900,  1800],
+  TIMEOUT:   [120,  600,  1800],
+};
+const MAX_SYSTEM_CONCURRENT_CALLS = parseInt(process.env.MAX_SYSTEM_CONCURRENT_CALLS || '200');
 const CALLBACK_POLL_MS     = 30_000;
 const IDLE_LOG_INTERVAL_MS = 60_000;
 
@@ -68,27 +76,33 @@ const SIM_OUTCOMES = [
 // ─── Redis keys ─────────────────────────────────────────────────────────────
 
 const K = {
-  pendingQueue:    (tid) => `voiceos:pending_calls:${tid}`,
-  retryQueue:      (tid) => `voiceos:retry_calls:${tid}`,
-  callbackQueue:   (tid) => `voiceos:callback_calls:${tid}`,
-  activeCalls:     (tid) => `voiceos:active_calls:${tid}`,
-  pipelineCompleted: (pid) => `voiceos:pipeline:completed:${pid}`,
-  callLock:        (sid)  => `voiceos:call:lock:${sid}`,
-  workerHeartbeat: (wid)  => `voiceos:worker:${wid}:alive`,
-  reconcileLock:   (aid)  => `voiceos:reconcile:${aid}`,
+  pendingQueue:      (tid)       => `voiceos:pending_calls:${tid}`,
+  pendingQueuePri:   (tid, pri)  => `voiceos:pending_calls:${tid}:${pri}`,  // high/normal/low
+  retryQueue:        (tid)       => `voiceos:retry_calls:${tid}`,
+  callbackQueue:     (tid)       => `voiceos:callback_calls:${tid}`,
+  activeCalls:       (tid)       => `voiceos:active_calls:${tid}`,
+  activeCampaign:    (cid)       => `voiceos:active_calls:campaign:${cid}`,
+  activeTenant:      (tid)       => `voiceos:active_calls:tenant:${tid}`,
+  activeSystem:      ()          => 'voiceos:active_calls:system',
+  pacingZset:        (cid)       => `voiceos:pacing:${cid}`,
+  fromNumberIdx:     (prov, tid) => `voiceos:from_idx:${prov}:${tid}`,
+  pipelineCompleted: (pid)       => `voiceos:pipeline:completed:${pid}`,
+  callLock:          (sid)       => `voiceos:call:lock:${sid}`,
+  workerHeartbeat:   (wid)       => `voiceos:worker:${wid}:alive`,
+  reconcileLock:     (aid)       => `voiceos:reconcile:${aid}`,
 };
 
 // ─── DB / Redis clients ──────────────────────────────────────────────────────
 
 const pool = process.env.POSTGRES_DSN
-  ? new Pool({ connectionString: process.env.POSTGRES_DSN, max: 5 })
+  ? new Pool({ connectionString: process.env.POSTGRES_DSN, max: parseInt(process.env.DIALER_PG_POOL_MAX || '10') })
   : new Pool({
       host:     process.env.POSTGRES_HOST || '127.0.0.1',
       port:     parseInt(process.env.POSTGRES_PORT || '5432'),
       database: process.env.POSTGRES_DB   || 'voiceos',
       user:     process.env.POSTGRES_USER || 'voiceos',
       password: process.env.POSTGRES_PASSWORD || '',
-      max: 5,
+      max: parseInt(process.env.DIALER_PG_POOL_MAX || '10'),
     });
 pool.on('error', err => log.warn('[pg] idle client error:', err.message));
 
@@ -128,7 +142,8 @@ class ScheduleVerifier {
   async canCallNow(campaignId, tenantId) {
     const { rows } = await this._pool.query(
       `SELECT status, daily_start_hour, daily_end_hour, timezone,
-              scheduled_start, scheduled_end, allowed_weekdays, excluded_dates
+              scheduled_start, scheduled_end, allowed_weekdays, excluded_dates,
+              max_concurrent_calls, calls_per_minute
        FROM campaigns WHERE campaign_id=$1 AND tenant_id=$2`,
       [campaignId, tenantId]
     );
@@ -180,7 +195,11 @@ class ScheduleVerifier {
       return { ok: false, reason: 'outside_calling_window', localHour, window: `${start}-${end}` };
     }
 
-    return { ok: true, localDate, localHour, localWeekday };
+    return {
+      ok: true, localDate, localHour, localWeekday,
+      maxConcurrentCalls: c.max_concurrent_calls != null ? c.max_concurrent_calls : 10,
+      callsPerMinute:     c.calls_per_minute     != null ? c.calls_per_minute     : 30,
+    };
   }
 
   async markLeadInCall(leadId) {
@@ -376,19 +395,222 @@ class TwilioDialer {
     const twimlUrl = `${mgHttp}/voice`;
     const callbackUrl = `${this._bffUrl}/dialer/callback?pipeline_id=${encodeURIComponent(lead.pipeline_id)}&lead_id=${encodeURIComponent(lead.lead_id)}&tenant_id=${encodeURIComponent(lead.tenant_id)}`;
 
+    const recordingCallbackUrl = `${this._bffUrl}/dialer/recording-callback?pipeline_id=${encodeURIComponent(lead.pipeline_id)}&lead_id=${encodeURIComponent(lead.lead_id)}&tenant_id=${encodeURIComponent(lead.tenant_id)}`;
     const call = await this._client.calls.create({
       to:             `+91${lead.phone}`,
-      from:           this._from,
+      from:           lead._caller_id || this._from,
       url:            twimlUrl,
       statusCallback: callbackUrl,
       statusCallbackMethod: 'POST',
       statusCallbackEvent:  ['initiated','ringing','answered','completed'],
       machineDetection: 'Enable',
       timeout:         30,
+      record:          true,
+      recordingStatusCallback:       recordingCallbackUrl,
+      recordingStatusCallbackMethod: 'POST',
     });
 
     log.info(`[TWILIO] Call initiated sid=${call.sid} to=${lead.phone} pipeline=${lead.pipeline_id}`);
     return call.sid;
+  }
+}
+
+
+// ─── Exotel Dialer ───────────────────────────────────────────────────────────
+
+class ExotelDialer {
+  constructor() {
+    this._accountSid = process.env.EXOTEL_ACCOUNT_SID;
+    this._apiKey     = process.env.EXOTEL_API_KEY;
+    this._apiToken   = process.env.EXOTEL_API_TOKEN;
+    this._from       = process.env.EXOTEL_FROM_NUMBER;
+    this._bffUrl     = process.env.PUBLIC_BFF_URL;
+    this._wsUrl      = process.env.PUBLIC_WS_URL;
+    if (!this._accountSid || !this._apiKey || !this._apiToken) {
+      throw new Error('EXOTEL_ACCOUNT_SID, EXOTEL_API_KEY, EXOTEL_API_TOKEN required');
+    }
+    if (!this._from)   throw new Error('EXOTEL_FROM_NUMBER required');
+    if (!this._bffUrl) throw new Error('PUBLIC_BFF_URL required');
+    if (!this._wsUrl)  throw new Error('PUBLIC_WS_URL required');
+  }
+
+  async initiate(lead) {
+    const https       = require('https');
+    const querystring = require('querystring');
+    const callbackUrl = `${this._bffUrl}/dialer/callback/exotel?pipeline_id=${encodeURIComponent(lead.pipeline_id)}&lead_id=${encodeURIComponent(lead.lead_id)}&tenant_id=${encodeURIComponent(lead.tenant_id)}`;
+    // ExoML served by voice-runtime at /voice/exotel
+    const mgHttp   = this._wsUrl.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:');
+    const exomlUrl = `${mgHttp}/voice/exotel`;
+
+    const params = querystring.stringify({
+      From:           lead._caller_id || this._from,
+      To:             `0${lead.phone}`,
+      CallerId:       lead._caller_id || this._from,
+      Url:            exomlUrl,
+      StatusCallback: callbackUrl,
+      Record:         'true',
+    });
+
+    return new Promise((resolve, reject) => {
+      const auth    = Buffer.from(`${this._apiKey}:${this._apiToken}`).toString('base64');
+      const options = {
+        hostname: 'api.exotel.com',
+        port:     443,
+        path:     `/v1/Accounts/${this._accountSid}/Calls/connect`,
+        method:   'POST',
+        headers:  {
+          'Authorization':  `Basic ${auth}`,
+          'Content-Type':   'application/x-www-form-urlencoded',
+          'Content-Length': Buffer.byteLength(params),
+        },
+      };
+      const req = https.request(options, (res) => {
+        let body = '';
+        res.on('data', d => body += d);
+        res.on('end', () => {
+          try {
+            const data = JSON.parse(body);
+            const sid  = data.Call && data.Call.Sid;
+            if (!sid) return reject(new Error(`Exotel missing Sid: ${body.slice(0, 200)}`));
+            log.info(`[EXOTEL] Call initiated sid=${sid} to=${lead.phone} pipeline=${lead.pipeline_id}`);
+            resolve(`exotel:${sid}`);
+          } catch (e) {
+            reject(new Error(`Exotel parse error: ${e.message}`));
+          }
+        });
+      });
+      req.on('error', reject);
+      req.write(params);
+      req.end();
+    });
+  }
+}
+
+// ─── Plivo Dialer ────────────────────────────────────────────────────────────
+
+class PlivoDialer {
+  constructor() {
+    this._authId    = process.env.PLIVO_AUTH_ID;
+    this._authToken = process.env.PLIVO_AUTH_TOKEN;
+    this._from      = process.env.PLIVO_FROM_NUMBER;
+    this._bffUrl    = process.env.PUBLIC_BFF_URL;
+    this._wsUrl     = process.env.PUBLIC_WS_URL;
+    if (!this._authId || !this._authToken) {
+      throw new Error('PLIVO_AUTH_ID, PLIVO_AUTH_TOKEN required');
+    }
+    if (!this._from)   throw new Error('PLIVO_FROM_NUMBER required');
+    if (!this._bffUrl) throw new Error('PUBLIC_BFF_URL required');
+    if (!this._wsUrl)  throw new Error('PUBLIC_WS_URL required');
+    const plivo  = require('plivo');
+    this._client = new plivo.Client(this._authId, this._authToken);
+  }
+
+  async initiate(lead) {
+    const callbackUrl = `${this._bffUrl}/dialer/callback/plivo?pipeline_id=${encodeURIComponent(lead.pipeline_id)}&lead_id=${encodeURIComponent(lead.lead_id)}&tenant_id=${encodeURIComponent(lead.tenant_id)}`;
+    const mgHttp      = this._wsUrl.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:');
+    const answerUrl   = `${mgHttp}/voice/plivo`;
+
+    const response = await this._client.calls.create(
+      lead._caller_id || this._from,
+      `+91${lead.phone}`,
+      answerUrl,
+      {
+        statusCallbackUrl:    callbackUrl,
+        statusCallbackMethod: 'POST',
+        machineDetection:     'true',
+        recordCallbackUrl:    callbackUrl,
+      }
+    );
+    const sid = response.requestUuid;
+    log.info(`[PLIVO] Call initiated uuid=${sid} to=${lead.phone} pipeline=${lead.pipeline_id}`);
+    return `plivo:${sid}`;
+  }
+}
+
+// ─── Telnyx Dialer ───────────────────────────────────────────────────────────
+
+class TelnxDialer {
+  constructor() {
+    this._apiKey       = process.env.TELNYX_API_KEY;
+    this._connectionId = process.env.TELNYX_CONNECTION_ID;
+    this._from         = process.env.TELNYX_FROM_NUMBER;
+    this._bffUrl       = process.env.PUBLIC_BFF_URL;
+    if (!this._apiKey)       throw new Error('TELNYX_API_KEY required');
+    if (!this._connectionId) throw new Error('TELNYX_CONNECTION_ID required');
+    if (!this._from)         throw new Error('TELNYX_FROM_NUMBER required');
+    if (!this._bffUrl)       throw new Error('PUBLIC_BFF_URL required');
+    this._telnyx = require('telnyx')(this._apiKey);
+  }
+
+  async initiate(lead) {
+    const callbackUrl = `${this._bffUrl}/dialer/callback/telnyx?pipeline_id=${encodeURIComponent(lead.pipeline_id)}&lead_id=${encodeURIComponent(lead.lead_id)}&tenant_id=${encodeURIComponent(lead.tenant_id)}`;
+
+    const call = await this._telnyx.calls.create({
+      connection_id:      this._connectionId,
+      to:                 `+91${lead.phone}`,
+      from:               lead._caller_id || this._from,
+      webhook_url:        callbackUrl,
+      webhook_url_method: 'POST',
+      record_audio:       true,
+      record_channels:    'dual',
+    });
+
+    const sid = call.data && (call.data.call_control_id || call.data.call_session_id);
+    if (!sid) throw new Error('Telnyx missing call_control_id in response');
+    log.info(`[TELNYX] Call initiated id=${sid} to=${lead.phone} pipeline=${lead.pipeline_id}`);
+    return `telnyx:${sid}`;
+  }
+}
+
+// ─── Multi-Provider Dialer ───────────────────────────────────────────────────
+// Tries providers in priority order; falls over to next on error.
+// Configured via TELEPHONY_PROVIDER_ORDER (comma-separated, default "twilio").
+
+class MultiProviderDialer {
+  constructor() {
+    const order = (process.env.TELEPHONY_PROVIDER_ORDER || 'twilio')
+      .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+
+    this._providers = [];
+    for (const name of order) {
+      try {
+        this._providers.push({ name, dialer: MultiProviderDialer._build(name) });
+        log.info(`[MultiProvider] Registered provider: ${name}`);
+      } catch (e) {
+        log.warn(`[MultiProvider] Provider ${name} skipped (${e.message})`);
+      }
+    }
+
+    if (this._providers.length === 0) {
+      throw new Error('No telephony providers available — check credentials in .env');
+    }
+  }
+
+  static _build(name) {
+    switch (name) {
+      case 'twilio': return new TwilioDialer();
+      case 'exotel': return new ExotelDialer();
+      case 'plivo':  return new PlivoDialer();
+      case 'telnyx': return new TelnxDialer();
+      default: throw new Error(`Unknown provider: ${name}`);
+    }
+  }
+
+  async initiate(lead) {
+    const errors = [];
+    for (const { name, dialer } of this._providers) {
+      try {
+        const sid = await dialer.initiate(lead);
+        if (name !== this._providers[0].name) {
+          log.warn(`[MultiProvider] Failover used provider=${name} lead=${lead.lead_id}`);
+        }
+        return sid;
+      } catch (e) {
+        log.warn(`[MultiProvider] Provider ${name} failed lead=${lead.lead_id}: ${e.message}`);
+        errors.push(`${name}: ${e.message}`);
+      }
+    }
+    throw new Error(`All providers failed — ${errors.join('; ')}`);
   }
 }
 
@@ -614,6 +836,7 @@ class CrashReconciler {
 
   // Returns 'active' if the call is still live, a terminal disposition string if ended.
   // Throws on API errors that are not 404 (caller decides how to handle conservatively).
+  // Multi-provider: SIDs are prefixed "twilio:", "exotel:", "plivo:", "telnyx:".
   async _checkTwilioStatus(callSid) {
     const TWILIO_ACTIVE   = new Set(['queued', 'ringing', 'in-progress']);
     const TWILIO_TERMINAL = {
@@ -623,8 +846,15 @@ class CrashReconciler {
       'no-answer': 'NO_ANSWER',
       canceled:   'FAILED',
     };
+    // Non-Twilio providers cannot be checked via Twilio API — fail conservatively
+    if (callSid && (callSid.startsWith('exotel:') || callSid.startsWith('plivo:') || callSid.startsWith('telnyx:'))) {
+      log.warn(`[Reconciler] Non-Twilio sid=${callSid} — cannot verify status, marking FAILED`);
+      return 'FAILED';
+    }
+    // Strip "twilio:" prefix if present (added by MultiProviderDialer)
+    const rawSid = (callSid && callSid.startsWith('twilio:')) ? callSid.slice(7) : callSid;
     try {
-      const call = await this._twilio.calls(callSid).fetch();
+      const call = await this._twilio.calls(rawSid).fetch();
       if (TWILIO_ACTIVE.has(call.status)) return 'active';
       return TWILIO_TERMINAL[call.status] || 'FAILED';
     } catch (e) {
@@ -686,7 +916,7 @@ class CrashReconciler {
 // ─── Pipeline — manages exactly one concurrent call ──────────────────────────
 
 class Pipeline extends EventEmitter {
-  constructor({ id, campaignId, tenantId, name, registry, tracker, scheduler, eventLogger, dialer }) {
+  constructor({ id, campaignId, tenantId, name, registry, tracker, scheduler, eventLogger, dialer, dncChecker, capacityGuard, pacingEnforcer }) {
     super();
     this.id         = id;
     this.campaignId = campaignId;
@@ -696,10 +926,13 @@ class Pipeline extends EventEmitter {
     this.buffer     = [];       // local lead buffer (in-memory)
     this._registry  = registry;
     this._tracker   = tracker;
-    this._scheduler = scheduler;
-    this._logger    = eventLogger;
-    this._dialer    = dialer;
-    this._running   = false;
+    this._scheduler       = scheduler;
+    this._logger          = eventLogger;
+    this._dialer          = dialer;
+    this._dnc             = dncChecker       || null;
+    this._capacityGuard   = capacityGuard    || null;
+    this._pacingEnforcer  = pacingEnforcer   || null;
+    this._running         = false;
     this._resolveNext = null;   // called when a new lead arrives in buffer
   }
 
@@ -751,6 +984,72 @@ class Pipeline extends EventEmitter {
       log.info(`[Pipeline:${this.name}] Campaign schedule blocked: ${schedule.reason} — requeueing lead ${lead.lead_id}`);
       await this._requeueDelayed(lead, schedule.reason);
       return;
+    }
+
+    // ── 1b. DNC check — block before any lock or DB write ───────────────
+    if (this._dnc) {
+      try {
+        const blocked = await this._dnc.isBlocked(lead.phone, lead.tenant_id);
+        if (blocked) {
+          log.warn(`[Pipeline:${this.name}] DNC block for lead=${lead.lead_id} phone=${lead.phone}`);
+          await pool.query(
+            `UPDATE leads SET queue_status='DNC_BLOCKED', updated_at=NOW() WHERE lead_id=$1`,
+            [lead.lead_id]
+          ).catch(e => log.warn('[DNC] leads update failed:', e.message));
+          await this._logger.log({
+            leadId: lead.lead_id, campaignId: lead.campaign_id,
+            pipelineId: this.id, tenantId: lead.tenant_id,
+            eventType: 'CALL_DNC_BLOCKED', status: 'SKIP',
+            message: `Lead blocked by DNC registry phone=${lead.phone}`,
+            metadata: { phone: lead.phone },
+          }).catch(() => {});
+          return;
+        }
+      } catch (e) {
+        log.warn(`[Pipeline:${this.name}] DNC check error — allowing call: ${e.message}`);
+      }
+    }
+
+    // ── 1c. Capacity check — back-pressure before lock ─────────────────
+    let _capacityAcquired = false;
+    if (this._capacityGuard && schedule.ok) {
+      // Fetch tenant max from DB (best-effort; fall back to 0 = no limit)
+      let tenantMax = 0;
+      try {
+        const tr = await pool.query(
+          `SELECT max_concurrent_calls FROM tenants WHERE tenant_id=$1`,
+          [lead.tenant_id]
+        );
+        tenantMax = tr.rows[0]?.max_concurrent_calls ?? 50;
+      } catch {}
+
+      const ok = await this._capacityGuard.acquire(
+        lead,
+        schedule.maxConcurrentCalls,
+        tenantMax
+      );
+      if (!ok) {
+        // Requeue after 5s so the slot can free up
+        const retryAt = Date.now() + 5_000;
+        await redis.zadd(K.retryQueue(lead.tenant_id), retryAt, JSON.stringify({
+          ...lead, _retry_after: retryAt, _schedule_blocked: 'capacity_limit',
+        })).catch(() => {});
+        return;
+      }
+      _capacityAcquired = true;
+    }
+
+    // ── 1d. Pacing check — calls-per-minute sliding window ───────────────
+    if (this._pacingEnforcer && schedule.callsPerMinute > 0) {
+      const ok = await this._pacingEnforcer.canCall(lead.campaign_id, schedule.callsPerMinute);
+      if (!ok) {
+        if (_capacityAcquired) await this._capacityGuard.release(lead);
+        const retryAt = Date.now() + 2_000;
+        await redis.zadd(K.retryQueue(lead.tenant_id), retryAt, JSON.stringify({
+          ...lead, _retry_after: retryAt, _schedule_blocked: 'pacing_limit',
+        })).catch(() => {});
+        return;
+      }
     }
 
     // ── 2. Duplicate call prevention ─────────────────────────────────────
@@ -816,10 +1115,13 @@ class Pipeline extends EventEmitter {
         ).catch(dbErr => log.warn('[call_attempts] failed to mark FAILED:', dbErr.message));
       }
     } finally {
-      // ── 8. Release lock after all synchronous work is complete ─────────
+      // ── 8. Release lock + capacity counters after all synchronous work ──
       this.status = 'IDLE';
       this.emit('status', 'IDLE');
       await redis.del(lockKey);
+      if (_capacityAcquired && this._capacityGuard) {
+        await this._capacityGuard.release(lead);
+      }
     }
   }
 
@@ -897,7 +1199,7 @@ class Pipeline extends EventEmitter {
 
     // Analytics write — best-effort (failure must not block lead status or retry)
     await pool.query(`
-      INSERT INTO call_dispositions
+      INSERT INTO call_runtime_records
         (call_sid, lead_id, campaign_id, tenant_id, disposition,
          duration_seconds, started_at, ended_at, metadata)
       VALUES ($1,$2,$3,$4,$5,$6,
@@ -912,11 +1214,21 @@ class Pipeline extends EventEmitter {
       callSid, lead.lead_id, lead.campaign_id, lead.tenant_id,
       disposition, finalDurS, endedAt,
       JSON.stringify({ pipeline_id: this.id, retry_count: lead._retry_count || 0 }),
-    ]).catch(e => log.warn(`[Pipeline:${this.name}] call_dispositions write failed:`, e.message));
+    ]).catch(e => log.warn(`[Pipeline:${this.name}] call_runtime_records write failed:`, e.message));
 
     await this._registry.setIdle(this.id);
     await this._registry.incrementStats(this.id, disposition, finalDurS);
     await this._scheduler.markLeadDone(lead.lead_id, disposition);
+
+    // Phase 4: enqueue CRM sync task for this call's disposition
+    if (lead.lead_id && lead.tenant_id) {
+      pool.query(
+        `INSERT INTO crm_sync_log (tenant_id, entity_type, entity_id, sync_status)
+         VALUES ($1, 'disposition', $2::uuid, 'PENDING')
+         ON CONFLICT (tenant_id, entity_type, entity_id) DO NOTHING`,
+        [lead.tenant_id, lead.lead_id]
+      ).catch(e => log.warn('[CRMSync] sync_log insert failed:', e.message));
+    }
 
     await this._logger.log({
       leadId: lead.lead_id, campaignId: lead.campaign_id,
@@ -962,13 +1274,18 @@ class Pipeline extends EventEmitter {
       log.debug(`[Pipeline:${this.name}] Max retries reached for lead ${lead.lead_id}`);
       return;
     }
-    const delaySec = RETRY_DELAY_S[attempts - 1] || RETRY_DELAY_S[RETRY_DELAY_S.length - 1];
+    // Disposition-specific backoff: BUSY 30/120/300s, NO_ANSWER 60/300/900s, FAILED 300/900/1800s
+    const schedule = RETRY_DELAY_BY_DISPOSITION[disposition] || RETRY_DELAY_S;
+    const delaySec = schedule[Math.min(attempts - 1, schedule.length - 1)];
     const retryAt  = Date.now() + delaySec * 1000;
-    const retryPayload = { ...lead, _retry_count: attempts, _retry_after: retryAt, _last_disposition: disposition };
-
-    // Push to retry sorted set (score = unix ms timestamp for ordered processing)
+    const retryPayload = {
+      ...lead,
+      _retry_count:      attempts,
+      _retry_after:      retryAt,
+      _last_disposition: disposition,
+    };
     await redis.zadd(K.retryQueue(lead.tenant_id), retryAt, JSON.stringify(retryPayload));
-    log.info(`[Pipeline:${this.name}] Retry scheduled for lead ${lead.lead_id} attempt=${attempts} delay=${delaySec}s`);
+    log.info(`[Pipeline:${this.name}] Retry scheduled lead=${lead.lead_id} attempt=${attempts} delay=${delaySec}s disposition=${disposition}`);
   }
 
   async _requeueDelayed(lead, reason) {
@@ -984,18 +1301,323 @@ class Pipeline extends EventEmitter {
   }
 }
 
+
+// ─── Telephony Config Cache ──────────────────────────────────────────────────
+// Caches per-tenant caller IDs from tenant_telephony_config table.
+// Refreshes every 5 minutes per tenant. Falls back to global env-var defaults.
+
+class TelephonyConfigCache {
+  constructor(dbPool, redisClient) {
+    this._pool       = dbPool;
+    this._redis      = redisClient;
+    this._cache      = new Map(); // tenantId → { provider → first_number }
+    this._allNums    = new Map(); // tenantId → { provider → [number, ...] }
+    this._loadedAt   = new Map(); // tenantId → timestamp
+    this._TTL        = 5 * 60 * 1000;
+  }
+
+  async getCallerNumber(tenantId, provider) {
+    const now = Date.now();
+    if (!this._loadedAt.get(tenantId) || now - this._loadedAt.get(tenantId) > this._TTL) {
+      await this._refresh(tenantId);
+    }
+    return (this._cache.get(tenantId) || {})[provider] || null;
+  }
+
+  async _refresh(tenantId) {
+    try {
+      const { rows } = await this._pool.query(
+        `SELECT provider, from_number FROM tenant_telephony_config
+         WHERE tenant_id=$1 AND is_active=TRUE ORDER BY created_at ASC`,
+        [tenantId]
+      );
+      const cfg = {};  // provider → first from_number
+      const all = {};  // provider → [from_number, ...]
+      for (const r of rows) {
+        if (!cfg[r.provider]) cfg[r.provider] = r.from_number;
+        all[r.provider] = all[r.provider] || [];
+        all[r.provider].push(r.from_number);
+      }
+      this._cache.set(tenantId, cfg);
+      this._allNums.set(tenantId, all);
+      this._loadedAt.set(tenantId, Date.now());
+    } catch (e) {
+      log.debug(`[TelephonyConfigCache] Refresh skipped for tenant=${tenantId}: ${e.message}`);
+    }
+  }
+
+  // Round-robin selection when multiple numbers are configured for a provider
+  async getRotatedCallerNumber(tenantId, provider) {
+    const now = Date.now();
+    if (!this._loadedAt.get(tenantId) || now - this._loadedAt.get(tenantId) > this._TTL) {
+      await this._refresh(tenantId);
+    }
+    const nums = (this._allNums.get(tenantId) || {})[provider] || [];
+    if (!nums.length) return null;
+    if (nums.length === 1) return nums[0];
+    // INCR gives a monotonically increasing counter — mod for round-robin
+    const idx = await this._redis.incr(K.fromNumberIdx(provider, tenantId)).catch(() => 0);
+    return nums[idx % nums.length];
+  }
+}
+
+// ─── DNC Checker ─────────────────────────────────────────────────────────────
+// Checks phone numbers against the DNC registry before every call.
+// Uses Redis as a write-through cache (1-hour TTL) to avoid DB hit per call.
+
+class DNCChecker {
+  constructor(dbPool, redisClient) {
+    this._pool  = dbPool;
+    this._redis = redisClient;
+    this._TTL   = 3600; // 1 hour Redis cache TTL
+  }
+
+  // Returns true if the phone is blocked (DNC or global registry)
+  async isBlocked(phone, tenantId) {
+    const normalized = phone.replace(/\D/g, '').replace(/^91/, '').slice(-10);
+    if (!normalized || normalized.length < 10) return false;
+
+    const cacheKey = `voiceos:dnc:${normalized}:${tenantId}`;
+    const globalKey = `voiceos:dnc:${normalized}:global`;
+
+    // Check Redis cache first
+    const [cached, globalCached] = await Promise.all([
+      this._redis.get(cacheKey).catch(() => null),
+      this._redis.get(globalKey).catch(() => null),
+    ]);
+    if (cached !== null) return cached === '1';
+    if (globalCached !== null && globalCached === '1') return true;
+
+    // DB lookup: global block OR tenant-specific block
+    try {
+      const { rows } = await this._pool.query(
+        `SELECT 1 FROM dnc_numbers
+         WHERE phone = $1
+           AND (tenant_id IS NULL OR tenant_id = $2)
+           AND (expires_at IS NULL OR expires_at > NOW())
+         LIMIT 1`,
+        [normalized, tenantId]
+      );
+      const blocked = rows.length > 0;
+      // Cache the result
+      await this._redis.setex(cacheKey, this._TTL, blocked ? '1' : '0').catch(() => {});
+      return blocked;
+    } catch (e) {
+      // Table may not exist yet — fail open (allow call)
+      log.debug(`[DNCChecker] DB check failed for phone=${normalized}: ${e.message}`);
+      return false;
+    }
+  }
+
+  // Explicitly add a number to DNC and invalidate cache
+  async block(phone, tenantId, source = 'manual', reason = '') {
+    const normalized = phone.replace(/\D/g, '').replace(/^91/, '').slice(-10);
+    await this._pool.query(
+      `INSERT INTO dnc_numbers (phone, tenant_id, source, reason)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (phone, tenant_id) DO UPDATE SET
+         source = EXCLUDED.source, reason = EXCLUDED.reason, added_at = NOW()`,
+      [normalized, tenantId || null, source, reason]
+    );
+    await this._redis.del(`voiceos:dnc:${normalized}:${tenantId}`).catch(() => {});
+  }
+}
+
+
+// ─── Capacity Guard ────────────────────────────────────────────────────────────
+// Tracks active call counts at system / tenant / campaign levels via Redis INCR.
+// acquire() returns false if any limit is exceeded — lead is requeued with a short
+// delay rather than dropped, so no calls are lost.
+
+class CapacityGuard {
+  constructor(redisClient) {
+    this._redis = redisClient;
+  }
+
+  async acquire(lead, campaignMaxCalls, tenantMaxCalls) {
+    const sysKey = K.activeSystem();
+    const tenKey = K.activeTenant(lead.tenant_id);
+    const camKey = K.activeCampaign(lead.campaign_id);
+
+    const results = await this._redis.pipeline()
+      .get(sysKey).get(tenKey).get(camKey).exec();
+    const [sysCount, tenCount, camCount] = results.map(([, val]) => parseInt(val || '0'));
+
+    if (sysCount >= MAX_SYSTEM_CONCURRENT_CALLS) {
+      log.warn(`[CapacityGuard] System cap: ${sysCount}/${MAX_SYSTEM_CONCURRENT_CALLS}`);
+      return false;
+    }
+    if (tenantMaxCalls > 0 && tenCount >= tenantMaxCalls) {
+      log.warn(`[CapacityGuard] Tenant cap: tenant=${lead.tenant_id} ${tenCount}/${tenantMaxCalls}`);
+      return false;
+    }
+    if (campaignMaxCalls > 0 && camCount >= campaignMaxCalls) {
+      log.warn(`[CapacityGuard] Campaign cap: campaign=${lead.campaign_id} ${camCount}/${campaignMaxCalls}`);
+      return false;
+    }
+
+    const expiry = MAX_CALL_DURATION_S + 60;
+    await this._redis.pipeline()
+      .incr(sysKey).expire(sysKey, expiry)
+      .incr(tenKey).expire(tenKey, expiry)
+      .incr(camKey).expire(camKey, expiry)
+      .exec();
+    return true;
+  }
+
+  async release(lead) {
+    try {
+      await this._redis.pipeline()
+        .decr(K.activeSystem())
+        .decr(K.activeTenant(lead.tenant_id))
+        .decr(K.activeCampaign(lead.campaign_id))
+        .exec();
+    } catch (e) {
+      log.warn('[CapacityGuard] release error:', e.message);
+    }
+  }
+}
+
+// ─── Pacing Enforcer ──────────────────────────────────────────────────────────
+// Sliding-window rate limiter per campaign using a Redis sorted set.
+// Each member is a unique timestamp string; score is also the timestamp.
+// Window = last 60 seconds; enforces calls_per_minute.
+
+class PacingEnforcer {
+  constructor(redisClient) {
+    this._redis = redisClient;
+  }
+
+  async canCall(campaignId, callsPerMinute) {
+    if (!callsPerMinute || callsPerMinute <= 0) return true;
+    const key = K.pacingZset(campaignId);
+    const now  = Date.now();
+    const winStart = now - 60_000;
+
+    // Remove stale, add current, count — all in one pipeline
+    const pipe = this._redis.pipeline();
+    pipe.zremrangebyscore(key, '-inf', winStart);
+    pipe.zadd(key, now, `${now}:${Math.random().toString(36).slice(2)}`);
+    pipe.zcard(key);
+    pipe.expire(key, 90);
+    const res = await pipe.exec();
+    const count = res[2][1]; // zcard result
+
+    if (count > callsPerMinute) {
+      // Back out the entry we just added — we're not making the call
+      await this._redis.zremrangebyscore(key, now, now + 1).catch(() => {});
+      log.debug(`[PacingEnforcer] Pacing block campaign=${campaignId}: ${count}/${callsPerMinute} cpm`);
+      return false;
+    }
+    return true;
+  }
+}
+
+// ─── Lead Scheduler Job ────────────────────────────────────────────────────────
+// Scans the database every 10 seconds for PENDING leads in active campaigns,
+// claims them atomically (FOR UPDATE SKIP LOCKED) by flipping queue_status to
+// QUEUED, then pushes them onto the appropriate Redis priority queue.
+// This decouples lead ingestion from the dialer — leads appear in the DB first,
+// the scheduler drains them into Redis for the worker to consume.
+
+class LeadSchedulerJob {
+  constructor(dbPool, redisClient) {
+    this._pool   = dbPool;
+    this._redis  = redisClient;
+    this._timer  = null;
+    this._active = false;
+  }
+
+  start() {
+    this._active = true;
+    this._timer  = setInterval(
+      () => this._scan().catch(e => log.warn('[LeadScheduler] scan error:', e.message)),
+      10_000
+    );
+    log.info('[LeadScheduler] Started — scanning PENDING leads every 10s');
+    // Run immediately on startup
+    this._scan().catch(e => log.warn('[LeadScheduler] initial scan error:', e.message));
+  }
+
+  stop() {
+    this._active = false;
+    if (this._timer) { clearInterval(this._timer); this._timer = null; }
+  }
+
+  async _scan() {
+    if (!this._active) return;
+    try {
+      // Claim up to 100 PENDING leads atomically — FOR UPDATE SKIP LOCKED prevents
+      // double-claiming when multiple workers run simultaneously.
+      const { rows } = await this._pool.query(`
+        UPDATE leads l
+           SET queue_status = 'QUEUED', updated_at = NOW()
+          FROM campaigns c
+         WHERE l.campaign_id = c.campaign_id
+           AND l.queue_status = 'PENDING'
+           AND c.status = 'ACTIVE'
+           AND l.lead_id IN (
+               SELECT l2.lead_id
+                 FROM leads l2
+                 JOIN campaigns c2 ON l2.campaign_id = c2.campaign_id
+                WHERE l2.queue_status = 'PENDING'
+                  AND c2.status = 'ACTIVE'
+                ORDER BY l2.priority ASC, l2.created_at ASC
+                LIMIT 100
+                FOR UPDATE OF l2 SKIP LOCKED
+               )
+        RETURNING l.lead_id, l.phone, l.name, l.language,
+                  l.campaign_id, l.tenant_id, l.priority,
+                  l.metadata
+      `);
+
+      if (!rows.length) return;
+      log.info(`[LeadScheduler] Claiming ${rows.length} leads`);
+
+      for (const row of rows) {
+        const priLabel = (row.priority || 2) <= 1 ? 'high'
+                       : (row.priority || 2) >= 3 ? 'low'
+                       : 'normal';
+        const queueKey = K.pendingQueuePri(row.tenant_id, priLabel);
+        const payload  = JSON.stringify({
+          lead_id:     row.lead_id,
+          phone:       row.phone,
+          name:        row.name        || '',
+          language:    row.language    || 'en',
+          campaign_id: row.campaign_id,
+          tenant_id:   row.tenant_id,
+          pipeline_id: `camp-${row.campaign_id}`,
+          priority:    row.priority    || 2,
+          metadata:    row.metadata    || {},
+        });
+        await this._redis.lpush(queueKey, payload).catch(e =>
+          log.warn(`[LeadScheduler] lpush failed lead=${row.lead_id}:`, e.message)
+        );
+      }
+    } catch (e) {
+      log.warn('[LeadScheduler] _scan error:', e.message);
+    }
+  }
+}
+
 // ─── Dialer Worker ───────────────────────────────────────────────────────────
 
 class DialerWorker {
   constructor() {
     this._running    = false;
     this._pipelines  = new Map();  // pipeline_id → Pipeline
-    this._tenantQueues = [];       // list of Redis queue keys to BRPOP
+    this._tenantQueues    = [];     // flat list (legacy — kept for heartbeat/stats)
+    this._tenantPriQueues = [];     // priority-ordered BRPOP list (high → normal → low)
     this._scheduler  = new ScheduleVerifier(pool);
     this._tracker    = new ActiveCallTracker(pool);
     this._registry   = new PipelineRegistry(pool);
     this._logger     = new EventLogger(pool);
-    this._dialer     = DIALER_MODE === 'production' ? new TwilioDialer() : new CallSimulator();
+    this._dialer          = DIALER_MODE === 'production' ? new MultiProviderDialer() : new CallSimulator();
+    this._telConfig       = new TelephonyConfigCache(pool, redis);
+    this._dnc             = new DNCChecker(pool, redis);
+    this._capacityGuard   = new CapacityGuard(redis);
+    this._pacingEnforcer  = new PacingEnforcer(redis);
+    this._schedulerJob    = new LeadSchedulerJob(pool, redis);
 
     this._callsToday  = 0;
     this._callsMinute = [];       // timestamps for per-minute rate
@@ -1026,6 +1648,9 @@ class DialerWorker {
     // Phase 3: Crash reconciliation — runs once on startup before accepting new leads
     await this._reconciler.reconcile();
 
+    // W3: Lead scheduler job — polls DB for PENDING leads and enqueues them
+    this._schedulerJob.start();
+
     // Start main consumer loop
     log.info(`[Worker:${WORKER_ID}] Consumer loop started — monitoring ${this._tenantQueues.length} queue(s)`);
     await this._consumerLoop();
@@ -1038,6 +1663,7 @@ class DialerWorker {
     clearInterval(this._heartbeatTimer);
     clearInterval(this._retryTimer);
     clearInterval(this._callbackTimer);
+    this._schedulerJob.stop();
 
     // Signal all pipelines to stop accepting new leads
     for (const p of this._pipelines.values()) await p.shutdown();
@@ -1066,7 +1692,7 @@ class DialerWorker {
         refreshAt = Date.now() + 60_000;
       }
 
-      if (this._tenantQueues.length === 0) {
+      if (this._tenantPriQueues.length === 0) {
         // No queues yet — wait and retry
         if (Date.now() - this._idleLogAt > IDLE_LOG_INTERVAL_MS) {
           log.info(`[Worker:${WORKER_ID}] No active queues — waiting for leads`);
@@ -1078,8 +1704,9 @@ class DialerWorker {
       }
 
       try {
-        // BRPOP across all tenant pending queues — FIFO, oldest lead first
-        const result = await redisSub.brpop(...this._tenantQueues, QUEUE_POLL_TIMEOUT_S);
+        // Priority BRPOP: try high → normal → low queues in order.
+        // _tenantPriQueues is ordered: all-high keys first, then normal, then low.
+        const result = await redisSub.brpop(...this._tenantPriQueues, QUEUE_POLL_TIMEOUT_S);
         if (!result) continue; // timeout — loop continues
 
         const [queueKey, payload] = result;
@@ -1106,15 +1733,18 @@ class DialerWorker {
     let p = this._pipelines.get(pid);
     if (!p) {
       p = new Pipeline({
-        id:          pid,
-        campaignId:  lead.campaign_id,
-        tenantId:    lead.tenant_id,
-        name:        `Pipeline-${pid.slice(0, 8)}`,
-        registry:    this._registry,
-        tracker:     this._tracker,
-        scheduler:   this._scheduler,
-        eventLogger: this._logger,
-        dialer:      this._dialer,
+        id:              pid,
+        campaignId:      lead.campaign_id,
+        tenantId:        lead.tenant_id,
+        name:            `Pipeline-${pid.slice(0, 8)}`,
+        registry:        this._registry,
+        tracker:         this._tracker,
+        scheduler:       this._scheduler,
+        eventLogger:     this._logger,
+        dialer:          this._dialer,
+        dncChecker:      this._dnc,
+        capacityGuard:   this._capacityGuard,
+        pacingEnforcer:  this._pacingEnforcer,
       });
       try {
         await p.start();
@@ -1133,6 +1763,14 @@ class DialerWorker {
       }
     }
 
+    // Enrich lead with per-tenant caller ID — round-robin across configured numbers
+    try {
+      const provider  = (process.env.TELEPHONY_PROVIDER_ORDER || 'twilio').split(',')[0].trim();
+      const callerNum = await this._telConfig.getRotatedCallerNumber(lead.tenant_id, provider);
+      if (callerNum) lead._caller_id = callerNum;
+    } catch (e) {
+      log.debug(`[Worker] telConfig lookup failed: ${e.message}`);
+    }
     p.enqueue(lead);
   }
 
@@ -1183,9 +1821,21 @@ class DialerWorker {
   // ── Refresh tenant queue list ─────────────────────────────────────────────
   async _refreshQueues() {
     try {
-      const keys = await redis.keys('voiceos:pending_calls:*');
-      this._tenantQueues = keys.length > 0 ? keys : [];
-      if (keys.length > 0) log.debug(`[Worker] Monitoring queues: ${keys.join(', ')}`);
+      // Collect priority queues (may not exist yet — BRPOP skips missing keys)
+      const allKeys = await redis.keys('voiceos:pending_calls:*');
+      // Separate legacy flat keys from priority-suffixed keys
+      const high   = allKeys.filter(k => k.endsWith(':high'));
+      const normal = allKeys.filter(k => k.endsWith(':normal'));
+      const low    = allKeys.filter(k => k.endsWith(':low'));
+      const legacy = allKeys.filter(k => !k.endsWith(':high') && !k.endsWith(':normal') && !k.endsWith(':low'));
+
+      // BRPOP order: high first, then normal, then low, then legacy (migration compat)
+      this._tenantPriQueues = [...high, ...normal, ...low, ...legacy];
+      this._tenantQueues    = allKeys; // heartbeat/stats still uses the flat list
+
+      if (allKeys.length > 0) {
+        log.debug(`[Worker] Queues — high:${high.length} normal:${normal.length} low:${low.length} legacy:${legacy.length}`);
+      }
     } catch (e) {
       log.warn('[Worker] refreshQueues error:', e.message);
     }

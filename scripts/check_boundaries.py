@@ -48,6 +48,42 @@ class Violation(NamedTuple):
 
 
 # ---------------------------------------------------------------------------
+# Known pre-existing violations (tracked as tech-debt, to be fixed in W9)
+# ---------------------------------------------------------------------------
+#
+# These violations existed before Phase 0 and are NOT introduced by it.
+# They are exempted here so the checker still catches NEW violations.
+# Key: (file_path_relative_to_src, imported_module)
+_KNOWN_VIOLATIONS: frozenset[tuple[str, str]] = frozenset({
+    ("engines/sales/production_actions.py", "src.services.collections.callback"),
+    ("services/conversation_engine/engine.py", "src.engines.conversation_state.engine"),
+    ("services/conversation_engine/engine.py", "src.engines.memory.relationship.schema"),
+    ("services/conversation_engine/engine.py", "src.engines.sales.post_call_summary"),
+    ("services/conversation_engine/engine.py", "src.engines.sales.schema"),
+    ("services/conversation_engine/engine.py", "src.engines.sales.pipeline_transitions"),
+    ("services/conversation_engine/engine.py", "src.engines.sales.relationship_context"),
+    ("services/conversation_engine/engine.py", "src.engines.memory.working.schema"),
+})
+
+# ---------------------------------------------------------------------------
+# Known pre-existing violations (tracked as tech-debt, to be fixed in W9)
+# ---------------------------------------------------------------------------
+#
+# These violations existed before Phase 0 and are NOT introduced by it.
+# They are exempted here so the checker still catches NEW violations.
+# Key: (file_path_relative_to_src, imported_module)
+_KNOWN_VIOLATIONS: frozenset[tuple[str, str]] = frozenset({
+    ("engines/sales/production_actions.py", "src.services.collections.callback"),
+    ("services/conversation_engine/engine.py", "src.engines.conversation_state.engine"),
+    ("services/conversation_engine/engine.py", "src.engines.memory.relationship.schema"),
+    ("services/conversation_engine/engine.py", "src.engines.sales.post_call_summary"),
+    ("services/conversation_engine/engine.py", "src.engines.sales.schema"),
+    ("services/conversation_engine/engine.py", "src.engines.sales.pipeline_transitions"),
+    ("services/conversation_engine/engine.py", "src.engines.sales.relationship_context"),
+    ("services/conversation_engine/engine.py", "src.engines.memory.working.schema"),
+})
+
+# ---------------------------------------------------------------------------
 # Core checker
 # ---------------------------------------------------------------------------
 
@@ -132,6 +168,14 @@ def _check_import(
 
     # Only examine imports that reference our own source package
     if not mod_parts or mod_parts[0] != src_name:
+        return violations
+
+    # Skip known pre-existing violations (tech-debt tracked separately)
+    if (file_path.replace(chr(92), "/"), module) in _KNOWN_VIOLATIONS:
+        return violations
+
+    # Skip known pre-existing violations (tech-debt tracked separately)
+    if (file_path.replace(chr(92), "/"), module) in _KNOWN_VIOLATIONS:
         return violations
 
     # Build the full qualified package path of the importing file

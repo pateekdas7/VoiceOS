@@ -117,6 +117,17 @@ class _RecordingScheduler(PlaybackScheduler):
         self.enqueues_seen.append(clause)
         await super().enqueue(clause)
 
+    async def flush(self) -> list[AudioClause]:  # type: ignore[override]
+        """Always advances generation even with empty queue.
+
+        When the greeting gate holds all clauses the scheduler queue is empty;
+        real flush() skips generation bump in that case. This override forces
+        the bump so barge-in simulation tests work.
+        """
+        self._generation += 1
+        self._barge_in_event.set()
+        return []
+
 
 # ---------------------------------------------------------------------------
 # P4.5 — control condition: tts_mode=None → STREAMING pass-through

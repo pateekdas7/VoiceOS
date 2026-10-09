@@ -1,7 +1,9 @@
-// Typed client for the Admin -> Clients BFF routes (ADR-005 §6.1).
-// Every call sends credentials so the voiceos_session cookie reaches the BFF.
+// Typed client for the Admin -> Clients routes (ADR-005 §6.1).
+// Routes through webapi (/webapi rewrite) — the Python web_api has the full
+// TenantService implementation including create/suspend/reactivate. The BFF
+// only proxies GET list/get; all mutations go directly to webapi.
 
-import { ApiError, bffGet, bffPost } from "@/lib/api/fetch-client";
+import { ApiError, webapiGet, webapiPost } from "@/lib/api/fetch-client";
 export { ApiError };
 
 export type Tenant = {
@@ -19,19 +21,19 @@ export type Tenant = {
   updated_at: string;
 };
 
-export const listClients = () => bffGet<Tenant[]>("/admin/clients");
+export const listClients = () => webapiGet<Tenant[]>("/admin/clients");
 
 export const getClient = (tenantId: string) =>
-  bffGet<Tenant>(`/admin/clients/${encodeURIComponent(tenantId)}`);
+  webapiGet<Tenant>(`/admin/clients/${encodeURIComponent(tenantId)}`);
 
 export const createClient = (input: {
   slug: string;
   display_name: string;
   subscription_tier: string;
-}) => bffPost<Tenant>("/admin/clients", input);
+}) => webapiPost<Tenant>("/admin/clients", input);
 
 export const suspendClient = (tenantId: string) =>
-  bffPost<Tenant>(`/admin/clients/${encodeURIComponent(tenantId)}/suspend`);
+  webapiPost<Tenant>(`/admin/clients/${encodeURIComponent(tenantId)}/suspend`);
 
 export const reactivateClient = (tenantId: string) =>
-  bffPost<Tenant>(`/admin/clients/${encodeURIComponent(tenantId)}/reactivate`);
+  webapiPost<Tenant>(`/admin/clients/${encodeURIComponent(tenantId)}/reactivate`);

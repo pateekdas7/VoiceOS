@@ -30,7 +30,7 @@ import time
 from collections.abc import AsyncIterator, Mapping
 from typing import TYPE_CHECKING, Any
 
-from src.libs.circuit_breaker.breaker import CircuitBreaker
+from src.libs.circuit_breaker.breaker import CircuitBreaker, CircuitOpenError, CircuitState
 from src.libs.contracts.audio import AudioFrame
 from src.libs.contracts.streaming import WordHypothesis
 from src.services.gpu_scheduler.admission import AdmissionDecision
@@ -171,7 +171,15 @@ class WhisperHTTPAdapter:
                     last_exc = None
                     break
                 except Exception as exc:
+                    if isinstance(exc, CircuitOpenError):
+                        raise  # circuit open — fail fast, never retry or wrap
                     last_exc = exc
+                    # If breaker just opened on this failure, propagate original error.
+                    if (
+                        self._breaker is not None
+                        and self._breaker.state == CircuitState.OPEN
+                    ):
+                        raise
                     if attempt < self._max_retries:
                         logger.warning(
                             "STT attempt %d/%d failed (%s: %s), retrying in %.1fs",
