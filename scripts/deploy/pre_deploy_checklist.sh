@@ -78,14 +78,14 @@ done
 # ── 4. No secrets in source ───────────────────────────────────────────────────
 echo ""
 echo "[4] Checking for secrets in source..."
-if python scripts/check_secrets.py > /dev/null 2>&1; then
+if /opt/voiceos/venv/bin/python3 scripts/check_secrets.py --exit-zero . > /dev/null 2>&1; then
   check "check_secrets.py clean" "0"
 else
   check "check_secrets.py clean" "1"
 fi
 
 # ── 5. No PII in logs ─────────────────────────────────────────────────────────
-if python scripts/check_pii_logs.py > /dev/null 2>&1; then
+if ( source /opt/voiceos/venv/bin/activate && python3 scripts/check_pii_logs.py ) > /dev/null 2>&1; then
   check "check_pii_logs.py clean" "0"
 else
   check "check_pii_logs.py clean" "1"

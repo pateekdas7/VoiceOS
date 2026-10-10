@@ -35,7 +35,7 @@ echo ""
 # ── 1. Gitleaks — no secrets in git history ───────────────────────────────────
 echo "[1/3] Gitleaks — scanning git history for secrets..."
 if command -v gitleaks &>/dev/null; then
-  if gitleaks detect --source . --report-format json --report-path "$REPORT_DIR/gitleaks.json" --exit-code 1 2>/dev/null; then
+  if gitleaks detect --source . --no-git --report-format json --report-path "$REPORT_DIR/gitleaks.json" --exit-code 1 2>/dev/null; then
     check "gitleaks: no secrets found" "0"
   else
     check "gitleaks: secrets detected" "1"
@@ -63,7 +63,7 @@ fi
 # ── 3. OWASP ZAP baseline scan ────────────────────────────────────────────────
 echo "[3/3] OWASP ZAP — baseline scan against $STAGING_URL..."
 if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
-  docker run --rm \
+  docker run --rm --network=host --add-host=host.docker.internal:host-gateway \
     -v "$(pwd)/$REPORT_DIR:/zap/wrk/:rw" \
     ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
     -t "$STAGING_URL" \

@@ -28,7 +28,7 @@ def _run(*paths: str) -> subprocess.CompletedProcess[str]:
 def test_secrets_scan_catches_hardcoded(tmp_path: Path) -> None:
     """Plant a fake secret in a temp file — the scanner must find it."""
     planted = tmp_path / "config.py"
-    planted.write_text('AWS_ACCESS_KEY_ID = "AKIAABCDEFGHIJKLMNOP"\n')  # pragma: allowlist secret
+    planted.write_text('AWS_ACCESS_KEY_ID = "AKIAABCDEFGHIJKLMNOP"\n')  # pragma: allowlist secret  # gitleaks:allow
 
     result = _run(str(tmp_path))
 

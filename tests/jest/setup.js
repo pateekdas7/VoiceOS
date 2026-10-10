@@ -1,6 +1,6 @@
 'use strict';
 // Environment variables required by bff.js and dialer_worker.js before module load
-process.env.JWT_SECRET        = 'test-jwt-secret-phase5-voiceos-32c';
+process.env.JWT_SECRET        = 'test-jwt-secret-phase5-voiceos-32c'; // gitleaks:allow
 process.env.NODE_ENV          = 'test';
 process.env.POSTGRES_HOST     = '127.0.0.1';
 process.env.POSTGRES_PORT     = '5432';

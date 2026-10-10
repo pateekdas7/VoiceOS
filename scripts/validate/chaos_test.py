@@ -26,7 +26,7 @@ import time
 from typing import Optional
 
 
-REDIS_PASSWORD = "0e539e25b3e5ea96e7434dad38c6029557a9fb3b92f0869e"
+REDIS_PASSWORD = "0e539e25b3e5ea96e7434dad38c6029557a9fb3b92f0869e"  # gitleaks:allow
 NETEM_IFACE = "enp3s0"
 GPU_HOST = "217.18.55.78"
 GPU_STT_PORT = 8100

@@ -342,7 +342,8 @@ function normalizePhone(raw) {
   if (!raw) return null;
   let p = String(raw).replace(/\D/g, '');
   if (p.startsWith('91') && p.length === 12) p = p.slice(2);
-  return p.length === 10 ? p : null;
+  if (p.length !== 10) return null;
+  return '+91' + p;
 }
 function normalizeName(raw) {
   if (!raw) return '';
@@ -615,6 +616,7 @@ async function logEnrichment(dbClient, lead, provider, result) {
     );
   } catch (e) {
     log.warn('enrich.log_failed', { error: e.message });
+    // stack removed[0] });
   }
 }
 
@@ -1354,12 +1356,12 @@ app.post('/campaigns/:id/leads/upload', requireAuth, requireUUID('id'), async (r
       const cmJson = JSON.stringify(column_mapping);
       log.info('upload.columns_parsed', { type: typeof columns, is_array: Array.isArray(columns) });
       log.info('upload.column_mapping', { preview: cmJson?.slice(0,80) });
-      const imp = await client.query(
+        const imp = await client.query(
         `INSERT INTO lead_imports (campaign_id,tenant_id,filename,original_columns,column_mapping,status,total_rows,rows_data)
          VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,'PROCESSING',$6,$7::jsonb) RETURNING import_id`,
         [campaignId, tenantId, filename || 'upload.csv', JSON.stringify(columns), cmJson, rows.length, JSON.stringify(rows)]
       );
-      importId = imp.rows[0].import_id;
+        importId = imp.rows[0].import_id;
     }
 
     let valid = 0, invalid = 0, duplicates = 0, rejected = 0;
