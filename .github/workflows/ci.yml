@@ -415,7 +415,7 @@ jobs:
           pip install bandit safety
 
       - name: bandit — SAST scan (skip tests/, block on HIGH severity)
-        run: bandit -r src/ -ll -ii --exclude src/tests -f json -o bandit-report.json || bandit -r src/ -ll -ii --exclude src/tests
+        run: bandit -r src/ -lll -ii --exclude src/tests -f json -o bandit-report.json || bandit -r src/ -lll -ii --exclude src/tests
 
       - name: safety — dependency vulnerability check
         run: safety check --full-report

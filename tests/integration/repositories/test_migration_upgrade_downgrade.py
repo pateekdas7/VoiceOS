@@ -64,9 +64,9 @@ class TestMigrationUpgradeDowngrade:
         os.environ["POSTGRES_DSN"] = scratch_dsn
         cfg = Config("alembic.ini")
 
-        # Upgrade from empty database to head — all 33 revisions apply cleanly.
+        # Upgrade from empty database to head — all 38 revisions apply cleanly.
         command.upgrade(cfg, "head")
-        assert _current_revision(scratch_dsn) == "0033"
+        assert _current_revision(scratch_dsn) == "0038"
         assert _table_exists(scratch_dsn, "tenants")
         assert _table_exists(scratch_dsn, "platform_users")
         assert _table_exists(scratch_dsn, "usage_events")
@@ -100,6 +100,12 @@ class TestMigrationUpgradeDowngrade:
         assert _table_exists(scratch_dsn, "fleet_versions")
         assert _table_exists(scratch_dsn, "tenant_migrations")
         assert _table_exists(scratch_dsn, "performance_baselines")
+        assert _table_exists(scratch_dsn, "system_x_incidents")
+        assert _table_exists(scratch_dsn, "system_x_recovery_actions")
+        assert _table_exists(scratch_dsn, "system_x_audit_trail")
+        assert _table_exists(scratch_dsn, "system_x_notifications")
+        assert _table_exists(scratch_dsn, "call_attempts")
+        assert _table_exists(scratch_dsn, "compliance_violations")
 
         # Downgrade all the way back to base — every revision's downgrade() runs
         # in reverse order without error.
@@ -138,10 +144,16 @@ class TestMigrationUpgradeDowngrade:
         assert not _table_exists(scratch_dsn, "fleet_versions")
         assert not _table_exists(scratch_dsn, "tenant_migrations")
         assert not _table_exists(scratch_dsn, "performance_baselines")
+        assert not _table_exists(scratch_dsn, "system_x_incidents")
+        assert not _table_exists(scratch_dsn, "system_x_recovery_actions")
+        assert not _table_exists(scratch_dsn, "system_x_audit_trail")
+        assert not _table_exists(scratch_dsn, "system_x_notifications")
+        assert not _table_exists(scratch_dsn, "call_attempts")
+        assert not _table_exists(scratch_dsn, "compliance_violations")
 
         # Upgrade again successfully — revisions are re-runnable from empty.
         command.upgrade(cfg, "head")
-        assert _current_revision(scratch_dsn) == "0033"
+        assert _current_revision(scratch_dsn) == "0038"
         assert _table_exists(scratch_dsn, "tenants")
         assert _table_exists(scratch_dsn, "platform_users")
         assert _table_exists(scratch_dsn, "customers")
