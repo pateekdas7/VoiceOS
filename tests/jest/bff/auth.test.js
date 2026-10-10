@@ -85,7 +85,7 @@ describe('POST /auth/password/login', () => {
     mockPool.query.mockResolvedValueOnce({
       rows: [{ user_id: 'u1', tenant_id: 't1', email: 'a@b.com', password_hash: HASH, role: 'ADMIN', is_active: true }],
     });
-    const res = await request(app).post('/auth/password/login').send({ email: 'a@b.com', password: 'correct-pass' }); // pragma: allowlist secret
+    const res = await request(app).post('/auth/password/login').send({ email: 'a@b.com', password: 'correct-pass' });
     expect(res.status).toBe(200);
     expect(res.headers['set-cookie']).toBeDefined();
     const cookie = res.headers['set-cookie'][0];
@@ -98,7 +98,7 @@ describe('POST /auth/password/login', () => {
     // Simulate that by returning empty rows for both platform_users and users queries.
     mockPool.query.mockResolvedValueOnce({ rows: [] }); // platform_users: no match
     mockPool.query.mockResolvedValueOnce({ rows: [] }); // users: no match (filtered by is_active)
-    const res = await request(app).post('/auth/password/login').send({ email: 'a@b.com', password: 'correct-pass' }); // pragma: allowlist secret
+    const res = await request(app).post('/auth/password/login').send({ email: 'a@b.com', password: 'correct-pass' });
     expect(res.status).toBe(401);
   });
 });
