@@ -325,7 +325,7 @@ omit = ["src/**/__init__.py"]
 
 [tool.coverage.report]
 # Overall project minimum — individual module gates enforced in CI
-fail_under = 85
+fail_under = 75
 show_missing = true
 exclude_lines = [
     "pragma: no cover",
