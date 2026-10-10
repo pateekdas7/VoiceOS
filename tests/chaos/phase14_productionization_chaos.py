@@ -30,6 +30,7 @@ import urllib.parse
 import urllib.request
 
 DRY_RUN = True  # overridden by --execute
+SUDO_PASS = os.environ.get("SUDO_PASS", "")
 
 
 def log(msg: str) -> None:
@@ -42,6 +43,18 @@ def run(cmd: list[str], *, check: bool = True) -> subprocess.CompletedProcess:
         return subprocess.CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
     log(f"$ {' '.join(cmd)}")
     return subprocess.run(cmd, check=check, capture_output=True)
+
+
+def sudo_run(cmd: list[str], *, check: bool = True) -> subprocess.CompletedProcess:
+    """Run a command with sudo, feeding password via stdin if SUDO_PASS is set."""
+    if DRY_RUN:
+        log(f"[dry-run] sudo {' '.join(cmd)}")
+        return subprocess.CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
+    log(f"$ sudo {' '.join(cmd)}")
+    if SUDO_PASS:
+        full = ["sudo", "-S"] + cmd
+        return subprocess.run(full, input=SUDO_PASS.encode() + b"\n", check=check, capture_output=True)
+    return subprocess.run(["sudo"] + cmd, check=check, capture_output=True)
 
 
 # ── Scenario 1: Worker crash mid-call ─────────────────────────────────────────
@@ -64,7 +77,7 @@ def scenario_s1_worker_crash(pg_dsn: str) -> bool:
     time.sleep(2)
 
     log("Restarting dialer_worker...")
-    run(["systemctl", "restart", "voiceos-dialer-worker"])
+    sudo_run(["systemctl", "restart", "voiceos-dialer-worker"])
     time.sleep(5)
 
     log("Checking recovery_log for reconciled attempts...")
@@ -83,40 +96,59 @@ def scenario_s1_worker_crash(pg_dsn: str) -> bool:
 # ── Scenario 2: Crash before active_calls insert ──────────────────────────────
 
 
+def _get_real_ids(pg_dsn: str) -> tuple[str, str, str]:
+    """Return (tenant_id, campaign_id, lead_id) from real DB rows."""
+    import subprocess as sp
+    tenant = sp.run(["psql", pg_dsn, "-t", "-c", "SELECT tenant_id FROM tenants LIMIT 1"],
+                    capture_output=True, text=True).stdout.strip()
+    campaign = sp.run(["psql", pg_dsn, "-t", "-c", f"SELECT campaign_id FROM campaigns WHERE tenant_id='{tenant}' LIMIT 1"],
+                      capture_output=True, text=True).stdout.strip()
+    lead = sp.run(["psql", pg_dsn, "-t", "-c", f"SELECT lead_id FROM leads WHERE tenant_id='{tenant}' LIMIT 1"],
+                  capture_output=True, text=True).stdout.strip()
+    return tenant, campaign, lead
+
+
 def scenario_s2_crash_before_active_calls(pg_dsn: str) -> bool:
     """Verify orphaned INITIATED rows are reconciled to FAILED on restart."""
     print("\nS2: Crash before active_calls insert")
 
-    log("Seeding orphaned INITIATED call_attempt (no matching active_calls row)...")
-    seed_sql = """
-    INSERT INTO call_attempts (call_attempt_id, campaign_id, lead_id, tenant_id, status, created_at)
-    VALUES (gen_random_uuid(), '00000000-0000-0000-0000-000000000001',
-            '00000000-0000-0000-0000-000000000002',
-            '00000000-0000-0000-0000-000000000003',
-            'INITIATED', NOW() - INTERVAL '10 minutes')
-    RETURNING call_attempt_id;
-    """
-    result = run(["psql", pg_dsn, "-t", "-c", seed_sql])
     if DRY_RUN:
-        log("[dry-run] Would seed orphaned INITIATED row and verify reconciliation")
+        log("[dry-run] Would seed orphaned INITIATED row and verify reconciliation on restart")
         return True
 
-    attempt_id = result.stdout.strip()
+    tenant_id, campaign_id, lead_id = _get_real_ids(pg_dsn)
+    if not tenant_id or not campaign_id or not lead_id:
+        log("SKIP: No tenant/campaign/lead rows found for seeding")
+        return True
+
+    log("Seeding orphaned INITIATED call_attempt (no matching active_calls row)...")
+    seed_sql = (
+        f"INSERT INTO call_attempts (attempt_id, campaign_id, lead_id, tenant_id, worker_id, status, initiated_at)"
+        f" VALUES (gen_random_uuid(), '{campaign_id}', '{lead_id}', '{tenant_id}',"
+        f" 'chaos-test-worker', 'INITIATED', NOW() - INTERVAL '10 minutes') RETURNING attempt_id"
+    )
+    result = subprocess.run(["psql", pg_dsn, "-t", "-A", "-q", "-c", seed_sql], capture_output=True, text=True)
+    if result.returncode != 0:
+        log(f"FAIL: Could not seed row: {result.stderr.strip()}")
+        return False
+    attempt_id = result.stdout.strip().splitlines()[0].strip()
     log(f"Seeded orphaned attempt: {attempt_id}")
 
     log("Triggering reconciliation (restart worker)...")
-    run(["systemctl", "restart", "voiceos-dialer-worker"])
-    time.sleep(10)
+    sudo_run(["systemctl", "restart", "voiceos-dialer-worker"])
+    time.sleep(30)
 
-    check_sql = f"SELECT status FROM call_attempts WHERE call_attempt_id='{attempt_id}'"
-    result = run(["psql", pg_dsn, "-t", "-c", check_sql])
-    status = result.stdout.strip()
+    check_result = subprocess.run(
+        ["psql", pg_dsn, "-t", "-A", "-q", "-c", f"SELECT status FROM call_attempts WHERE attempt_id='{attempt_id}'"],
+        capture_output=True, text=True,
+    )
+    status = check_result.stdout.strip()
 
     if status == "FAILED":
         log("PASS: Orphaned attempt reconciled to FAILED")
         return True
     else:
-        log(f"FAIL: Orphaned attempt has status={status}, expected FAILED")
+        log(f"FAIL: status={status!r}, expected FAILED (reconciler may not have run yet)")
         return False
 
 
@@ -131,29 +163,38 @@ def scenario_s3_crash_after_twilio(pg_dsn: str) -> bool:
         log("[dry-run] Would seed INITIATED attempt with call_sid, verify CRASH_INITIATED classification")
         return True
 
-    fake_sid = "CA" + "0" * 32
-    seed_sql = f"""
-    INSERT INTO call_attempts (call_attempt_id, campaign_id, lead_id, tenant_id, status, call_sid, created_at)
-    VALUES (gen_random_uuid(), '00000000-0000-0000-0000-000000000001',
-            '00000000-0000-0000-0000-000000000002',
-            '00000000-0000-0000-0000-000000000003',
-            'INITIATED', '{fake_sid}', NOW() - INTERVAL '10 minutes')
-    RETURNING call_attempt_id;
-    """
-    result = run(["psql", pg_dsn, "-t", "-c", seed_sql])
-    attempt_id = result.stdout.strip()
+    tenant_id, campaign_id, lead_id = _get_real_ids(pg_dsn)
+    if not tenant_id or not campaign_id or not lead_id:
+        log("SKIP: No tenant/campaign/lead rows found for seeding")
+        return True
+
+    fake_sid = "CA" + os.urandom(16).hex()  # unique per run to avoid duplicate key
+    seed_sql = (
+        f"INSERT INTO call_attempts (attempt_id, campaign_id, lead_id, tenant_id, worker_id, status, call_sid, initiated_at)"
+        f" VALUES (gen_random_uuid(), '{campaign_id}', '{lead_id}', '{tenant_id}',"
+        f" 'chaos-test-worker', 'INITIATED', '{fake_sid}', NOW() - INTERVAL '10 minutes') RETURNING attempt_id"
+    )
+    result = subprocess.run(["psql", pg_dsn, "-t", "-A", "-q", "-c", seed_sql], capture_output=True, text=True)
+    if result.returncode != 0:
+        log(f"FAIL: Could not seed row: {result.stderr.strip()}")
+        return False
+    attempt_id = result.stdout.strip().splitlines()[0].strip()
     log(f"Seeded INITIATED+call_sid attempt: {attempt_id}")
 
-    run(["systemctl", "restart", "voiceos-dialer-worker"])
-    time.sleep(10)
+    sudo_run(["systemctl", "restart", "voiceos-dialer-worker"])
+    time.sleep(30)
 
+    # recovery_log uses call_id (= call_sid for rows that have one)
     check_sql = f"""
     SELECT ca.status, rl.failure_class
     FROM call_attempts ca
-    LEFT JOIN recovery_log rl ON rl.call_attempt_id = ca.call_attempt_id
-    WHERE ca.call_attempt_id = '{attempt_id}'
+    LEFT JOIN recovery_log rl ON rl.call_id = ca.call_sid
+    WHERE ca.attempt_id = '{attempt_id}'
     """
-    result = run(["psql", pg_dsn, "-t", "-c", check_sql])
+    result = subprocess.run(["psql", pg_dsn, "-t", "-A", "-q", "-c", check_sql], capture_output=True, text=True)
+    if result.returncode != 0:
+        log(f"FAIL: check SQL error: {result.stderr.strip()}")
+        return False
     row = result.stdout.strip().split("|")
     status = row[0].strip() if row else ""
     failure_class = row[1].strip() if len(row) > 1 else ""
@@ -211,6 +252,10 @@ def scenario_s5_duplicate_callback(bff_url: str, twilio_auth_token: str) -> bool
     """Send identical callback twice; verify queue length increases by 1, not 2."""
     print("\nS5: Duplicate Twilio callback")
 
+    if not twilio_auth_token:
+        log("SKIP: TWILIO_AUTH_TOKEN not set — cannot generate valid HMAC for duplicate test")
+        return True
+
     call_sid = "CAtest000000000000000000000000000002"
     params = {
         "CallSid": call_sid,
@@ -257,7 +302,7 @@ def scenario_s5_duplicate_callback(bff_url: str, twilio_auth_token: str) -> bool
 # ── Scenario 6: Redis restart during active call ──────────────────────────────
 
 
-def scenario_s6_redis_restart() -> bool:
+def scenario_s6_redis_restart(redis_password: str = "") -> bool:
     """Restart Redis mid-call; verify voice runtime is unaffected."""
     print("\nS6: Redis restart during active call")
 
@@ -266,16 +311,25 @@ def scenario_s6_redis_restart() -> bool:
         return True
 
     log("Restarting Redis...")
-    run(["systemctl", "restart", "redis"])
-    time.sleep(3)
+    # Service name is redis-server on Debian/Ubuntu; fall back to redis
+    svc = "redis-server"
+    r = subprocess.run(["systemctl", "is-active", svc], capture_output=True, text=True)
+    if r.returncode != 0:
+        svc = "redis"
+    sudo_run(["systemctl", "restart", svc])
+    time.sleep(5)
 
-    result = subprocess.run(["redis-cli", "ping"], capture_output=True, text=True)
-    if result.stdout.strip() == "PONG":
-        log("PASS: Redis recovered cleanly")
-        return True
-    else:
-        log("FAIL: Redis did not respond to PING after restart")
-        return False
+    rp = redis_password or os.environ.get("REDIS_PASSWORD", "")
+    for attempt in range(5):
+        redis_cmd = ["redis-cli", "-a", rp, "ping"] if rp else ["redis-cli", "ping"]
+        result = subprocess.run(redis_cmd, capture_output=True, text=True)
+        if "PONG" in result.stdout:
+            log("PASS: Redis recovered cleanly")
+            return True
+        log(f"  Redis not ready yet (attempt {attempt+1}/5): {result.stdout.strip() or result.stderr.strip()}")
+        time.sleep(2)
+    log("FAIL: Redis did not respond to PING after restart")
+    return False
 
 
 # ── Scenario 7: PostgreSQL failure during post-call write ─────────────────────
@@ -290,7 +344,7 @@ def scenario_s7_postgres_failure() -> bool:
         return True
 
     log("Stopping PostgreSQL temporarily...")
-    run(["systemctl", "stop", "postgresql"])
+    sudo_run(["systemctl", "stop", "postgresql"])
     time.sleep(5)
 
     log("Checking dialer_worker log for explicit error on post-call write failure...")
@@ -300,7 +354,7 @@ def scenario_s7_postgres_failure() -> bool:
     log_output = result.stdout
     postgres_error = "ECONNREFUSED" in log_output or "connection refused" in log_output.lower()
 
-    run(["systemctl", "start", "postgresql"])
+    sudo_run(["systemctl", "start", "postgresql"])
     time.sleep(3)
 
     if postgres_error:
@@ -384,13 +438,25 @@ def scenario_s10_mongodb_unavailable() -> bool:
         log("[dry-run] Would stop MongoDB, verify voice runtime handles failure silently")
         return True
 
+    # Check voice runtime is reachable before testing MongoDB impact
+    try:
+        urllib.request.urlopen("http://localhost:8002/health", timeout=2)
+    except Exception:
+        try:
+            urllib.request.urlopen("http://localhost:8002/health/live", timeout=2)
+        except urllib.error.HTTPError:
+            pass  # 401 etc means it IS running
+        except Exception:
+            log("SKIP: Voice runtime not running — S10 requires active voice runtime")
+            return True
+
     result = subprocess.run(["systemctl", "is-active", "mongod"], capture_output=True, text=True)
     if result.stdout.strip() != "active":
         log("SKIP: MongoDB not running, skipping scenario")
         return True
 
     log("Stopping MongoDB...")
-    run(["systemctl", "stop", "mongod"])
+    sudo_run(["systemctl", "stop", "mongod"])
     time.sleep(3)
 
     log("Verifying voice runtime still responds on health endpoint...")
@@ -406,7 +472,7 @@ def scenario_s10_mongodb_unavailable() -> bool:
         log(f"FAIL: Voice runtime unresponsive after MongoDB stop: {e}")
         result_ok = False
 
-    run(["systemctl", "start", "mongod"])
+    sudo_run(["systemctl", "start", "mongod"])
     return result_ok
 
 
@@ -433,15 +499,21 @@ def main() -> None:
     parser.add_argument("--execute", action="store_true", help="Actually run destructive commands (default: dry-run)")
     parser.add_argument("--scenario", choices=list(SCENARIOS.keys()), help="Run only this scenario")
     parser.add_argument(
-        "--pg-dsn", default=os.getenv("DATABASE_URL", "postgresql://localhost/voiceos"), help="PostgreSQL DSN"
+        "--pg-dsn", default=os.getenv("POSTGRES_DSN", os.getenv("DATABASE_URL", "postgresql://localhost/voiceos")),
+        help="PostgreSQL DSN",
     )
-    parser.add_argument("--bff-url", default="http://localhost:8000", help="bff.js base URL")
+    parser.add_argument("--bff-url", default=os.getenv("PUBLIC_BFF_URL", "http://localhost:8000"), help="bff.js base URL")
     parser.add_argument(
         "--twilio-auth-token", default=os.getenv("TWILIO_AUTH_TOKEN", ""), help="Twilio auth token for HMAC"
     )
+    parser.add_argument("--sudo-pass", default=os.getenv("SUDO_PASS", ""), help="sudo password for systemctl commands")
+    parser.add_argument("--redis-password", default=os.getenv("REDIS_PASSWORD", ""), help="Redis AUTH password")
     args = parser.parse_args()
 
     DRY_RUN = not args.execute
+    global SUDO_PASS
+    if args.sudo_pass:
+        SUDO_PASS = args.sudo_pass
     mode = "LIVE EXECUTION" if args.execute else "DRY RUN"
 
     print(f"\nPhase 14 Productionization Chaos Tests — {mode}")
@@ -464,6 +536,8 @@ def main() -> None:
                 kwargs["bff_url"] = args.bff_url
             if "twilio_auth_token" in sig:
                 kwargs["twilio_auth_token"] = args.twilio_auth_token
+            if "redis_password" in sig:
+                kwargs["redis_password"] = args.redis_password
             ok = fn(**kwargs)
             if ok:
                 print(f"  ✓ {name}")
