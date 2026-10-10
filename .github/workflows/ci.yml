@@ -87,21 +87,8 @@ jobs:
           if [ -n "${POSTGRES_DSN:-}" ]; then
             alembic check
           else
-            echo "No POSTGRES_DSN — checking migration file syntax only"
-            python -c "
-import pathlib, ast, sys
-vdir = pathlib.Path('scripts/db/migrations/alembic/versions')
-errs = []
-for f in vdir.glob('*.py'):
-    try:
-        ast.parse(f.read_text())
-    except SyntaxError as e:
-        errs.append(f'{f}: {e}')
-if errs:
-    for e in errs: print(e)
-    sys.exit(1)
-print(f'All {len(list(vdir.glob(chr(42)+\".py\")))} migration files are valid Python')
-"
+            echo "No POSTGRES_DSN set - skipping live alembic check (requires real Postgres)"
+            python scripts/check_migration_syntax.py
           fi
 
       - name: Run unit tests
