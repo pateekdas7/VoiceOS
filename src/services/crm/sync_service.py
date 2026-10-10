@@ -1,4 +1,3 @@
-from typing import Any
 """
 CRM Sync Service — orchestrates bidirectional sync between VoiceOS and LeadSquared.
 
@@ -15,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date, datetime
+from typing import Any
 from uuid import UUID
 
 import asyncpg
