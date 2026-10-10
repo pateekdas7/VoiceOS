@@ -52,6 +52,11 @@ class BreakGlassPolicy:
         the directive has exceeded ``max_ttl_minutes`` since it was requested.
         """
         now = now if now is not None else datetime.now(UTC)
+        # Normalise naive requested_at (assumed UTC) so subtraction works regardless
+        # of how the caller constructed the directive.
+        requested_at = directive.requested_at
+        if requested_at.tzinfo is None:
+            requested_at = requested_at.replace(tzinfo=UTC)
         distinct_approvers = set(directive.approvers)
 
         if len(distinct_approvers) < self._required_approvals:
@@ -64,7 +69,7 @@ class BreakGlassPolicy:
                 ),
             )
 
-        if now - directive.requested_at > self._max_ttl:
+        if now - requested_at > self._max_ttl:
             return PolicyDecision(
                 outcome=PolicyOutcome.DENY,
                 matching_rules=(f"{BREAK_GLASS_RULE_PREFIX}:{directive.rule_id}",),
