@@ -56,8 +56,8 @@ from __future__ import annotations
 import asyncio
 import secrets
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 DEFAULT_ADMISSION_TTL_S: float = 60.0
 """Default admission-token lifetime. Twilio issues the WSS upgrade within

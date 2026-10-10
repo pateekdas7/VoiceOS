@@ -16,18 +16,16 @@ Uses the Starlette TestClient via the existing _build_*_routes pattern.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from starlette.applications import Starlette
-from starlette.routing import Route
 from starlette.testclient import TestClient
 
 from src.services.analytics.service import AnalyticsService
 from src.services.web_api.api import _build_realtime_analytics_routes
-
 
 # ---------------------------------------------------------------------------
 # Helpers

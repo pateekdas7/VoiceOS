@@ -176,8 +176,8 @@ class InternalAuthMiddleware:
 
 __all__ = [
     "ForbiddenError",
-    "SessionRequiredError",
     "InternalAuthMiddleware",
+    "SessionRequiredError",
     "WebSessionMiddleware",
     "get_session",
     "require_platform_permission",

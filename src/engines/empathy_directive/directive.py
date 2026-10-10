@@ -6,10 +6,10 @@ Architecture: V2 Ch14 (EmpathyPlanner); V1 Ch20 (AdaptiveProsodyEngine).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class EmpathyState(str, Enum):
+class EmpathyState(StrEnum):
     """Fine-grained emotional states EmpathyDirectiveComposer distinguishes.
 
     Deliberately finer-grained than the coarse StressLevel/Sentiment pair

@@ -55,7 +55,7 @@ def _snr_db(reference: bytes, signal: bytes) -> float:
     sig = struct.unpack("<" + "h" * n, signal[: n * 2])
 
     signal_power = sum(r * r for r in ref)
-    noise_power = sum((r - s) * (r - s) for r, s in zip(ref, sig))
+    noise_power = sum((r - s) * (r - s) for r, s in zip(ref, sig, strict=False))
     if noise_power == 0:
         return float("inf")
     if signal_power == 0:

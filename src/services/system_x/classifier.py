@@ -1,7 +1,7 @@
 """IncidentClassifier — maps alert labels to severity and affected services."""
 from __future__ import annotations
 
-from .models import IngestAlert, IncidentSeverity
+from .models import IncidentSeverity, IngestAlert
 
 # alert_name prefix -> service name
 _ALERT_SERVICE_MAP: dict[str, str] = {

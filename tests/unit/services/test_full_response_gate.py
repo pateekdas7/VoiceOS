@@ -58,17 +58,18 @@ from src.libs.contracts.response_plan import ResponsePlan
 from src.libs.contracts.streaming import AudioClause, VoiceConfig
 from src.services.ai_governance.service import AIGovernanceService
 from src.services.conversation_engine.engine import (
-    CILPort, ConversationEngine, PromptBuilderPort,
+    CILPort,
+    ConversationEngine,
+    PromptBuilderPort,
 )
 from src.services.knowledge_retrieval.service import KnowledgeRetrievalService
 from src.services.llm_runtime.output_validator import ValidationResult
 from src.services.playback.scheduler import PlaybackScheduler
 from src.services.tts.startup_buffer_gate import (
+    _FULL_RESPONSE_MAX_CAP,
     StartupBufferGate,
     TTSMode,
-    _FULL_RESPONSE_MAX_CAP,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -539,7 +540,7 @@ async def test_P_audio_payload_bytes_preserved_through_gate() -> None:
         assert got.audio_data == expected
         # Every delivered payload is a whole number of PCM16 samples,
         # which is what AudioOutput requires to honour the 160-byte
-        # μ-law framing contract (2 bytes/sample × 20 samples per frame
+        # μ-law framing contract (2 bytes/sample x 20 samples per frame
         # after resample). We assert the pre-framing invariant here:
         assert len(got.audio_data) % 2 == 0
 

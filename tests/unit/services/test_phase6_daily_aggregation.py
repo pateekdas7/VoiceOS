@@ -10,16 +10,12 @@ Verifies:
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta, time
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
-from unittest.mock import MagicMock
-
-import pytest
 
 from src.libs.contracts.models.analytics import AnalyticsDailyRollup
 from src.libs.contracts.primitives import CampaignId, TenantId
 from src.services.analytics.aggregation import DailyAggregationJob
-
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -189,7 +185,7 @@ class TestDailyAggregationJobIdempotency:
             ptp_repository=ptp_repo,
             loan_repository=loan_repo,
         )
-        rollup = job.run_for_day(TenantId("t-1"), date(2026, 9, 16))
+        job.run_for_day(TenantId("t-1"), date(2026, 9, 16))
 
         assert len(daily_repo.stored) == 1
         assert daily_repo.stored[0].amount_collected_minor == 5000

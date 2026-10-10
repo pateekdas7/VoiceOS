@@ -5,6 +5,9 @@ import logging
 import uuid
 from datetime import UTC, datetime
 
+# Import policy type (lazy to avoid circular)
+from typing import TYPE_CHECKING
+
 from ..models import (
     ClaudeAnalysis,
     IncidentRecord,
@@ -17,8 +20,6 @@ from . import templates
 from .gmail import GmailNotifier
 from .whatsapp import WhatsAppNotifier
 
-# Import policy type (lazy to avoid circular)
-from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     pass
 

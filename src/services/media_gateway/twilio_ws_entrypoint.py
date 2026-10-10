@@ -49,16 +49,15 @@ import logging
 import re
 import time
 import uuid
-from datetime import datetime, UTC
 from collections import deque
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from starlette.applications import Starlette
-from starlette.routing import Route, WebSocketRoute
 from starlette.responses import Response
-from starlette.requests import Request as _StarReq
+from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from src.libs.contracts.audio import AudioConfig, AudioFrame, Encoding, SampleRate
@@ -77,8 +76,8 @@ from src.services.media_gateway.protocol import ADAPTER_TYPE_TWILIO
 from src.services.media_gateway.service import MediaGatewayService
 from src.services.playback.output import AudioOutput
 from src.services.playback.scheduler import PlaybackScheduler
-from src.services.vad_endpointing.bargein_detector import BargeinDetector
 from src.services.vad_endpointing.backchannel import BackchannelDiscriminator
+from src.services.vad_endpointing.bargein_detector import BargeinDetector
 from src.services.vad_endpointing.endpoint_detector import EndpointDetector
 from src.services.vad_endpointing.service import VADEndpointingService
 from src.services.vad_endpointing.vad_engine import VADEngine, VADModelProtocol
@@ -209,8 +208,8 @@ class SharedCallDependencies:
     string (the default) disables recording entirely (no CallRecorder is
     constructed), preserving prior behavior for every existing test and
     deployment that hasn't opted in."""
-    greeting_cache: "GreetingCache | None" = None
-    tracer: "OTelTracer | None" = None
+    greeting_cache: GreetingCache | None = None
+    tracer: OTelTracer | None = None
     """Optional OTelTracer (src/libs/observability/tracer.py). When set,
     spans are emitted for: /voice HTTP handler, WS call lifecycle,
     CustomerContext assembly, STT transcription, LLM engine turn,
@@ -632,7 +631,7 @@ class CallOrchestrator:
                 self._playback.preempt_current_clause()
             except Exception:
                 logger.exception("preempt_current_clause failed")
-            asyncio.ensure_future(self._playback.flush())
+            _task = asyncio.ensure_future(self._playback.flush())  # noqa: RUF006
             self._playback.clear_barge_in()
 
             transcript = " ".join(prefix_words)
@@ -878,7 +877,8 @@ class CallOrchestrator:
             return
         if self._recorder is not None:
             self._recorder.add_outbound_audio(clause.audio_data, clause.sample_rate)
-        import time as _t, logging as _lg
+        import logging as _lg
+        import time as _t
         _t0 = _t.monotonic()
         _last_end = getattr(self, "_pace_last_clause_end", None)
         _gap_ms = int((_t0 - _last_end) * 1000) if _last_end else 0
@@ -1065,7 +1065,8 @@ class CallOrchestrator:
         if self._deps.greeting_cache is not None:
             frames = self._deps.greeting_cache.get_frames(greeting)
             if frames:
-                import asyncio as _asyncio_gc, time as _time_gc
+                import asyncio as _asyncio_gc
+                import time as _time_gc
                 logger.info(
                     "twilio_ws: greeting-cache HIT (%d frames, ~%d ms) - splicing directly",
                     len(frames), len(frames) * 20,
@@ -1118,7 +1119,8 @@ class CallOrchestrator:
         # already enqueues each clause into self._playback as it produces it,
         # so draining that queue concurrently gets first audio out in
         # roughly first-clause latency instead of full-utterance latency.
-        import asyncio, time as _time
+        import asyncio
+        import time as _time
 
         self._pace_greeting_start = _time.monotonic()
         self._pace_greeting_first_frame_at = None
@@ -1237,7 +1239,7 @@ class CallOrchestrator:
 
             if self._deps.speak_greeting:
                 tasks.append(asyncio.create_task(_speak_greeting_task()))
-            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+            done, _pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
             for task in done:
                 exc = task.exception()
                 if exc is not None:
@@ -1719,6 +1721,7 @@ def create_twilio_media_stream_app(
     # The naive /health above is preserved for backward compatibility with
     # existing Twilio configurations and older monitors.
     import os as _os
+
     from starlette.responses import JSONResponse as _JSONResponse
 
     from src.libs.health.probe import LivenessProbe, ReadinessProbe

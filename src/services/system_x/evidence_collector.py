@@ -306,4 +306,4 @@ TOOL_DEFINITIONS: list[dict] = [
 ]
 
 
-__all__ = ["EvidenceCollector", "TOOL_DEFINITIONS"]
+__all__ = ["TOOL_DEFINITIONS", "EvidenceCollector"]

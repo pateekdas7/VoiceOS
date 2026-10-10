@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import AsyncIterator
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from enum import StrEnum
 
 from src.libs.contracts.streaming import WordHypothesis

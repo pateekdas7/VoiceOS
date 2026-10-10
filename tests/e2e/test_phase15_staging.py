@@ -19,11 +19,10 @@ import json
 import os
 import sys
 import time
-import uuid
+import urllib.error
 import urllib.parse
 import urllib.request
-import urllib.error
-from typing import Any
+import uuid
 
 
 def log(msg: str) -> None:

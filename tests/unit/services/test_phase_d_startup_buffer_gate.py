@@ -27,6 +27,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 from datetime import datetime
+
 import pytest
 
 from src.libs.contracts.response_plan import ResponsePlan, StrategyAction, StrategyLabel
@@ -41,7 +42,6 @@ from src.services.tts.startup_buffer_gate import (
     threshold_ms_from_env,
 )
 from src.services.tts.streaming_pipeline import TrueStreamingPipeline
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -81,7 +81,7 @@ def _make_gate(
 
 
 class _PermissiveValidator:
-    def validate(self, text: str, response_plan: ResponsePlan) -> ValidationResult:  # noqa: ARG002
+    def validate(self, text: str, response_plan: ResponsePlan) -> ValidationResult:
         return ValidationResult(valid=True, violations=[], fallback_response="")
 
 
@@ -392,7 +392,7 @@ async def test_discard_makes_subsequent_enqueue_noop() -> None:
 @pytest.mark.asyncio
 async def test_clause_ordering_preserved_on_release() -> None:
     gate, playback = _make_gate(threshold_ms=300)
-    inputs = [_clause(50, idx=i) for i in range(6)]  # 6×50=300ms → release at 6th
+    inputs = [_clause(50, idx=i) for i in range(6)]  # 6x50=300ms → release at 6th
     for c in inputs:
         await gate.enqueue(c)
     got: list[AudioClause] = []
@@ -512,7 +512,7 @@ async def test_pipeline_buffered_streaming_holds_until_threshold_reached() -> No
     )
 
     assert adapter.calls == ["Alpha.", "Beta.", "Gamma."]
-    # 3 clauses × 200ms = 600ms > 400ms threshold → all three released.
+    # 3 clauses x 200ms = 600ms > 400ms threshold → all three released.
     assert playback.depth == 3
 
 
@@ -551,7 +551,7 @@ async def test_pipeline_buffered_streaming_short_reply_flushed_by_final() -> Non
 
 @pytest.mark.asyncio
 async def test_pipeline_blocking_mode_releases_only_after_final_clause() -> None:
-    svc, adapter = _tts_service_with_sized_adapter(ms_per_clause=100)
+    svc, _adapter = _tts_service_with_sized_adapter(ms_per_clause=100)
     pipeline = TrueStreamingPipeline(ai_governance_service=None)
     playback = PlaybackScheduler()
     gate = StartupBufferGate(
@@ -583,7 +583,7 @@ async def test_pipeline_blocking_mode_releases_only_after_final_clause() -> None
 async def test_pipeline_barge_in_during_buffering_yields_zero_audio() -> None:
     """Barge-in fired mid-turn must prevent ANY buffered clause from
     reaching the scheduler."""
-    svc, adapter = _tts_service_with_sized_adapter(ms_per_clause=100)
+    svc, _adapter = _tts_service_with_sized_adapter(ms_per_clause=100)
     pipeline = TrueStreamingPipeline(ai_governance_service=None)
     playback = PlaybackScheduler()
     gate = StartupBufferGate(
@@ -646,5 +646,5 @@ async def test_greeting_path_and_live_reply_share_gate_semantics() -> None:
             playback=playback,
             gate=gate,
         )
-        # 2 clauses × 200ms = 400ms = threshold → both released.
+        # 2 clauses x 200ms = 400ms = threshold → both released.
         assert playback.depth == 2, f"path={label}: expected 2, got {playback.depth}"

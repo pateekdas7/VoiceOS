@@ -146,19 +146,26 @@ class SystemXIncidentRepository:
         sets = ["status = %s"]
         vals: list[Any] = [str(status)]
         if resolved_at is not None:
-            sets.append("resolved_at = %s"); vals.append(resolved_at)
+            sets.append("resolved_at = %s")
+            vals.append(resolved_at)
         if root_cause is not None:
-            sets.append("root_cause = %s"); vals.append(root_cause)
+            sets.append("root_cause = %s")
+            vals.append(root_cause)
         if recovery_summary is not None:
-            sets.append("recovery_summary = %s"); vals.append(recovery_summary)
+            sets.append("recovery_summary = %s")
+            vals.append(recovery_summary)
         if claude_analysis is not None:
-            sets.append("claude_analysis = %s"); vals.append(_analysis_to_json(claude_analysis))
+            sets.append("claude_analysis = %s")
+            vals.append(_analysis_to_json(claude_analysis))
         if health_after is not None:
-            sets.append("health_after = %s"); vals.append(json.dumps(health_after))
+            sets.append("health_after = %s")
+            vals.append(json.dumps(health_after))
         if total_downtime_s is not None:
-            sets.append("total_downtime_s = %s"); vals.append(total_downtime_s)
+            sets.append("total_downtime_s = %s")
+            vals.append(total_downtime_s)
         if notifications_sent is not None:
-            sets.append("notifications_sent = %s"); vals.append(notifications_sent)
+            sets.append("notifications_sent = %s")
+            vals.append(notifications_sent)
         vals.append(incident_id)
         with self._conn.cursor() as cur:
             cur.execute(f"UPDATE system_x_incidents SET {', '.join(sets)} WHERE incident_id = %s", vals)
@@ -231,13 +238,17 @@ class SystemXIncidentRepository:
         sets = ["status = %s"]
         vals: list[Any] = [str(status)]
         if completed_at is not None:
-            sets.append("completed_at = %s"); vals.append(completed_at)
+            sets.append("completed_at = %s")
+            vals.append(completed_at)
         if result is not None:
-            sets.append("result = %s"); vals.append(result)
+            sets.append("result = %s")
+            vals.append(result)
         if error is not None:
-            sets.append("error = %s"); vals.append(error)
+            sets.append("error = %s")
+            vals.append(error)
         if rolled_back is not None:
-            sets.append("rolled_back = %s"); vals.append(rolled_back)
+            sets.append("rolled_back = %s")
+            vals.append(rolled_back)
         vals.append(action_id)
         with self._conn.cursor() as cur:
             cur.execute(f"UPDATE system_x_recovery_actions SET {', '.join(sets)} WHERE action_id = %s", vals)

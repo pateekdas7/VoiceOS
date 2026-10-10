@@ -19,7 +19,6 @@ Gate: zero 5xx, p95 latency < 2000ms, queue depth stays < 50.
 
 from __future__ import annotations
 
-import json
 import os
 import uuid
 

@@ -10,8 +10,6 @@ from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Any
 
-import pytest
-
 from src.libs.contracts.models.pipeline import Pipeline, PipelineStatus
 from src.libs.contracts.primitives import CampaignId, PipelineId, TenantId
 from src.libs.repositories.pipeline import PipelineRepository
@@ -133,7 +131,7 @@ class TestPipelineRepositoryCreate:
         assert len(conn._store["pipelines"]) == 1
 
     def test_get_returns_created_pipeline(self) -> None:
-        repo, conn = _repo()
+        repo, _conn = _repo()
         p = _make_pipeline()
         repo.create(p)
         fetched = repo.get(TENANT, p.pipeline_id)

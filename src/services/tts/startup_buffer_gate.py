@@ -60,7 +60,7 @@ _DEFAULT_MAX_BUFFERED_CLAUSES = 128  # bounded buffer cap (runaway guard).
 _FULL_RESPONSE_MAX_CAP = 4096  # ~5.8 min of Veena 85ms clauses; fail-closed on hit.
 
 
-class TTSMode(str, enum.Enum):
+class TTSMode(enum.StrEnum):
     """Selects the TTS clause-to-playback dispatch strategy for one turn."""
 
     STREAMING = "streaming"

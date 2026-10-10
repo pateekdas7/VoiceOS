@@ -113,7 +113,7 @@ class TestPlatformUserRepository:
                     updated_at=_NOW,
                 )
             )
-            with pytest.raises(Exception):  # noqa: B017 - psycopg2 raises IntegrityError, not imported here
+            with pytest.raises(Exception):
                 repo.create(
                     PlatformUser(
                         platform_user_id=second_id,
@@ -133,7 +133,7 @@ class TestPlatformUserRepository:
         repo = PlatformUserRepository(pg_conn)
         platform_user_id = str(uuid.uuid4())
 
-        with pytest.raises(Exception):  # noqa: B017 - psycopg2 raises IntegrityError, not imported here
+        with pytest.raises(Exception):
             repo.create(
                 PlatformUser(
                     platform_user_id=platform_user_id,

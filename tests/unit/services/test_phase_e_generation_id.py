@@ -39,7 +39,6 @@ from src.services.tts.service import TTSService, TTSServiceConfig
 from src.services.tts.startup_buffer_gate import StartupBufferGate, TTSMode
 from src.services.tts.streaming_pipeline import TrueStreamingPipeline
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -66,7 +65,7 @@ def _clause(
 
 
 class _PermissiveValidator:
-    def validate(self, text: str, response_plan: ResponsePlan) -> ValidationResult:  # noqa: ARG002
+    def validate(self, text: str, response_plan: ResponsePlan) -> ValidationResult:
         return ValidationResult(valid=True, violations=[], fallback_response="")
 
 
@@ -85,7 +84,7 @@ class _GatedTTSAdapter:
         self.calls: list[str] = []
 
     async def synthesize_stream(
-        self, text_chunks: AsyncIterator[str], voice_config: VoiceConfig  # noqa: ARG002
+        self, text_chunks: AsyncIterator[str], voice_config: VoiceConfig
     ) -> AsyncIterator[AudioClause]:
         parts: list[str] = []
         async for c in text_chunks:
@@ -115,7 +114,7 @@ class _SizedRecordingTTSAdapter:
         self.calls: list[str] = []
 
     async def synthesize_stream(
-        self, text_chunks: AsyncIterator[str], voice_config: VoiceConfig  # noqa: ARG002
+        self, text_chunks: AsyncIterator[str], voice_config: VoiceConfig
     ) -> AsyncIterator[AudioClause]:
         parts: list[str] = []
         async for c in text_chunks:
@@ -600,7 +599,7 @@ class _MinimalOrchestrator:
         chunk_size = 160
         n_frames = 0
         aborted = False
-        total_frames = (len(pcm_ulaw) + chunk_size - 1) // chunk_size
+        (len(pcm_ulaw) + chunk_size - 1) // chunk_size
         for i, start in enumerate(range(0, len(pcm_ulaw), chunk_size)):
             if self._playback.generation != clause_generation:
                 aborted = True

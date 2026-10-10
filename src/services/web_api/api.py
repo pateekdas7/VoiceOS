@@ -25,13 +25,13 @@ be inventing a security-relevant design point rather than reusing one.
 from __future__ import annotations
 
 import base64
-import os
 import json
 import logging
+import os
 import secrets
 import uuid
-from datetime import UTC, date, datetime, timedelta
 from collections.abc import AsyncGenerator
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, Protocol
 
 _log = logging.getLogger("voiceos.web_api")
@@ -113,8 +113,8 @@ from src.services.user_management.invitation import (
 from src.services.user_management.service import UserService
 
 from .auth_middleware import (
-    InternalAuthMiddleware,
     ForbiddenError,
+    InternalAuthMiddleware,
     SessionRequiredError,
     WebSessionMiddleware,
     require_platform_permission,
@@ -315,7 +315,7 @@ def create_web_api(
         return response
 
     async def _prometheus_metrics(_request: Request) -> Response:
-        from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+        from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
         return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     async def system_health(_request: Request) -> JSONResponse:
@@ -466,7 +466,6 @@ def create_web_api(
 def _build_crm_sync_routes(conn: Any) -> list[Route]:
     """Phase 4 CRM sync/import routes — LeadSquared credentials, sync log, import jobs."""
 
-    import uuid as _uuid_mod
     import json as _json_mod
 
     def _tid(request: Request) -> str | None:
@@ -502,7 +501,7 @@ def _build_crm_sync_routes(conn: Any) -> list[Route]:
                 row = cur.fetchone()
             if row:
                 cols = ['cred_id','api_base_url','is_active','created_at','updated_at','access_key_preview']
-                return JSONResponse({'config': dict(zip(cols, row))})
+                return JSONResponse({'config': dict(zip(cols, row, strict=False))})
             return JSONResponse({'config': None})
         except Exception as e:
             conn.rollback()
@@ -539,7 +538,7 @@ def _build_crm_sync_routes(conn: Any) -> list[Route]:
                 row = cur.fetchone()
             conn.commit()
             cols = ['cred_id','api_base_url','is_active','updated_at']
-            return JSONResponse({'config': dict(zip(cols, row))})
+            return JSONResponse({'config': dict(zip(cols, row, strict=False))})
         except Exception as e:
             conn.rollback()
             return JSONResponse({'error': str(e)}, status_code=500)
@@ -595,8 +594,8 @@ def _build_crm_sync_routes(conn: Any) -> list[Route]:
             sc = ['entity_type','pending','synced','failed','skipped','last_sync_at']
             fc = ['entity_type','entity_id','last_error','attempt_count','updated_at']
             return JSONResponse({
-                'summary': [dict(zip(sc, r)) for r in summary_rows],
-                'recent_failures': [dict(zip(fc, r)) for r in fail_rows],
+                'summary': [dict(zip(sc, r, strict=False)) for r in summary_rows],
+                'recent_failures': [dict(zip(fc, r, strict=False)) for r in fail_rows],
             })
         except Exception as e:
             return JSONResponse({'error': str(e)}, status_code=500)
@@ -737,7 +736,7 @@ def _build_crm_sync_routes(conn: Any) -> list[Route]:
                 rows = cur.fetchall()
             cols = ['import_id','status','leads_fetched','leads_created',
                     'leads_updated','leads_skipped','error_message','started_at','completed_at']
-            return JSONResponse({'imports': [dict(zip(cols, r)) for r in rows]})
+            return JSONResponse({'imports': [dict(zip(cols, r, strict=False)) for r in rows]})
         except Exception as e:
             return JSONResponse({'error': str(e)}, status_code=500)
 
@@ -764,7 +763,7 @@ def _build_crm_sync_routes(conn: Any) -> list[Route]:
                 )
                 rows = cur.fetchall()
             cols = ['voiceos_field','ls_field','description','is_overridden']
-            return JSONResponse({'mappings': [dict(zip(cols, r)) for r in rows]})
+            return JSONResponse({'mappings': [dict(zip(cols, r, strict=False)) for r in rows]})
         except Exception as e:
             return JSONResponse({'error': str(e)}, status_code=500)
 
@@ -797,7 +796,7 @@ def _build_crm_sync_routes(conn: Any) -> list[Route]:
                 row = cur.fetchone()
             conn.commit()
             cols = ['mapping_id','voiceos_field','ls_field']
-            return JSONResponse({'mapping': dict(zip(cols, row))})
+            return JSONResponse({'mapping': dict(zip(cols, row, strict=False))})
         except Exception as e:
             conn.rollback()
             return JSONResponse({'error': str(e)}, status_code=500)
@@ -1985,7 +1984,7 @@ def _build_pipeline_lead_routes(
             pipeline_id=pipeline_filter,
             search=search,
         )
-        return JSONResponse([_lead_to_dict(l) for l in leads])
+        return JSONResponse([_lead_to_dict(loan) for loan in leads])
 
     async def campaign_lead_stats(request: Request) -> JSONResponse:
         guard = await _guard_read(request)
@@ -2095,7 +2094,7 @@ def _build_pipeline_lead_routes(
         pipeline_id = PipelineId(request.path_params["pipeline_id"])
         search = request.query_params.get("search") or None
         leads = lead_repository.find_by_pipeline(tenant_id, pipeline_id, search=search)
-        return JSONResponse([_lead_to_dict(l) for l in leads])
+        return JSONResponse([_lead_to_dict(lead) for lead in leads])
 
     async def pipeline_lead_stats(request: Request) -> JSONResponse:
         guard = await _guard_read(request)
@@ -2229,7 +2228,7 @@ def _build_realtime_analytics_routes(analytics_service: AnalyticsService) -> lis
     Keepalive comments (": keepalive\\n\\n") are sent every 30 s to prevent
     proxies and load-balancers from closing idle connections.
 
-    The client controls the polling interval via ?interval_seconds= (1–60 s,
+    The client controls the polling interval via ?interval_seconds= (1-60 s,
     default 5). The stream runs until the client disconnects or the server
     is shut down.
     """
@@ -2572,7 +2571,7 @@ def _build_webhook_routes(ingest: WebhookIngestService, system_x_controller: Any
         # Fire System X for each individual alert in the batch
         if system_x_controller is not None:
             for raw_alert in payload.get("alerts", ()):
-                asyncio.ensure_future(system_x_controller.handle_alert(raw_alert))
+                asyncio.ensure_future(system_x_controller.handle_alert(raw_alert))  # noqa: RUF006
         return JSONResponse({"ingested": len(results)})
 
     return [Route("/webhooks/alertmanager", alertmanager_webhook, methods=["POST"])]
@@ -2753,7 +2752,7 @@ def _build_startup_handlers(
 
             async with httpx.AsyncClient(timeout=5.0) as client:
                 while True:
-                    for service, port in gpu_endpoints:
+                    for _service, port in gpu_endpoints:
                         node_id = f"{gpu_host}:{port}"
                         try:
                             resp = await client.get(f"http://{gpu_host}:{port}/health")
@@ -2774,7 +2773,7 @@ def _build_startup_handlers(
                     await asyncio.sleep(gpu_poll_s)
 
         def _start_gpu_polling() -> None:
-            asyncio.ensure_future(_poll_gpu_nodes())
+            asyncio.ensure_future(_poll_gpu_nodes())  # noqa: RUF006
             _log.info("GPU fleet poller started (host=%s interval=%ds)", gpu_host, gpu_poll_s)
 
         handlers.append(_start_gpu_polling)
@@ -2784,20 +2783,19 @@ def _build_startup_handlers(
 
         async def _run_daily_aggregation() -> None:
             """Trigger DailyAggregationJob once, then repeat daily at midnight UTC."""
-            job = analytics_service._aggregation_job
             while True:
                 now = date.today()
                 yesterday = now - timedelta(days=1)
                 _log.info("DailyAggregationJob: would aggregate for %s (no tenant list available at startup)", yesterday)
 
                 # Sleep until next midnight UTC.
-                from datetime import time as _time  # noqa: PLC0415
+                from datetime import time as _time
                 tomorrow_dt = datetime.combine(now + timedelta(days=1), _time.min).replace(tzinfo=UTC)
                 sleep_s = (tomorrow_dt - datetime.now(UTC)).total_seconds()
                 await asyncio.sleep(max(sleep_s, 3600))
 
         def _start_daily_aggregation() -> None:
-            asyncio.ensure_future(_run_daily_aggregation())
+            asyncio.ensure_future(_run_daily_aggregation())  # noqa: RUF006
             _log.info("DailyAggregationJob scheduler started")
 
         handlers.append(_start_daily_aggregation)
@@ -2834,6 +2832,14 @@ def _build_dialer_routes(
             "(twilio_auth_token not configured) — do not use in production."
         )
 
+    def _require_tenant(request: Request, perm: str) -> Any:
+        try:
+            return require_tenant_permission(request, perm)
+        except SessionRequiredError:
+            return _error(401, "UNAUTHENTICATED", "sign in required")
+        except ForbiddenError as exc:
+            return _error(403, "FORBIDDEN", str(exc))
+
     async def dialer_start(request: Request) -> JSONResponse:
         guard = _require_tenant(request, PERM_WRITE_CAMPAIGNS)
         if isinstance(guard, JSONResponse):
@@ -2845,7 +2851,6 @@ def _build_dialer_routes(
         except Exception:
             pass
 
-        from src.libs.contracts.primitives import CampaignId, TenantId
         info = await dialer_session_manager.start(
             guard.tenant_id,
             campaign_id,

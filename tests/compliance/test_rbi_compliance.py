@@ -23,7 +23,7 @@ from src.services.policy_engine.engine import PolicyEngine
 from src.services.policy_engine.rule import PolicyRequest
 
 
-def FakePolicyEngine() -> PolicyEngine:  # noqa: N802 -- intentionally PascalCase, a factory standing in for a class
+def FakePolicyEngine() -> PolicyEngine:
     """A real ``PolicyEngine`` with every backend (Redis/Postgres/EventBus) omitted.
 
     Falls through directly to the built-in rule packs' deterministic

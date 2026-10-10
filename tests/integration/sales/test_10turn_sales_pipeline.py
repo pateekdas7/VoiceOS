@@ -34,7 +34,6 @@ from src.engines.strategy.actions import StrategyAction
 from src.engines.strategy.engine import StrategySelection
 from src.libs.contracts.response_plan import IntentLabel
 
-
 # ---------------------------------------------------------------------------
 # Engine construction
 # ---------------------------------------------------------------------------
@@ -182,7 +181,7 @@ def run_pipeline(verbose: bool = True) -> list[dict]:
             print(f"Risk flags: {report['risk_flags']}")
             print(f"Strategy: {report['strategy']}")
             print(f"Lead: stage={report['lead_stage']} temp={report['lead_temperature']}")
-            print(f"Budget: ₹{(state.budget_min or 0)//100000}L – ₹{(state.budget_max or 0)//100000}L")
+            print(f"Budget: ₹{(state.budget_min or 0)//100000}L - ₹{(state.budget_max or 0)//100000}L")
             print(f"Confirmed fields: {report['confirmed_fields']}")
             print(f"Uncertain fields: {report['uncertain_fields']}")
             print(f"Objections: {report['objections']}")

@@ -5,29 +5,22 @@ Tests cover all 10 specified scenarios plus edge cases.
 
 from __future__ import annotations
 
-import pytest
-
 from src.engines.intent.result import IntentResult
 from src.engines.risk.result import RiskAssessment
 from src.engines.sales.domains.real_estate import RealEstateDomainConfig
 from src.engines.sales.question_selector import QuestionSelector
 from src.engines.sales.schema import (
-    DecisionMaker,
-    FinancingStatus,
     LeadIntent,
     LeadTemperature,
-    PropertyPurpose,
     QualificationStatus,
     QuestionField,
     SalesAction,
     SalesState,
-    SiteVisitInterest,
     Timeline,
 )
 from src.engines.strategy.actions import StrategyAction
 from src.engines.strategy.engine import StrategySelection
 from src.libs.contracts.response_plan import IntentLabel
-
 
 # ---------------------------------------------------------------------------
 # Helpers

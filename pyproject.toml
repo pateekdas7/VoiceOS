@@ -273,6 +273,10 @@ ignore = [
     "N818",  # exception names — our InvariantViolationError matches architecture naming
 ]
 
+[tool.ruff.lint.per-file-ignores]
+"src/services/web_api/api.py" = ["E402"]
+"tests/**/*.py" = ["N802", "B017"]
+
 [tool.ruff.lint.isort]
 known-first-party = ["src", "tests"]
 

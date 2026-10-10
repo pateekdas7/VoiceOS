@@ -20,12 +20,12 @@ from __future__ import annotations
 import hashlib
 import logging
 
+from src.engines.prompt_builder.kavya_persona import build_system_prompt
 from src.libs.contracts.context import CustomerContext
 from src.libs.contracts.response_plan import (
     ResponsePlan,
     StrategyLabel,
 )
-from src.engines.prompt_builder.kavya_persona import build_system_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -330,7 +330,7 @@ class PromptBuilder:
         floor_str = _fmt_minor(env.floor_minor)
         ceiling_str = _fmt_minor(env.ceiling_minor)
         lines = [
-            f"\nNEGOTIATION ENVELOPE:",
+            "\nNEGOTIATION ENVELOPE:",
             f"  floor: {floor_str}  ceiling: {ceiling_str}",
             f"  move type: {env.move_type.value}",
             f"  max concessions: {env.max_concession_count}",
@@ -378,7 +378,7 @@ class PromptBuilder:
             if b_min and b_max and b_min == b_max:
                 known_lines.append(f"  - Budget: ₹{b_max // 100000}L")
             elif b_min and b_max:
-                known_lines.append(f"  - Budget: ₹{b_min // 100000}L–₹{b_max // 100000}L")
+                known_lines.append(f"  - Budget: ₹{b_min // 100000}L-₹{b_max // 100000}L")
         if "PURPOSE" in confirmed and sales_state.get("purpose"):
             known_lines.append(f"  - Purpose: {sales_state['purpose']}")
         if "TIMELINE" in confirmed and sales_state.get("timeline"):

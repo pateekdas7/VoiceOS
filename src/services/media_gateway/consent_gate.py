@@ -54,5 +54,5 @@ class NullCustomerConsent:
     consent adapter wired up.
     """
 
-    def is_revoked(self, tenant_id: str, customer_id: str) -> bool:  # noqa: ARG002 — port shape
+    def is_revoked(self, tenant_id: str, customer_id: str) -> bool:
         return False

@@ -19,7 +19,6 @@ import logging
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from typing import Deque
 
 _log = logging.getLogger("system_x.guardrails")
 
@@ -59,7 +58,7 @@ class RecoveryGuardrails:
         self._recovery_timeout_s = recovery_timeout_s
 
         # Sliding window: timestamps of recent recovery starts
-        self._recent_recoveries: Deque[float] = deque()
+        self._recent_recoveries: deque[float] = deque()
         # Per-service state
         self._service_records: dict[str, _ServiceRecord] = defaultdict(_ServiceRecord)
         # Fingerprint → last seen timestamp for deduplication

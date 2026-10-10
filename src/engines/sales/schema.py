@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 
-
 # ---------------------------------------------------------------------------
 # Enumerations
 # ---------------------------------------------------------------------------
@@ -273,7 +272,7 @@ class SalesState:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "SalesState":
+    def from_dict(cls, data: dict) -> SalesState:
         """Deserialize from a plain dict (inverse of to_dict)."""
         s = cls()
         s.lead_stage = LeadStage(data.get("lead_stage", LeadStage.NEW))

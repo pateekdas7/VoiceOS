@@ -13,7 +13,7 @@ max_ttl_min: 60, requires_approval: 2}``), §4.18.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 
 from .decision import PolicyDecision, PolicyOutcome
 

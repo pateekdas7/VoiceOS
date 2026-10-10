@@ -31,7 +31,6 @@ from .schema import (
     PropertyPurpose,
     QualificationStatus,
     QuestionField,
-    SalesAction,
     SalesObjective,
     SalesState,
     SiteVisitInterest,

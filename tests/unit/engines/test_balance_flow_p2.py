@@ -31,23 +31,25 @@ and the rendered text carries that amount — not clarify, not ₹0.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-
-import pytest
+from datetime import datetime
 
 from src.engines.dialogue_response.engine import DialogueResponseEngine
-from src.libs.contracts.primitives import (
-    AccountId, Currency, CustomerId, Money, TenantId,
-)
-from src.libs.contracts.response_plan import ResponsePlan
 from src.libs.contracts.context import (
-    ConsentStatus, ContactInfo, CustomerContext, LoanSummary,
-    OutstandingBalance, PartyInfo,
+    ConsentStatus,
+    ContactInfo,
+    CustomerContext,
+    LoanSummary,
+    OutstandingBalance,
+    PartyInfo,
+)
+from src.libs.contracts.primitives import (
+    AccountId,
+    Currency,
+    CustomerId,
+    Money,
+    TenantId,
 )
 from src.libs.contracts.turn import TurnInput, TurnRole
-
-# Reuse existing engine + context fixtures rather than duplicating.
-from tests.unit.engines.test_response_planning import _build_engine
 
 # Reuse existing session helper + lender constant so we render exactly as
 # a real call would.
@@ -55,6 +57,9 @@ from tests.unit.engines.test_dialogue_response import (
     _LENDER,
     _session,
 )
+
+# Reuse existing engine + context fixtures rather than duplicating.
+from tests.unit.engines.test_response_planning import _build_engine
 
 
 def _make_full_context(

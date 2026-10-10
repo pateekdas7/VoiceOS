@@ -41,7 +41,7 @@ from src.services.policy_engine.engine import PolicyEngine
 from src.services.policy_engine.rule import PolicyRequest
 
 
-def FakePolicyEngine() -> PolicyEngine:  # noqa: N802 -- see test_rbi_compliance.py's identical factory
+def FakePolicyEngine() -> PolicyEngine:
     """A real ``PolicyEngine`` with every backend omitted -- see ``test_rbi_compliance.py``."""
     return PolicyEngine()
 

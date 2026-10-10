@@ -90,15 +90,15 @@ def detect_language(metadata: dict[str, str]) -> LeadLanguage:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def score_lead(metadata: dict[str, str], *, has_name: bool, has_email: bool) -> int:
-    """Compute a 0–100 priority score for a lead.
+    """Compute a 0-100 priority score for a lead.
 
     Higher score = more urgent / higher value = placed earlier in pipeline.
 
     Component breakdown (max 100):
-      DPD tier     0–40  (older delinquency = higher urgency)
-      Outstanding  0–20  (higher balance = higher value)
-      Name         0–10  (data completeness signal)
-      Email        0–5   (data completeness signal)
+      DPD tier     0-40  (older delinquency = higher urgency)
+      Outstanding  0-20  (higher balance = higher value)
+      Name         0-10  (data completeness signal)
+      Email        0-5   (data completeness signal)
       Phone valid  15    (always awarded when scoring — invalid phones are
                          rejected before reaching this function)
     """

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from .models import IngestAlert, IncidentSeverity
+from .models import IncidentSeverity, IngestAlert
 
 # Never include these keys in the package
 _REDACTED_KEYS = frozenset(

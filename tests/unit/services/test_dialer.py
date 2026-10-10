@@ -9,7 +9,6 @@ Architecture: V5 Ch6 (Campaign Engine — Dialer, ADR-005 §15).
 from __future__ import annotations
 
 import asyncio
-import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -268,7 +267,7 @@ class TestDialerEngine:
     @pytest.mark.asyncio
     async def test_stops_when_queue_empty(self) -> None:
         """Engine exits cleanly with no leads."""
-        engine, q, repo, _ = _make_engine()
+        engine, _q, repo, _ = _make_engine()
         # No leads pushed → loop exits immediately
         await engine.run(TENANT, CAMPAIGN, daily_start_hour=0, daily_end_hour=23)
         assert len(repo.updates) == 0
@@ -278,7 +277,7 @@ class TestDialerEngine:
         mock_twilio = AsyncMock(spec=TwilioOutboundCallService)
         mock_twilio.place_call = AsyncMock(return_value="CA_test_sid")
 
-        engine, q, repo, redis = _make_engine(twilio=mock_twilio)
+        engine, q, _repo, _redis = _make_engine(twilio=mock_twilio)
         q.push_leads(TENANT, CAMPAIGN, [{"lead_id": "l1", "phone": "+919876543210", "score": 70}])
 
         # Simulate call ending after 1 poll by patching the loop
@@ -438,7 +437,7 @@ class TestDialerEngineDND:
         mock_twilio.place_call = AsyncMock(return_value="CA_ok")
 
         dnd = CsvPhoneDNDList(["+919999999999"])  # different number
-        engine, q, repo, _ = _make_engine(twilio=mock_twilio, dnd=dnd)
+        engine, q, _repo, _ = _make_engine(twilio=mock_twilio, dnd=dnd)
         q.push_leads(TENANT, CAMPAIGN, [
             {"lead_id": "l-ok", "phone": "+919876543210", "score": 50},
         ])

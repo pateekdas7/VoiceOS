@@ -23,7 +23,7 @@ from typing import Any
 
 import httpx
 
-from .evidence_collector import EvidenceCollector, TOOL_DEFINITIONS
+from .evidence_collector import TOOL_DEFINITIONS, EvidenceCollector
 from .models import ClaudeAnalysis, DiagnosticTurn
 
 _log = logging.getLogger("system_x.diagnostic_session")
@@ -110,7 +110,7 @@ _FINALIZE_TOOL: dict[str, Any] = {
     },
 }
 
-_ALL_TOOLS = TOOL_DEFINITIONS + [_FINALIZE_TOOL]
+_ALL_TOOLS = [*TOOL_DEFINITIONS, _FINALIZE_TOOL]
 
 
 class DiagnosticSession:

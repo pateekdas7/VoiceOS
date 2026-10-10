@@ -10,8 +10,8 @@ Covers:
 from __future__ import annotations
 
 import importlib.util
-from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -41,7 +41,6 @@ from src.engines.sales.schema import (
     SiteVisitInterest,
     Timeline,
 )
-
 
 # ---------------------------------------------------------------------------
 # PipelineTransitionEngine
@@ -242,7 +241,7 @@ class TestGeneratePostCallSummary:
         s.last_sales_action = SalesAction.OFFER_SITE_VISIT
         s.objections = ["price_high"]
         s.confirmed_fields = ["budget", "location"]
-        s.requested_callback_time = datetime(2026, 10, 1, 10, 0, 0, tzinfo=timezone.utc)
+        s.requested_callback_time = datetime(2026, 10, 1, 10, 0, 0, tzinfo=UTC)
         return s
 
     def test_full_state_serializes_correctly(self):

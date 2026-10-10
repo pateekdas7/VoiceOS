@@ -25,7 +25,6 @@ from src.engines.strategy.actions import StrategyAction
 from src.engines.strategy.engine import StrategySelection
 from src.libs.contracts.response_plan import IntentLabel
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

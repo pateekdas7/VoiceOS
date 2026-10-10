@@ -170,5 +170,5 @@ class TestPlatformUserModel:
             created_at=now,
             updated_at=now,
         )
-        with pytest.raises(Exception):  # noqa: B017 - pydantic frozen model raises its own ValidationError
+        with pytest.raises(Exception):
             user.email = "changed@voiceos.ai"  # type: ignore[misc]

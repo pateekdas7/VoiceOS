@@ -11,14 +11,13 @@ Covers:
 
 from __future__ import annotations
 
-import importlib
 import io
 import json
 import os
 import sys
 from pathlib import Path
 from types import ModuleType
-from unittest.mock import MagicMock, AsyncMock, patch, call as mock_call
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -36,7 +35,6 @@ class TestStructuredLogger:
     def _make_log(self) -> tuple[ModuleType, io.StringIO]:
         """Import a minimal log fixture that matches bff.js's log object in Python."""
         import json as _json
-        import time as _time
 
         buf = io.StringIO()
 
@@ -141,7 +139,7 @@ class TestBffAudit:
 
     @pytest.mark.asyncio
     async def test_inserts_into_audit_log(self) -> None:
-        queries, warnings = await self._run_audit()
+        queries, _warnings = await self._run_audit()
         assert len(queries) == 1
         sql, params = queries[0]
         assert "INSERT INTO audit_log" in sql

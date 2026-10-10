@@ -12,11 +12,10 @@ Architecture: VoiceOS Phase 2 Sales Intelligence Layer.
 
 from __future__ import annotations
 
-import pytest
-
 from src.engines.entity_extraction.result import ExtractedEntities
 from src.engines.goal_planner.goals import Goal
 from src.engines.intent.result import IntentResult
+from src.engines.risk.flags import RiskFlag
 from src.engines.risk.result import RiskAssessment
 from src.engines.sales.action_planner import SalesActionPlanner
 from src.engines.sales.domains.real_estate import RealEstateDomainConfig
@@ -30,8 +29,6 @@ from src.engines.sales.state_updater import SalesStateUpdater
 from src.engines.strategy.actions import StrategyAction
 from src.engines.strategy.engine import StrategySelection
 from src.libs.contracts.response_plan import IntentLabel
-from src.engines.risk.flags import RiskFlag
-
 
 # ---------------------------------------------------------------------------
 # Test fixture: 10-turn conversation
@@ -87,7 +84,7 @@ def run_10_turns():
     actions = []
     asked_fields: list[str] = []  # fields we've asked, to verify no repetition
 
-    for turn_num, (utterance, intent_label, risk_fn, strategy_action) in enumerate(TURNS):
+    for _turn_num, (utterance, intent_label, risk_fn, strategy_action) in enumerate(TURNS):
         intent = _intent(intent_label, utterance)
         risk = risk_fn()
         strategy = _strategy(strategy_action)
@@ -132,7 +129,7 @@ class TestTenTurnConversation:
     def test_no_confirmed_field_re_asked(self):
         """Once a field is confirmed, it is never asked again in subsequent turns."""
         previous_confirmed: set[str] = set()
-        for i, (state, question) in enumerate(zip(self.states, self.questions)):
+        for i, (state, question) in enumerate(zip(self.states, self.questions, strict=False)):
             if question is not None and question.value in previous_confirmed:
                 raise AssertionError(
                     f"Turn {i+1}: field {question.value} was asked again after being confirmed. "

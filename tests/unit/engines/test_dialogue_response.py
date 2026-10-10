@@ -11,12 +11,19 @@ way (that's covered by their own test suites).
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from src.engines.dialogue_response.buckets import Bucket
 from src.engines.dialogue_response.engine import DialogueResponseEngine
 from src.engines.dialogue_response.installment import InstallmentPlanKind, compute_installment_plan
-from src.libs.contracts.context import ConsentStatus, ContactInfo, CustomerContext, LoanSummary, OutstandingBalance, PartyInfo
+from src.libs.contracts.context import (
+    ConsentStatus,
+    ContactInfo,
+    CustomerContext,
+    LoanSummary,
+    OutstandingBalance,
+    PartyInfo,
+)
 from src.libs.contracts.primitives import AccountId, Currency, CustomerId, Money, TenantId
 from src.libs.contracts.response_plan import IntentLabel, IntentSignal, ResponsePlan
 from src.services.conversation_engine.session_state import ConversationSessionState
@@ -60,7 +67,7 @@ def _make_plan(
         version=1,
         call_id="call-001",
         tenant_id="tenant-001",
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
         intents=intents,
         entities=entities or {},
     )
@@ -474,7 +481,7 @@ class TestFixDNoRecordBranch:
             version=1,
             call_id="c1",
             tenant_id="t1",
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             intents=(),
             entities={},
             facts={"outstanding_balance_minor": 250_000},

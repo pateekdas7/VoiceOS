@@ -12,9 +12,9 @@ Verifies:
 from __future__ import annotations
 
 import asyncio
-import sys
 import os
-from unittest.mock import MagicMock, patch, AsyncMock
+import sys
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -99,7 +99,7 @@ class TestDrainLogic:
     @pytest.mark.asyncio
     async def test_drain_times_out_when_calls_persist(self) -> None:
         # drain_max_seconds=0.05 → very short; sessions never clear
-        outcome, polls = await self._simulate_drain(
+        outcome, _polls = await self._simulate_drain(
             [3] * 100, drain_max_seconds=0.05
         )
         assert outcome == "timeout"

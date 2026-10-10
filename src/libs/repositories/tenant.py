@@ -10,7 +10,7 @@ Architecture: V5 Ch2 (Multi-Tenant Architecture); V5 Ch3 (Tenant Lifecycle).
 
 from __future__ import annotations
 
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from typing import Any
 
 from ..contracts.models.tenant import IsolationProfile, Tenant, TenantStatus

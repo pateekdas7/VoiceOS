@@ -8,8 +8,6 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-import pytest
-
 from src.libs.contracts.models.pipeline import (
     CampaignLead,
     LeadImport,
@@ -299,7 +297,7 @@ class TestLeadIntakeService:
         return {"phone": "phone", "name": "name"}
 
     def test_valid_import_counts(self) -> None:
-        svc, lead_repo, import_repo = self._service()
+        svc, lead_repo, _import_repo = self._service()
         result = svc.ingest(
             TENANT, CAMPAIGN, "test.csv",
             self._rows(["9876543210", "9876543211", "9876543212"]),
@@ -313,7 +311,7 @@ class TestLeadIntakeService:
         assert len(lead_repo.saved) == 3
 
     def test_invalid_phones_rejected(self) -> None:
-        svc, lead_repo, import_repo = self._service()
+        svc, lead_repo, _import_repo = self._service()
         result = svc.ingest(
             TENANT, CAMPAIGN, "test.csv",
             self._rows(["9876543210", "12345", "abcdef"]),
@@ -326,7 +324,7 @@ class TestLeadIntakeService:
         assert len(lead_repo.saved) == 1
 
     def test_within_batch_duplicates(self) -> None:
-        svc, lead_repo, import_repo = self._service()
+        svc, lead_repo, _import_repo = self._service()
         result = svc.ingest(
             TENANT, CAMPAIGN, "test.csv",
             self._rows(["9876543210", "9876543210"]),  # same phone twice
@@ -341,7 +339,7 @@ class TestLeadIntakeService:
         assert dup_leads[0].rejection_reason == "DUPLICATE_PHONE"
 
     def test_cross_import_duplicates(self) -> None:
-        svc, lead_repo, import_repo = self._service(
+        svc, _lead_repo, _import_repo = self._service(
             existing_phones={"+919876543210"}  # already in campaign
         )
         result = svc.ingest(
@@ -354,8 +352,8 @@ class TestLeadIntakeService:
         assert result.valid == 0
 
     def test_import_record_created_and_completed(self) -> None:
-        svc, lead_repo, import_repo = self._service()
-        result = svc.ingest(
+        svc, _lead_repo, import_repo = self._service()
+        svc.ingest(
             TENANT, CAMPAIGN, "batch.csv",
             self._rows(["9876543210"]),
             self._mapping(), [],
@@ -369,7 +367,7 @@ class TestLeadIntakeService:
         assert completion["valid_rows"] == 1
 
     def test_leads_distributed_to_pipelines(self) -> None:
-        svc, lead_repo, import_repo = self._service()
+        svc, lead_repo, _import_repo = self._service()
         p1, p2 = PipelineId("p-001"), PipelineId("p-002")
         result = svc.ingest(
             TENANT, CAMPAIGN, "batch.csv",
@@ -386,7 +384,7 @@ class TestLeadIntakeService:
         assert p2_count == 2
 
     def test_phone_normalized_to_e164(self) -> None:
-        svc, lead_repo, import_repo = self._service()
+        svc, lead_repo, _import_repo = self._service()
         svc.ingest(
             TENANT, CAMPAIGN, "batch.csv",
             [{"phone": "9876543210", "name": "Test"}],

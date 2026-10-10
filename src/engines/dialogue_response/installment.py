@@ -15,10 +15,10 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class InstallmentPlanKind(str, Enum):
+class InstallmentPlanKind(StrEnum):
     LUMPSUM_FULL = "lumpsum_full"
     LUMPSUM_PARTIAL = "lumpsum_partial"
     MONTHLY = "monthly"

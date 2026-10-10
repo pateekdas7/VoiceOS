@@ -43,7 +43,7 @@ class SalesProductionActionDispatcher:
 
     def __init__(
         self,
-        callback_scheduler: "CallbackScheduler | None" = None,
+        callback_scheduler: CallbackScheduler | None = None,
     ) -> None:
         self._callback_scheduler = callback_scheduler
         # Per-instance dedup set: tracks call_ids for which we've already
@@ -54,7 +54,7 @@ class SalesProductionActionDispatcher:
     def dispatch(
         self,
         sales_state: dict | None,
-        context: "CustomerContext | None",
+        context: CustomerContext | None,
         tenant_id: str,
         call_id: str,
     ) -> SalesAction | None:
@@ -111,7 +111,7 @@ class SalesProductionActionDispatcher:
     def _handle_schedule_followup(
         self,
         sales_state: dict,
-        context: "CustomerContext | None",
+        context: CustomerContext | None,
         tenant_id: str,
         call_id: str,
     ) -> SalesAction | None:

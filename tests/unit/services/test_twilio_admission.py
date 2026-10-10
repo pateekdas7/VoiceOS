@@ -1,7 +1,7 @@
 """Phase I — Gate 3: production-grade Twilio Media Streams admission tests.
 
 Covers the two-stage admission protocol introduced to replace the broken
-X-Twilio-Signature-on-WSS design. The 13 scenarios A–M explicitly enumerate
+X-Twilio-Signature-on-WSS design. The 13 scenarios A-M explicitly enumerate
 the invariants a hostile or malformed caller must NOT be able to violate:
 
     A — Valid full sequence (HTTP /voice signed → mint → WSS start with
@@ -40,7 +40,6 @@ import base64
 import hashlib
 import hmac
 import re
-import time
 from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock
 
@@ -51,8 +50,8 @@ from src.libs.contracts.streaming import AudioClause, WordHypothesis
 from src.services.audio_preprocessing.service import AudioPreprocessorService
 from src.services.audio_session_manager.service import AudioSessionManagerService
 from src.services.media_gateway.admission import (
-    AdmissionRegistry,
     DEFAULT_ADMISSION_TTL_S,
+    AdmissionRegistry,
 )
 from src.services.media_gateway.service import MediaGatewayService
 from src.services.media_gateway.twilio_ws_entrypoint import (

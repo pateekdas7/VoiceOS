@@ -20,7 +20,6 @@ import time
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 from datetime import datetime
-from typing import Any
 
 import pytest
 
@@ -29,7 +28,6 @@ from src.libs.contracts.streaming import AudioClause, TokenChunk, VoiceConfig
 from src.services.llm_runtime.output_validator import ValidationResult
 from src.services.playback.output import AudioOutput
 from src.services.playback.scheduler import PlaybackScheduler
-from src.services.tts.clause_splitter import ClauseSplitter
 from src.services.tts.service import TTSService, TTSServiceConfig
 from src.services.tts.startup_buffer_gate import (
     StartupBufferGate,
@@ -37,7 +35,6 @@ from src.services.tts.startup_buffer_gate import (
     build_gate_from_env,
 )
 from src.services.tts.streaming_pipeline import TrueStreamingPipeline
-
 
 _TEST_SR = 8000
 _BYTES_PER_MS = _TEST_SR // 1000
@@ -49,7 +46,7 @@ _BYTES_PER_MS = _TEST_SR // 1000
 
 
 class _PermissiveValidator:
-    def validate(self, text: str, response_plan: ResponsePlan) -> ValidationResult:  # noqa: ARG002
+    def validate(self, text: str, response_plan: ResponsePlan) -> ValidationResult:
         return ValidationResult(valid=True, violations=[], fallback_response="")
 
 
@@ -86,7 +83,7 @@ class _RecordingAdapter:
         return int((t - self._t0) * 1000)
 
     async def synthesize_stream(
-        self, text_chunks: AsyncIterator[str], voice_config: VoiceConfig  # noqa: ARG002
+        self, text_chunks: AsyncIterator[str], voice_config: VoiceConfig
     ) -> AsyncIterator[AudioClause]:
         parts: list[str] = []
         async for c in text_chunks:
@@ -117,7 +114,7 @@ class _TimedAdapter:
         self.calls: list[str] = []
 
     async def synthesize_stream(
-        self, text_chunks: AsyncIterator[str], voice_config: VoiceConfig  # noqa: ARG002
+        self, text_chunks: AsyncIterator[str], voice_config: VoiceConfig
     ) -> AsyncIterator[AudioClause]:
         parts: list[str] = []
         async for c in text_chunks:
@@ -149,7 +146,7 @@ class _GatedAdapter:
         self.calls: list[str] = []
 
     async def synthesize_stream(
-        self, text_chunks: AsyncIterator[str], voice_config: VoiceConfig  # noqa: ARG002
+        self, text_chunks: AsyncIterator[str], voice_config: VoiceConfig
     ) -> AsyncIterator[AudioClause]:
         parts: list[str] = []
         async for c in text_chunks:
@@ -240,7 +237,7 @@ async def test_llm_streaming_preserved_across_all_modes() -> None:
         )
         # And the calls must be time-ordered (adapter call N started after
         # call N-1 was invoked).
-        for prev, nxt in zip(adapter.call_times, adapter.call_times[1:]):
+        for prev, nxt in zip(adapter.call_times, adapter.call_times[1:], strict=False):
             assert nxt >= prev
 
 
@@ -301,7 +298,7 @@ async def test_tts_dispatch_no_duplicate_synthesis() -> None:
 
 # ===========================================================================
 # STEP 4 — Buffer sweep table  (0 / 400 / 600 / 800 / 1000 ms)
-# STEP 5 — Mode comparison matrix (streaming / buffered × 4 / blocking)
+# STEP 5 — Mode comparison matrix (streaming / buffered x 4 / blocking)
 # ===========================================================================
 
 
@@ -482,7 +479,7 @@ async def test_bargein_case3_exactly_at_buffer_release() -> None:
     release loop's per-iteration check drops everything remaining."""
     p = PlaybackScheduler()
     gate = _gate_for(TTSMode.BUFFERED_STREAMING, p, 200)
-    # Enqueue 3×100ms clauses; 2 fill the threshold, 3rd triggers release.
+    # Enqueue 3x100ms clauses; 2 fill the threshold, 3rd triggers release.
     for i in range(2):
         c = AudioClause(
             audio_data=b"\x00" * (100 * _BYTES_PER_MS),
@@ -575,7 +572,7 @@ async def test_bargein_case6_during_second_sentence_tts() -> None:
             self.calls: list[str] = []
 
         async def synthesize_stream(
-            self, text_chunks: AsyncIterator[str], voice_config: VoiceConfig  # noqa: ARG002
+            self, text_chunks: AsyncIterator[str], voice_config: VoiceConfig
         ) -> AsyncIterator[AudioClause]:
             parts: list[str] = []
             async for c in text_chunks:
@@ -657,8 +654,8 @@ def test_audio_format_chain_24khz_pcm16le_to_8khz_mulaw_20ms_frames() -> None:
     """The exact production chain: 24 kHz PCM16LE (Veena wire) → AudioOutput
     → 8 kHz μ-law bytes → 160-byte 20 ms frames.
 
-      500 ms of 24 kHz PCM16LE = 24000 * 0.5 = 12000 samples × 2 bytes = 24000 bytes.
-      500 ms of 8 kHz μ-law    = 8000 * 0.5  =  4000 samples × 1 byte  =  4000 bytes.
+      500 ms of 24 kHz PCM16LE = 24000 * 0.5 = 12000 samples x 2 bytes = 24000 bytes.
+      500 ms of 8 kHz μ-law    = 8000 * 0.5  =  4000 samples x 1 byte  =  4000 bytes.
       500 ms → 25 Twilio frames of 160 bytes.
     """
     ao = AudioOutput()

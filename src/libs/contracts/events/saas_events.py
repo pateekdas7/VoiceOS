@@ -399,7 +399,6 @@ class OpsIntelligenceAnalysisPerformed(DomainEvent):
 
 __all__ = [
     "BillingInvoiceGenerated",
-    "OpsIntelligenceAnalysisPerformed",
     "CallDispositioned",
     "CallTransferred",
     "CallbackScheduled",
@@ -410,6 +409,7 @@ __all__ = [
     "GPUAllocated",
     "LLMGenerated",
     "LoanAccountUpdated",
+    "OpsIntelligenceAnalysisPerformed",
     "PTPBroken",
     "PTPCreated",
     "STTTranscribed",

@@ -12,3 +12,5 @@ extend = "pyproject.toml"
 # `import`-ed, so it keeps the literal spec filename and only needs N999
 # suppressed.
 "tests/chaos/chaos-scenarios.py" = ["N999"]
+"tests/**/*.py" = ["N802", "B017", "E402", "E741", "ERA001", "RUF012", "N814", "RUF100"]
+"src/services/web_api/api.py" = ["E402"]

@@ -7,7 +7,7 @@ so that:
 
   P4.1 — All clauses stay buffered inside the gate until the final clause
          arrives (``is_final=True``). Nothing reaches the PlaybackScheduler
-         mid-buffer. This eliminates the 337–353 ms inter-clause gaps that
+         mid-buffer. This eliminates the 337-353 ms inter-clause gaps that
          came from serial per-clause TTS POSTs and were audible as
          mid-word breaks during Gate 3C.
   P4.2 — On release, clauses reach the scheduler in monotonic FIFO order
@@ -28,11 +28,7 @@ so that:
 """
 from __future__ import annotations
 
-import asyncio
-import uuid
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
-from datetime import datetime
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
@@ -42,13 +38,14 @@ from src.libs.contracts.response_plan import ResponsePlan
 from src.libs.contracts.streaming import AudioClause, VoiceConfig
 from src.services.ai_governance.service import AIGovernanceService
 from src.services.conversation_engine.engine import (
-    CILPort, ConversationEngine, PromptBuilderPort,
+    CILPort,
+    ConversationEngine,
+    PromptBuilderPort,
 )
 from src.services.knowledge_retrieval.service import KnowledgeRetrievalService
 from src.services.llm_runtime.output_validator import ValidationResult
 from src.services.playback.scheduler import PlaybackScheduler
 from src.services.tts.startup_buffer_gate import TTSMode
-
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -247,7 +244,7 @@ def test_p4_ws_entrypoint_greeting_passes_response_level_buffer_mode() -> None:
     must pass a response-level buffering mode (``blocking`` OR the newer
     ``full_response``) to ``speak_scripted_text``. If a refactor drops
     that argument, this test fails immediately — otherwise the greeting
-    silently regresses to STREAMING and the 337–353 ms gaps return
+    silently regresses to STREAMING and the 337-353 ms gaps return
     without any test noticing until a live call is placed.
 
     Phase I Gate 1 widened the acceptable mode from BLOCKING (128-clause
@@ -255,6 +252,7 @@ def test_p4_ws_entrypoint_greeting_passes_response_level_buffer_mode() -> None:
     either satisfies the invariant this test locks in — no partial
     greeting audio hits the scheduler mid-buffer."""
     import inspect
+
     from src.services.media_gateway import twilio_ws_entrypoint
 
     src = inspect.getsource(twilio_ws_entrypoint)

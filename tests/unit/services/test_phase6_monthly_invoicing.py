@@ -9,11 +9,9 @@ Verifies the _previous_month_bounds() helper and the job's error handling:
 
 from __future__ import annotations
 
-import sys
 import os
+import sys
 from datetime import UTC, datetime
-
-import pytest
 
 # Import the helper directly from the runner module
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))

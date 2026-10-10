@@ -13,7 +13,7 @@ from .schema import LeadStage, SalesAction, SalesState
 
 def _outcome_from_stage(lead_stage: LeadStage) -> str:
     """Derive a call outcome label from the final LeadStage."""
-    _STAGE_OUTCOME: dict[LeadStage, str] = {
+    _STAGE_OUTCOME: dict[LeadStage, str] = {  # noqa: N806
         LeadStage.NEW: "no_engagement",
         LeadStage.ENGAGED: "engaged",
         LeadStage.QUALIFYING: "qualifying",
@@ -29,7 +29,7 @@ def _outcome_from_stage(lead_stage: LeadStage) -> str:
 
 def _recommended_next_action(next_action: SalesAction) -> str:
     """Human-readable recommended next action for CRM agents."""
-    _ACTION_LABEL: dict[SalesAction, str] = {
+    _ACTION_LABEL: dict[SalesAction, str] = {  # noqa: N806
         SalesAction.GREET: "Initial contact — greet customer",
         SalesAction.DISCOVER: "Discover customer needs",
         SalesAction.QUALIFY: "Continue qualification",

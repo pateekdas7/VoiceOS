@@ -32,7 +32,7 @@ import os
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from src.libs.contracts.streaming import AudioClause, VoiceConfig
+from src.libs.contracts.streaming import VoiceConfig
 from src.services.playback.output import AudioOutput
 from src.services.tts.service import TTSService
 

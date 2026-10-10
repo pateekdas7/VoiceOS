@@ -11,10 +11,8 @@ Inbound (LeadSquared → VoiceOS):
 """
 from __future__ import annotations
 
-import asyncio
 import logging
-from datetime import datetime, date
-from typing import Any, Dict, List, Optional
+from datetime import date, datetime
 from uuid import UUID
 
 import asyncpg
@@ -23,9 +21,9 @@ from .connectors.leadsquared import (
     LS_ACTIVITY_PHONE_CALL,
     LS_ACTIVITY_PTP,
     LS_ACTIVITY_SETTLEMENT,
-    LSCredentials,
     LeadSquaredConnector,
     LeadSquaredError,
+    LSCredentials,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,7 +44,7 @@ class CRMSyncService:
 
     # ── Credential helpers ────────────────────────────────────────────────────
 
-    async def _get_connector(self, tenant_id: str) -> Optional[LeadSquaredConnector]:
+    async def _get_connector(self, tenant_id: str) -> LeadSquaredConnector | None:
         """Load LS credentials for tenant and return a configured connector, or None."""
         row = await self._pool.fetchrow(
             """SELECT access_key, secret_key, api_base_url
@@ -62,7 +60,7 @@ class CRMSyncService:
             api_base_url=row['api_base_url'],
         ))
 
-    async def _get_field_mapping(self, tenant_id: str) -> Dict[str, str]:
+    async def _get_field_mapping(self, tenant_id: str) -> dict[str, str]:
         """Return voiceos_field → ls_field mapping (tenant overrides + defaults)."""
         rows = await self._pool.fetch(
             """SELECT d.voiceos_field,
@@ -82,8 +80,8 @@ class CRMSyncService:
         entity_type: str,
         entity_id:   str,
         status:      str = 'PENDING',
-        ls_lead_id:  Optional[str] = None,
-        error:       Optional[str] = None,
+        ls_lead_id:  str | None = None,
+        error:       str | None = None,
     ) -> str:
         """Insert or update a sync_log record. Returns sync_id."""
         row = await self._pool.fetchrow(
@@ -350,10 +348,10 @@ class CRMSyncService:
     async def import_leads(
         self,
         tenant_id:   str,
-        campaign_id: Optional[str],
-        filters:     List[Dict],
+        campaign_id: str | None,
+        filters:     list[dict],
         max_leads:   int = 10_000,
-    ) -> Dict[str, int]:
+    ) -> dict[str, int]:
         """
         Pull leads from LeadSquared and import them into VoiceOS as customers + leads.
         Returns counts: {fetched, created, updated, skipped}.
@@ -420,7 +418,7 @@ class CRMSyncService:
     async def _upsert_customer_from_ls(
         self,
         tenant_id:   str,
-        campaign_id: Optional[str],
+        campaign_id: str | None,
         ls_lead,
     ) -> str:
         """

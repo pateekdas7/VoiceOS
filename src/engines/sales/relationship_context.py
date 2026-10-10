@@ -32,7 +32,7 @@ class RelationshipContextBuilder:
     """
 
     @staticmethod
-    def build_block(relationship_memory: "RelationshipMemory | None") -> str:
+    def build_block(relationship_memory: RelationshipMemory | None) -> str:
         """Return a compact prompt block with historical context.
 
         Returns empty string if relationship_memory is None or has no history.
@@ -89,4 +89,4 @@ class RelationshipContextBuilder:
             "HISTORICAL CUSTOMER CONTEXT "
             "(from previous calls — do NOT treat as current state):"
         )
-        return "\n".join([header] + lines)
+        return "\n".join([header, *lines])

@@ -6,8 +6,6 @@ tracking, field confidence tracking.
 
 from __future__ import annotations
 
-import pytest
-
 from src.engines.entity_extraction.result import ExtractedEntities
 from src.engines.intent.result import IntentResult
 from src.engines.risk.result import RiskAssessment
@@ -16,7 +14,6 @@ from src.engines.sales.schema import (
     FinancingStatus,
     LeadIntent,
     PropertyPurpose,
-    QualificationStatus,
     QuestionField,
     SalesState,
     Timeline,
@@ -25,7 +22,6 @@ from src.engines.sales.state_updater import SalesStateUpdater
 from src.engines.strategy.actions import StrategyAction
 from src.engines.strategy.engine import StrategySelection
 from src.libs.contracts.response_plan import IntentLabel
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -45,7 +41,6 @@ def _intent(label: IntentLabel, span: str = "test utterance") -> IntentResult:
 
 
 def _risk(escalation: bool = False, handoff: bool = False) -> RiskAssessment:
-    from src.engines.risk.flags import RiskFlag
     return RiskAssessment(flags=[], escalation_required=escalation, human_handoff_required=handoff)
 
 
@@ -202,7 +197,6 @@ def test_score_bounded_0_to_100():
 
 def test_score_decreases_with_objections():
     """Objections reduce the score (each objection -5)."""
-    from src.engines.risk.flags import RiskFlag
     state_no_obj = _update(None, "Noida mein 3BHK, 80 lakh.")
     # Add objection manually to test score deduction
     state_no_obj.objection_count = 0

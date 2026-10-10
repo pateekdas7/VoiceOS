@@ -54,7 +54,6 @@ from src.services.tts.startup_buffer_gate import (
 )
 from src.services.tts.streaming_pipeline import TrueStreamingPipeline
 
-
 _TEST_SR = 8000
 _BYTES_PER_MS = _TEST_SR // 1000
 
@@ -76,7 +75,7 @@ def _clause(ms: int, *, idx: int = 0, is_final: bool = False, generation: int = 
 
 
 class _PermissiveValidator:
-    def validate(self, text: str, response_plan: ResponsePlan) -> ValidationResult:  # noqa: ARG002
+    def validate(self, text: str, response_plan: ResponsePlan) -> ValidationResult:
         return ValidationResult(valid=True, violations=[], fallback_response="")
 
 
@@ -88,7 +87,7 @@ class _SizedRecordingTTSAdapter:
         self.calls: list[str] = []
 
     async def synthesize_stream(
-        self, text_chunks: AsyncIterator[str], voice_config: VoiceConfig  # noqa: ARG002
+        self, text_chunks: AsyncIterator[str], voice_config: VoiceConfig
     ) -> AsyncIterator[AudioClause]:
         parts: list[str] = []
         async for c in text_chunks:
@@ -124,7 +123,7 @@ class _CountingTTSAdapter:
         self.call_events: list[asyncio.Event] = []
 
     async def synthesize_stream(
-        self, text_chunks: AsyncIterator[str], voice_config: VoiceConfig  # noqa: ARG002
+        self, text_chunks: AsyncIterator[str], voice_config: VoiceConfig
     ) -> AsyncIterator[AudioClause]:
         parts: list[str] = []
         async for c in text_chunks:
@@ -158,7 +157,7 @@ class _GatedTTSAdapter:
         self.calls: list[str] = []
 
     async def synthesize_stream(
-        self, text_chunks: AsyncIterator[str], voice_config: VoiceConfig  # noqa: ARG002
+        self, text_chunks: AsyncIterator[str], voice_config: VoiceConfig
     ) -> AsyncIterator[AudioClause]:
         parts: list[str] = []
         async for c in text_chunks:
@@ -276,7 +275,7 @@ def test_gate_propagates_scope_generation_from_build_gate_from_env() -> None:
 
 
 # ===========================================================================
-# STEP 6 — Mode execution matrix (3 modes × happy-path pipeline)
+# STEP 6 — Mode execution matrix (3 modes x happy-path pipeline)
 # ===========================================================================
 
 
@@ -554,7 +553,7 @@ async def test_production_send_clause_stable_generation_sends_all_frames() -> No
     orch = _bare_orchestrator(p, adapter)
 
     # 400 ms of PCM16LE @ 24 kHz (the real Veena rate) — AudioOutput.convert
-    # resamples to 8 kHz μ-law: 8000 samples/s × 0.4 s = 3200 μ-law bytes
+    # resamples to 8 kHz μ-law: 8000 samples/s x 0.4 s = 3200 μ-law bytes
     # = 20 frames of 160 bytes.
     clause = AudioClause(
         audio_data=b"\x00" * (24000 * 2 * 400 // 1000),  # 400 ms PCM16LE 24 kHz

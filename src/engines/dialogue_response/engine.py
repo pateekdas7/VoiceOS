@@ -116,7 +116,7 @@ def _format_date_for_speech(iso_date: str) -> str:
     already been resolved to a real calendar date by EntityExtractor.
     """
     try:
-        year, month, day = (int(p) for p in iso_date.split("-"))
+        _year, month, day = (int(p) for p in iso_date.split("-"))
         return f"{day} {_ENGLISH_MONTHS[month - 1]}"
     except (ValueError, IndexError):
         return iso_date

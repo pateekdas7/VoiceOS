@@ -36,11 +36,8 @@ from .models import (
     AuditEntry,
     DiagnosticTurn,
     IncidentRecord,
-    IncidentSeverity,
     IncidentStatus,
     IngestAlert,
-    PolicyLevel,
-    ValidationOutcome,
 )
 from .notifications.engine import NotificationEngine
 from .package_builder import IncidentPackageBuilder
@@ -108,7 +105,7 @@ class SystemXController:
             return
 
         self._in_flight.add(incident_id)
-        asyncio.ensure_future(self._run_incident(incident_id))
+        _task = asyncio.ensure_future(self._run_incident(incident_id))  # noqa: RUF006
 
     # ------------------------------------------------------------------
     # Lifecycle wrapper

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from .classifier import IncidentClassifier
-from .models import IngestAlert, IncidentSeverity
+from .models import IncidentSeverity, IngestAlert
 
 _CORRELATION_WINDOW = timedelta(minutes=5)
 _MAX_INCIDENT_AGE = timedelta(hours=2)

@@ -30,12 +30,12 @@ Architecture: V2 Ch13 (dialogue state); V2 Ch3 (IntentEngine).
 from __future__ import annotations
 
 import re
-from enum import Enum
+from enum import StrEnum
 
 from src.libs.contracts.response_plan import IntentLabel, ResponsePlan
 
 
-class Bucket(str, Enum):
+class Bucket(StrEnum):
     FAREWELL = "farewell"
     LOAN_DENIAL = "loan_denial"
     REPEAT = "repeat"

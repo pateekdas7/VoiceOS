@@ -16,7 +16,7 @@ import sys
 sys.path.insert(0, "/opt/voiceos/app")
 
 
-def create_app():  # noqa: ANN201 — factory for uvicorn --factory
+def create_app():
     import psycopg2
 
     from src.libs.audit.logger import AuditLogger

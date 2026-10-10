@@ -50,7 +50,7 @@ class HealthVerifier:
 
     async def all_healthy(self, health_snapshot: dict[str, object]) -> bool:
         """Return True only if every service reports healthy."""
-        for svc, state in health_snapshot.items():
+        for _svc, state in health_snapshot.items():
             if isinstance(state, dict) and state.get("status") != "healthy":
                 return False
         return True

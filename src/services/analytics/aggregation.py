@@ -122,4 +122,4 @@ class DailyAggregationJob:
         return self._analytics_daily.upsert(rollup)
 
 
-__all__ = ["DailyAggregationJob", "PTPAggregationPort", "LoanDPDAggregationPort"]
+__all__ = ["DailyAggregationJob", "LoanDPDAggregationPort", "PTPAggregationPort"]

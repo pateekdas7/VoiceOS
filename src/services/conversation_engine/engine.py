@@ -25,7 +25,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
 
 from src.libs.ai_safety.prompt_injection import PromptInjectionDetector
@@ -41,6 +41,8 @@ from src.libs.idempotency.guard import IdempotencyGuard
 from src.libs.idempotency.key_builder import IdempotencyKeyBuilder
 from src.libs.invariants.guards import assert_ri4_commit_before_act
 from src.libs.observability.logger import StructuredLogger
+from src.libs.observability.metrics import call_count_total as _call_count_total
+from src.libs.observability.metrics import negotiation_outcome_total as _negotiation_outcome_total
 from src.libs.observability.tracer import OTelTracer
 from src.libs.state.snapshot import Snapshot
 from src.services.ai_config.model_config import ModelConfigService
@@ -65,9 +67,6 @@ from src.services.policy_engine.service import PolicyEngineService
 from src.services.tts.service import TTSService
 from src.services.tts.startup_buffer_gate import StartupBufferGate, TTSMode
 from src.services.tts.streaming_pipeline import TrueStreamingPipeline
-
-from src.libs.observability.metrics import call_count_total as _call_count_total
-from src.libs.observability.metrics import negotiation_outcome_total as _negotiation_outcome_total
 
 from .metrics import red as _metrics
 from .session_state import ConversationSessionState
@@ -99,7 +98,7 @@ def _make_csi_tracker() -> Any:
     src/engines/ (boundary Rule 1). Deferred import so the import only fires
     the first time a call needs a fresh tracker — zero cost for callers that
     never wire conversation_state_tracker at all."""
-    from src.engines.conversation_state.engine import ConversationStateIntelligence  # noqa: PLC0415
+    from src.engines.conversation_state.engine import ConversationStateIntelligence
 
     return ConversationStateIntelligence()
 
@@ -113,7 +112,7 @@ def _default_response_plan() -> ResponsePlan:
         version=1,
         call_id="",
         tenant_id="",
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -499,8 +498,8 @@ class ConversationEngine:
         _tenant_id = self._call_tenant_ids.get(call_id, "")
         if self._call_summary_repository is not None and customer_id:
             try:
-                from src.engines.sales.post_call_summary import generate_post_call_summary  # noqa: PLC0415
-                from src.engines.sales.schema import SalesState  # noqa: PLC0415
+                from src.engines.sales.post_call_summary import generate_post_call_summary
+                from src.engines.sales.schema import SalesState
                 _wm_data: dict | None = None
                 if self._working_memory_store is not None:
                     try:
@@ -634,7 +633,7 @@ class ConversationEngine:
         intent_history: list[str] | None = None,
         identity_verified: bool = False,
         silence_duration_ms: int = 0,
-        cancel_event: "asyncio.Event | None" = None,
+        cancel_event: asyncio.Event | None = None,
     ) -> list[AudioClause]:
         """Process one customer turn end-to-end.
 
@@ -685,7 +684,7 @@ class ConversationEngine:
         identity_verified: bool,
         silence_duration_ms: int,
         trace_id: str = "",
-        cancel_event: "asyncio.Event | None" = None,
+        cancel_event: asyncio.Event | None = None,
     ) -> list[AudioClause]:
         """The actual per-turn pipeline — see :meth:`handle_turn` for the public contract."""
         _t0 = time.monotonic()
@@ -710,7 +709,7 @@ class ConversationEngine:
         identity_verified: bool,
         silence_duration_ms: int,
         trace_id: str = "",
-        cancel_event: "asyncio.Event | None" = None,
+        cancel_event: asyncio.Event | None = None,
     ) -> list[AudioClause]:
         # Step 0 — Sprint-020 (V4 Ch13 §13.7): detective prompt-injection screen.
         # Structural containment (Law of Authority) is the real defense; this
@@ -772,8 +771,11 @@ class ConversationEngine:
         _new_sales_state = response_plan.sales_state
         if _new_sales_state and _prev_sales_state:
             try:
-                from src.engines.sales.pipeline_transitions import InvalidTransitionError, PipelineTransitionEngine  # noqa: PLC0415
-                from src.engines.sales.schema import LeadStage  # noqa: PLC0415
+                from src.engines.sales.pipeline_transitions import (
+                    InvalidTransitionError,
+                    PipelineTransitionEngine,
+                )
+                from src.engines.sales.schema import LeadStage
                 _prev_stage_val = _prev_sales_state.get("lead_stage")
                 _new_stage_val = _new_sales_state.get("lead_stage")
                 if _prev_stage_val and _new_stage_val and _prev_stage_val != _new_stage_val:
@@ -810,7 +812,7 @@ class ConversationEngine:
         _rm = self._relationship_memories.get(turn.call_id)
         if _rm is not None:
             try:
-                from src.engines.sales.relationship_context import RelationshipContextBuilder  # noqa: PLC0415
+                from src.engines.sales.relationship_context import RelationshipContextBuilder
                 _ctx_block = RelationshipContextBuilder.build_block(_rm)
                 if _ctx_block:
                     prompt_text = f"{prompt_text}\n\n{_ctx_block}"
@@ -857,7 +859,7 @@ class ConversationEngine:
         _handoff_requested = False
         if self._sales_action_dispatcher is not None and response_plan.sales_state:
             try:
-                from src.engines.sales.schema import SalesAction  # noqa: PLC0415
+                from src.engines.sales.schema import SalesAction
                 _dispatched = self._sales_action_dispatcher.dispatch(
                     response_plan.sales_state,
                     context,
@@ -1060,7 +1062,7 @@ class ConversationEngine:
         # constructing a per-turn StartupBufferGate at the requested mode.
         # The greeting caller passes "blocking" so all greeting clauses are
         # held until is_final=True, then released FIFO — this eliminates the
-        # 337–353ms inter-clause gaps that came from serial per-clause TTS
+        # 337-353ms inter-clause gaps that came from serial per-clause TTS
         # HTTP POSTs and were audible as mid-word breaks in Gate 3C.
         gate: StartupBufferGate | None = None
         if tts_mode is not None:
@@ -1096,7 +1098,7 @@ class ConversationEngine:
         playback: PlaybackScheduler,
         customer_name: str = "",
         tts_mode: str | None = None,
-        cancel_event: "asyncio.Event | None" = None,
+        cancel_event: asyncio.Event | None = None,
     ) -> list[AudioClause]:
         """The original LLM token-streaming path (Sprint-009-018), extracted
         so it can be invoked either as the whole-call fallback (no

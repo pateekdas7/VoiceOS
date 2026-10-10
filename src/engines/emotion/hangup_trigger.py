@@ -34,7 +34,7 @@ speak the returned farewell via ``speak_scripted_text()`` and then
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from src.libs.contracts.streaming import Sentiment
 

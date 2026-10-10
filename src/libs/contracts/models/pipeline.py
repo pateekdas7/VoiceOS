@@ -107,7 +107,7 @@ class CampaignLead(BaseModel):
     email: str | None = None
     language: LeadLanguage = LeadLanguage.HINDI
     score: int = Field(default=0, ge=0, le=100)
-    """Lead priority score 0–100; higher = more urgent. Drives pipeline distribution order."""
+    """Lead priority score 0-100; higher = more urgent. Drives pipeline distribution order."""
     status: LeadStatus = LeadStatus.NEW
     queue_status: LeadQueueStatus = LeadQueueStatus.PENDING
     is_duplicate: bool = False

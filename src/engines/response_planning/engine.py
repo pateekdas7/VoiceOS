@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import date, datetime, UTC
+from datetime import UTC, date, datetime
 
 from src.libs.contracts.context import CustomerContext
 from src.libs.contracts.decision import (
@@ -79,8 +79,6 @@ from ..strategy.engine import StrategyEngine, StrategySelection
 try:
     from ..sales.action_planner import SalesActionPlanner
     from ..sales.question_selector import QuestionSelector
-    from ..sales.schema import SalesState
-    from ..sales.state_updater import SalesStateUpdater
 
     _SALES_AVAILABLE = True
 except ImportError:
@@ -320,9 +318,9 @@ class ResponsePlanningEngine:
         adaptive_conv_engine: AdaptiveConversationEngine,
         # Phase 2: Sales Intelligence Layer — all optional so existing callers
         # and tests remain unaffected (None = sales layer disabled).
-        sales_state_updater: "SalesStateUpdater | None" = None,
-        question_selector: "QuestionSelector | None" = None,
-        sales_action_planner: "SalesActionPlanner | None" = None,
+        sales_state_updater: SalesStateUpdater | None = None,
+        question_selector: QuestionSelector | None = None,
+        sales_action_planner: SalesActionPlanner | None = None,
     ) -> None:
         self._intent = intent_engine
         self._entity = entity_extractor

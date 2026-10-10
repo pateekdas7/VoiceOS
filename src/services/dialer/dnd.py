@@ -24,8 +24,9 @@ from __future__ import annotations
 import csv
 import logging
 import re
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 _log = logging.getLogger("voiceos.dialer.dnd")
 
@@ -59,7 +60,7 @@ class NullPhoneDND:
     NDNC CSV isn't available.
     """
 
-    def is_on_dnd(self, phone: str) -> bool:  # noqa: ARG002 — port shape
+    def is_on_dnd(self, phone: str) -> bool:
         return False
 
 
@@ -90,7 +91,7 @@ class CsvPhoneDNDList:
         _log.info("CsvPhoneDNDList loaded phones=%d", len(self._phones))
 
     @classmethod
-    def from_csv(cls, path: str | Path) -> "CsvPhoneDNDList":
+    def from_csv(cls, path: str | Path) -> CsvPhoneDNDList:
         """Construct from a CSV file.
 
         The first column of each row is treated as the phone number.

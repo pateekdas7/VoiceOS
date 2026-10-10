@@ -1,11 +1,10 @@
 """LeadSquared REST API connector for VoiceOS Phase 4 CRM integration."""
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import httpx
 
@@ -30,8 +29,8 @@ class LSLead:
     lead_id:  str
     phone:    str
     name:     str
-    email:    Optional[str] = None
-    fields:   Dict[str, Any] = field(default_factory=dict)
+    email:    str | None = None
+    fields:   dict[str, Any] = field(default_factory=dict)
 
 
 class LeadSquaredConnector:
@@ -50,16 +49,16 @@ class LeadSquaredConnector:
             headers={'Content-Type': 'application/json'},
         )
 
-    def _auth(self) -> Dict[str, str]:
+    def _auth(self) -> dict[str, str]:
         return {'accessKey': self._creds.access_key, 'secretKey': self._creds.secret_key}
 
-    async def _get(self, path: str, params: Optional[Dict] = None) -> Any:
+    async def _get(self, path: str, params: dict | None = None) -> Any:
         p = {**(params or {}), **self._auth()}
         resp = await self._client.get(path, params=p)
         self._raise_for_status(resp)
         return resp.json()
 
-    async def _post(self, path: str, body: Any, params: Optional[Dict] = None) -> Any:
+    async def _post(self, path: str, body: Any, params: dict | None = None) -> Any:
         p = {**(params or {}), **self._auth()}
         resp = await self._client.post(path, json=body, params=p)
         self._raise_for_status(resp)
@@ -74,7 +73,7 @@ class LeadSquaredConnector:
 
     # ── Lead lookup ───────────────────────────────────────────────────────────
 
-    async def search_by_phone(self, phone: str) -> Optional[LSLead]:
+    async def search_by_phone(self, phone: str) -> LSLead | None:
         """Find a LeadSquared lead by mobile phone number. Returns None if not found."""
         try:
             data = await self._post(
@@ -104,7 +103,7 @@ class LeadSquaredConnector:
             logger.warning('LS search_by_phone failed phone=%s: %s', phone, e)
             return None
 
-    async def get_lead(self, ls_lead_id: str) -> Optional[LSLead]:
+    async def get_lead(self, ls_lead_id: str) -> LSLead | None:
         """Fetch a single lead by its ProspectID."""
         try:
             data = await self._get(
@@ -130,8 +129,8 @@ class LeadSquaredConnector:
         ls_lead_id:     str,
         activity_event: int,
         note:           str,
-        extra_fields:   List[Dict[str, str]],
-        activity_dt:    Optional[datetime] = None,
+        extra_fields:   list[dict[str, str]],
+        activity_dt:    datetime | None = None,
     ) -> str:
         """
         Post an activity (call outcome, PTP, settlement) to a LS lead.
@@ -153,7 +152,7 @@ class LeadSquaredConnector:
     async def update_lead_fields(
         self,
         ls_lead_id: str,
-        attributes: List[Dict[str, str]],
+        attributes: list[dict[str, str]],
     ) -> bool:
         """
         Update custom fields on a LS lead.
@@ -170,11 +169,11 @@ class LeadSquaredConnector:
 
     async def fetch_leads_paginated(
         self,
-        filters:       List[Dict],
+        filters:       list[dict],
         start:         int = 0,
         rows:          int = 200,
-        columns:       Optional[List[str]] = None,
-    ) -> List[LSLead]:
+        columns:       list[str] | None = None,
+    ) -> list[LSLead]:
         """
         Fetch a page of leads from LeadSquared using filter conditions.
         filters: [{"Attribute": {"FieldName": "...", "Operator": "Equal", "Value": "..."}}]

@@ -17,17 +17,17 @@ Usage:
 """
 
 import argparse
+import hashlib
+import hmac
+import json
 import os
+import signal
+import subprocess
 import sys
 import time
-import subprocess
-import signal
-import json
-import hmac
-import hashlib
+import urllib.error
 import urllib.parse
 import urllib.request
-import urllib.error
 
 DRY_RUN = True  # overridden by --execute
 
@@ -110,7 +110,7 @@ def scenario_s2_crash_before_active_calls(pg_dsn: str) -> bool:
     status = result.stdout.strip()
 
     if status == "FAILED":
-        log(f"PASS: Orphaned attempt reconciled to FAILED")
+        log("PASS: Orphaned attempt reconciled to FAILED")
         return True
     else:
         log(f"FAIL: Orphaned attempt has status={status}, expected FAILED")
@@ -155,7 +155,7 @@ def scenario_s3_crash_after_twilio(pg_dsn: str) -> bool:
     failure_class = row[1].strip() if len(row) > 1 else ""
 
     if status == "FAILED" and "CRASH_INITIATED" in failure_class:
-        log(f"PASS: Reconciled to FAILED/CRASH_INITIATED")
+        log("PASS: Reconciled to FAILED/CRASH_INITIATED")
         return True
     else:
         log(f"FAIL: status={status}, failure_class={failure_class}")

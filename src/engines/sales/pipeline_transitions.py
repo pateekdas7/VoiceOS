@@ -53,7 +53,7 @@ class PipelineTransitionEngine:
 
     # Allowed forward (and intentional backward) transitions.
     # Terminal states map to empty frozensets.
-    _ALLOWED: dict[LeadStage, frozenset[LeadStage]] = {
+    _ALLOWED: dict[LeadStage, frozenset[LeadStage]] = {  # noqa: RUF012
         LeadStage.NEW: frozenset({LeadStage.ENGAGED, LeadStage.DISQUALIFIED}),
         LeadStage.ENGAGED: frozenset({
             LeadStage.QUALIFYING,

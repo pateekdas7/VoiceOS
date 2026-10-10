@@ -16,7 +16,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.libs.contracts.context import ConsentStatus, ContactInfo, CustomerContext, LoanSummary, OutstandingBalance, PartyInfo
+from src.libs.contracts.context import (
+    ConsentStatus,
+    ContactInfo,
+    CustomerContext,
+    LoanSummary,
+    OutstandingBalance,
+    PartyInfo,
+)
 from src.libs.contracts.primitives import AccountId, Currency, CustomerId, Money, TenantId
 from src.libs.contracts.response_plan import ResponsePlan
 from src.libs.contracts.streaming import AudioClause, VoiceConfig

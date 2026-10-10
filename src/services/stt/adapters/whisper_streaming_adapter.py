@@ -5,7 +5,6 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncIterator
-from typing import Any
 from urllib.parse import urlparse, urlunparse
 
 from src.libs.circuit_breaker.breaker import CircuitBreaker

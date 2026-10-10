@@ -1,8 +1,6 @@
 """Notification message templates for System X incidents."""
 from __future__ import annotations
 
-from datetime import datetime
-
 from ..models import ClaudeAnalysis, IncidentRecord, IncidentSeverity
 
 

@@ -41,10 +41,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 # With `from __future__ import annotations` all annotations are lazy strings,
 # so no module-level import is required to satisfy the Python runtime.
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     # Used only in type annotations (resolved as strings at runtime).
-    from src.engines.intent.model import IntentModel  # noqa: F401
-    from src.libs.contracts.turn import TurnInput  # noqa: F401
+    from src.engines.intent.model import IntentModel
+    from src.libs.contracts.turn import TurnInput
 
 # ---------------------------------------------------------------------------
 # Transcript data model
@@ -84,7 +85,7 @@ class TranscriptCustomerContext:
     loan_id: str
     due_date: str                   # ISO-8601 date string e.g. "2026-08-01"
     calls_today_count: int
-    call_hour: int                  # 0–23 local hour
+    call_hour: int                  # 0-23 local hour
 
 
 @dataclass
@@ -313,7 +314,7 @@ class RBIComplianceChecker:
                 turn_index=None,
                 description=(
                     f"Call placed at hour {ctx.call_hour:02d}:xx, outside RBI permitted window "
-                    f"{_RBI_HOUR_MIN:02d}:00–{_RBI_HOUR_MAX:02d}:00 (RBI-CALLING-HOURS)"
+                    f"{_RBI_HOUR_MIN:02d}:00-{_RBI_HOUR_MAX:02d}:00 (RBI-CALLING-HOURS)"
                 ),
             ))
 
@@ -354,7 +355,7 @@ class RBIComplianceChecker:
 class NegotiationEnvelopeChecker:
     """Verify all agent settlement offers lie within the configured floor/ceiling.
 
-    The floor is `minimum_settlement_pct × outstanding_amount_inr`.
+    The floor is `minimum_settlement_pct x outstanding_amount_inr`.
     The ceiling is the full `outstanding_amount_inr`.
 
     Any agent offer (negotiation_offer_inr in a turn) that falls below the
@@ -462,10 +463,16 @@ class IntentAccuracyEvaluator:
 
 
 def _make_turn_input(turn: TranscriptTurn, call_id: str) -> TurnInput:
-    from datetime import UTC, datetime as dt
-    from src.libs.contracts.turn import (  # noqa: PLC0415
+    from datetime import UTC
+    from datetime import datetime as dt
+
+    from src.libs.contracts.turn import (
         TurnInput as _TurnInput,
+    )
+    from src.libs.contracts.turn import (
         TurnRole as _TurnRole,
+    )
+    from src.libs.contracts.turn import (
         UtteranceSegment as _UtteranceSegment,
     )
     text = turn.text

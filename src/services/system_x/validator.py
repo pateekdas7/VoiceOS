@@ -110,7 +110,7 @@ class ClaudeResponseValidator:
             return ValidationResult(
                 outcome=ValidationOutcome.SCHEMA_ERROR,
                 valid=False,
-                message=f"recovery_plan must have {_MIN_PLAN_STEPS}–{_MAX_PLAN_STEPS} steps, got {len(plan)}",
+                message=f"recovery_plan must have {_MIN_PLAN_STEPS}-{_MAX_PLAN_STEPS} steps, got {len(plan)}",
             )
 
         # --- Numeric bounds ---

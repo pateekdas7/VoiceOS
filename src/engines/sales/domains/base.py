@@ -76,4 +76,4 @@ class DomainConfig(ABC):
 
         Override to give some fields higher weight in the heuristic score.
         """
-        return {f: 10 for f in self.required_fields}
+        return dict.fromkeys(self.required_fields, 10)

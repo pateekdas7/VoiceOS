@@ -20,7 +20,6 @@ from src.libs.contracts.audio import AudioConfig, AudioFrame, Encoding, SampleRa
 from src.libs.contracts.events.audio_events import BargeinDetected, VADSpeechEnd, VADSpeechStart
 from src.libs.contracts.primitives import TenantId
 from src.libs.contracts.streaming import AudioClause
-from src.libs.contracts.turn import TurnInput, TurnRole
 from src.services.media_gateway.twilio_ws_entrypoint import (
     CallOrchestrator,
     SharedCallDependencies,

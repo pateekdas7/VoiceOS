@@ -41,7 +41,6 @@ from src.services.media_gateway.twilio_ws_entrypoint import (
 # any change to Twilio signature semantics is caught in one place.
 from tests.unit.services.test_twilio_admission import (
     _ACCOUNT_SID,
-    _PUBLIC_HTTP_BASE,
     _PUBLIC_WS_BASE,
     _default_call_params,
     _post_voice,

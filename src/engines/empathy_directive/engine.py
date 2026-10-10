@@ -44,56 +44,56 @@ _PATTERNS: tuple[tuple[EmpathyState, tuple[str, ...]], ...] = (
         "tabiyat kharab", "tabiyat kharaab", "bimari", "bimar", "hospital",
         "operation", "ilaaj", "ilaj", "medical",
         "तबियत", "बीमारी", "बीमार", "अस्पताल", "इलाज",
-    )),  # fmt: skip
+    )),
     (EmpathyState.HARDSHIP_JOB_LOSS, (
         "job chali gayi", "job chali gayee", "naukri chali gayi",
         "naukri chhut gayi", "job nahi", "kaam chhut", "layoff", "nikal diya",
         "नौकरी चली गई", "नौकरी छूट गई", "काम छूट गया",
-    )),  # fmt: skip
+    )),
     (EmpathyState.HARDSHIP_SALARY_DLY, (
         "salary nahi aayi", "salary abhi tak nahi", "salary delay",
         "salary late", "salary aane wali hai", "salary aayegi",
         "salary ke baad", "salary aane par", "pagar nahi aayi",
         "सैलरी नहीं", "पगार नहीं", "पगार आने पर", "सैलरी आने पर",
         "सैलरी के बाद",
-    )),  # fmt: skip
+    )),
     (EmpathyState.HARDSHIP_FAMILY, (
         "ghar mein problem", "ghar ki problem", "family problem",
         "papa bimar", "maa bimar", "bacche", "shaadi",
         "घर में", "घर की problem", "परिवार", "बच्चे",
-    )),  # fmt: skip
+    )),
     (EmpathyState.HARDSHIP_FINANCIAL, (
         "paise nahi hain", "paise nahi hai", "paisa nahi", "paisa nahin",
         "abhi paise", "kuchh nahi hai", "kuch bhi nahi", "tight hai",
         "budget tight", "haath tang", "haath khaali", "financial problem",
         "पैसे नहीं", "पैसा नहीं", "पैसा नहीं है", "हाथ तंग", "हाथ खाली",
-    )),  # fmt: skip
+    )),
     (EmpathyState.FRUSTRATION, (
         "arre yaar", "arey", "kitni baar", "har baar", "kya baat",
         "chhod do", "chodo", "छोड़ो", "छोड़ दो", "कितनी बार",
-    )),  # fmt: skip
+    )),
     (EmpathyState.ANXIETY, (
         "tension", "worried", "chinta", "pareshan", "chintit",
         "टेंशन", "चिंता", "परेशान",
-    )),  # fmt: skip
+    )),
     (EmpathyState.RESIGNATION, (
         "kya karun", "kya karoon", "majboor", "majboori", "koi option",
         "kuchh nahi kar sakta", "क्या करूं", "मजबूर", "मजबूरी",
-    )),  # fmt: skip
+    )),
     (EmpathyState.ANGER, (
         "chup", "band karo", "phone rakh", "harass",
         "चुप", "बंद करो", "फोन रखो",
-    )),  # fmt: skip
+    )),
     (EmpathyState.GRATITUDE, (
         "thank you", "thanks", "shukriya", "dhanyavaad",
         "शुक्रिया", "धन्यवाद",
-    )),  # fmt: skip
+    )),
     (EmpathyState.RELIEF, (
         # Also plain acks; hardship/anger buckets are checked first above so
         # these only match when no stronger hardship signal is present.
         "achha theek", "theek hai bhai", "hmm okay",
         "अच्छा ठीक", "ठीक है भाई",
-    )),  # fmt: skip
+    )),
 )
 
 
@@ -145,7 +145,6 @@ _ACK: dict[EmpathyState, str] = {
 }
 
 _PROSODY: dict[EmpathyState, tuple[float, float, int]] = {
-    # state:                          (rate_delta, energy_delta, break_ms)
     EmpathyState.NEUTRAL: (0.00, 0.00, 0),
     EmpathyState.HARDSHIP_FINANCIAL: (-0.08, -0.10, 350),
     EmpathyState.HARDSHIP_ILLNESS: (-0.10, -0.12, 500),

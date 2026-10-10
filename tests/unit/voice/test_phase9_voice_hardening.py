@@ -22,9 +22,9 @@ failed = 0
 results: list[tuple[str, str, str]] = []
 
 
-def _verify(name: str) -> "object":
+def _verify(name: str) -> object:
     """Decorator-style test runner."""
-    def _dec(fn: "object") -> "object":
+    def _dec(fn: object) -> object:
         global passed, failed
         try:
             fn()  # type: ignore[operator]

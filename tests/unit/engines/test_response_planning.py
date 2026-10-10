@@ -24,7 +24,6 @@ import pytest
 from src.engines.adaptive_conversation.engine import AdaptiveConversationEngine
 from src.engines.conversation_state.engine import ConversationStateIntelligence
 from src.engines.conversation_state.schema import ConversationState
-from src.engines.dialogue_policy.constraints import PolicyConstraintType
 from src.engines.dialogue_policy.engine import DialoguePolicyEngine
 from src.engines.emotion.engine import EmotionIntelligenceEngine
 from src.engines.empathy.engine import EmpathyPlanner
@@ -152,7 +151,7 @@ def test_hostile_sentiment_alone_triggers_abuse_flag(engine: ResponsePlanningEng
     """'har roj ... bhai' matches EmotionIntelligenceEngine's HOSTILE pattern
     but no RiskEngine _ABUSE_PATTERNS keyword directly — only reachable via
     the sentiment=... fallback this Phase-1 fix wires through."""
-    plan, envelope = engine.assemble(
+    _plan, envelope = engine.assemble(
         turn=_make_turn("har roj phone karte ho bhai"),
         context=None,
         retrieval=[],

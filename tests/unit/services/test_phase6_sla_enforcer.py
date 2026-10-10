@@ -10,9 +10,7 @@ Verifies SLAEnforcer behaviour that the CronJob runner depends on:
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock, call
-
-import pytest
+from unittest.mock import MagicMock
 
 from src.libs.contracts.models.hitl import HITLItem, HITLItemStatus, HITLPriority
 from src.libs.contracts.primitives import TenantId

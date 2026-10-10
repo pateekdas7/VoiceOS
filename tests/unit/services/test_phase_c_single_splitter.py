@@ -44,7 +44,7 @@ class _PermissiveValidator:
     unchanged so the pipeline's clause boundaries are what is measured.
     """
 
-    def validate(self, text: str, response_plan: ResponsePlan) -> ValidationResult:  # noqa: ARG002
+    def validate(self, text: str, response_plan: ResponsePlan) -> ValidationResult:
         return ValidationResult(valid=True, violations=[], fallback_response="")
 
 

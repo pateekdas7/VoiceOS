@@ -13,9 +13,10 @@ Architecture: Sprint-029.md; DocSuite-10 (AI Evaluation Handbook).
 from __future__ import annotations
 
 import json
+from pathlib import Path
+
 import pydantic
 import pytest
-from pathlib import Path
 
 _PYDANTIC_V2 = int(pydantic.VERSION.split(".")[0]) >= 2
 requires_pydantic_v2 = pytest.mark.skipif(
@@ -24,19 +25,20 @@ requires_pydantic_v2 = pytest.mark.skipif(
 )
 
 from tests.ai_eval.founder_validation_suite import (
-    CallTranscript,
     CallEvalResult,
-    TranscriptCustomerContext,
-    TranscriptTurn,
-    LawOfAuthorityReplayChecker,
-    RBIComplianceChecker,
-    NegotiationEnvelopeChecker,
+    CallTranscript,
+    FounderValidationReport,
+    FounderValidationSuite,
     IntentAccuracyEvaluator,
     IntentEvalResult,
-    FounderValidationSuite,
-    FounderValidationReport,
+    LawOfAuthorityReplayChecker,
+    NegotiationEnvelopeChecker,
+    RBIComplianceChecker,
+    TranscriptCustomerContext,
+    TranscriptTurn,
     Violation,
 )
+
 # IntentModel imported lazily inside tests that need it (requires pydantic>=2.7)
 
 # ---------------------------------------------------------------------------
@@ -780,7 +782,8 @@ class TestFounderValidationReportPhase2Pending:
         )
         suite = FounderValidationSuite(intent_evaluator=stub)
         # Run against only the good call
-        import tempfile, shutil
+        import shutil
+        import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             shutil.copy(_GOOD_CALL_FIXTURE, tmp_path / "good_call_001.json")

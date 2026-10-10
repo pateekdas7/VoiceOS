@@ -18,7 +18,6 @@ from __future__ import annotations
 from src.libs.contracts.audio import AudioConfig, AudioFrame, Encoding, SampleRate
 from src.services.audio_session_manager.session import AudioSession
 
-
 _CFG = AudioConfig(
     sample_rate=SampleRate.RATE_8K,
     encoding=Encoding.PCM16LE,
@@ -63,7 +62,7 @@ class TestMultiBurstMonotonicChunks:
     def test_larger_multiburst_no_stuck_frames(self) -> None:
         session = AudioSession(call_id="c2", tenant_id="t2")
         emitted: list[int] = []
-        # 5 turns × (1 s silence + 2 s clip + 1.5 s silence) = 5 × 225 = 1125
+        # 5 turns x (1 s silence + 2 s clip + 1.5 s silence) = 5 x 225 = 1125
         for seq in range(0, 1125):
             for out in session.push_frame(_f(seq)):
                 emitted.append(out.seq)

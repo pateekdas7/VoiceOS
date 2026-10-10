@@ -33,7 +33,7 @@ _log = logging.getLogger("voiceos.dialer.engine")
 _CALL_SID_TTL = 86_400  # 24 h
 
 # Fallback when a caller passes an unknown IANA timezone name — Asia/Kolkata
-# is the compliance-relevant default (RBI FPC 8am–9pm applies in IST).
+# is the compliance-relevant default (RBI FPC 8am-9pm applies in IST).
 _DEFAULT_TZ = "Asia/Kolkata"
 
 # Fixed IST offset used only when the system has no tzdata (e.g. Termux, some
@@ -112,7 +112,7 @@ class DialerEngine:
         """Drive the dial loop until the window closes or leads are exhausted.
 
         Window enforcement uses the campaign's local timezone (default IST) so
-        that RBI FPC's 8am–9pm rule is honored regardless of the server clock.
+        that RBI FPC's 8am-9pm rule is honored regardless of the server clock.
         """
         tz = _resolve_tz(timezone_name)
         _log.info(

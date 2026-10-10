@@ -4,7 +4,7 @@ Intake pipeline per row (in order):
   1. Map client columns → standard fields via caller-supplied column_mapping.
   2. Normalize phone to E.164; reject row if invalid.
   3. Deduplicate within the same campaign (phone uniqueness gate).
-  4. Score the lead (0–100).
+  4. Score the lead (0-100).
   5. Detect language from metadata.
   6. Build CampaignLead; mark is_duplicate if phone already known.
 
@@ -72,7 +72,7 @@ def suggest_column_mapping(columns: list[str]) -> dict[str, str]:
 class LeadIntakeResult:
     """Summary of one import operation (returned to the BFF route handler)."""
 
-    __slots__ = ("import_id", "total", "valid", "invalid", "duplicates")
+    __slots__ = ("duplicates", "import_id", "invalid", "total", "valid")
 
     def __init__(self, import_id: str, total: int, valid: int, invalid: int, duplicates: int) -> None:
         self.import_id = import_id

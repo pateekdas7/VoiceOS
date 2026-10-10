@@ -8,13 +8,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import MagicMock, patch
-
-import pytest
 
 from src.libs.contracts.primitives import TenantId
 from src.libs.repositories.compliance_violations import ComplianceViolationRepository
-
 
 # ---------------------------------------------------------------------------
 # Fake connection / cursor infrastructure
