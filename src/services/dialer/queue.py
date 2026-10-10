@@ -59,14 +59,17 @@ class DialerQueue:
         key = self._key(tenant_id, campaign_id)
         mapping: dict[str, float] = {}
         for lead in leads:
-            member = json.dumps({
-                "lead_id": lead["lead_id"],
-                "phone": lead["phone"],
-                "tenant_id": tenant_id,
-                "campaign_id": campaign_id,
-                "name": lead.get("name", ""),
-                "pipeline_id": lead.get("pipeline_id"),
-            }, ensure_ascii=False)
+            member = json.dumps(
+                {
+                    "lead_id": lead["lead_id"],
+                    "phone": lead["phone"],
+                    "tenant_id": tenant_id,
+                    "campaign_id": campaign_id,
+                    "name": lead.get("name", ""),
+                    "pipeline_id": lead.get("pipeline_id"),
+                },
+                ensure_ascii=False,
+            )
             # Negative score → ZPOPMIN gives highest priority first
             mapping[member] = -float(lead.get("score", 0))
 

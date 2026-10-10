@@ -117,7 +117,9 @@ def assert_gates(environment, **kwargs) -> None:  # type: ignore[no-untyped-def]
     fail_pct = (stats.num_failures / stats.num_requests * 100) if stats.num_requests else 0
     p95 = stats.get_response_time_percentile(0.95)
 
-    print(f"\n[Load gate] Requests: {stats.num_requests}, Failures: {stats.num_failures} ({fail_pct:.1f}%), p95: {p95}ms")
+    print(
+        f"\n[Load gate] Requests: {stats.num_requests}, Failures: {stats.num_failures} ({fail_pct:.1f}%), p95: {p95}ms"
+    )
 
     if fail_pct > 1.0:
         print(f"FAIL: Error rate {fail_pct:.1f}% > 1% gate (zero 5xx required)")

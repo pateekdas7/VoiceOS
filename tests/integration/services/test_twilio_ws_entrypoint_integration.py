@@ -73,7 +73,9 @@ def _mulaw_media_message(chunk: int, pcm16: bytes) -> str:
     )
 
 
-def _tone_pcm16(num_samples: int = 160, freq_hz: float = 300.0, amplitude: int = 12000, sample_rate: int = 8000) -> bytes:
+def _tone_pcm16(
+    num_samples: int = 160, freq_hz: float = 300.0, amplitude: int = 12000, sample_rate: int = 8000
+) -> bytes:
     """Loud enough to clear EnergyVADModel's speech_threshold after 8kHz->16kHz resample."""
     samples = [int(amplitude * sin(2 * pi * freq_hz * i / sample_rate)) for i in range(num_samples)]
     return struct.pack(f"<{num_samples}h", *samples)
@@ -85,7 +87,9 @@ def _silence_pcm16(num_samples: int = 160) -> bytes:
 
 def _make_app() -> tuple[TestClient, SharedCallDependencies]:
     conversation_engine = MagicMock()
-    clause = AudioClause(audio_data=b"\x00\x00" * 2048, sample_rate=24000, text="namaste", clause_index=0, is_final=True)
+    clause = AudioClause(
+        audio_data=b"\x00\x00" * 2048, sample_rate=24000, text="namaste", clause_index=0, is_final=True
+    )
     conversation_engine.handle_turn = AsyncMock(return_value=[clause])
     conversation_engine.build_greeting = MagicMock(return_value=None)
 

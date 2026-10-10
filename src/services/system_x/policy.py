@@ -17,6 +17,7 @@ Forbidden operations (never automated, regardless of policy):
     - Configuration file modifications
     - Any action targeting the database directly
 """
+
 from __future__ import annotations
 
 import logging
@@ -35,25 +36,41 @@ from .models import (
 _log = logging.getLogger("system_x.policy")
 
 # Actions that are always safe to automate (idempotent, reversible, limited blast radius)
-_SAFE_ACTIONS = frozenset({
-    RecoveryActionType.RESTART_SERVICE,
-    RecoveryActionType.CLEAR_CACHE,
-    RecoveryActionType.NOTIFY_ONCALL,
-})
+_SAFE_ACTIONS = frozenset(
+    {
+        RecoveryActionType.RESTART_SERVICE,
+        RecoveryActionType.CLEAR_CACHE,
+        RecoveryActionType.NOTIFY_ONCALL,
+    }
+)
 
 # Actions requiring human approval at HIGH policy level
-_HIGH_RISK_ACTIONS = frozenset({
-    RecoveryActionType.FAILOVER,
-    RecoveryActionType.SCALE_UP,
-    RecoveryActionType.MANUAL_INTERVENTION,
-})
+_HIGH_RISK_ACTIONS = frozenset(
+    {
+        RecoveryActionType.FAILOVER,
+        RecoveryActionType.SCALE_UP,
+        RecoveryActionType.MANUAL_INTERVENTION,
+    }
+)
 
 # Terms in recovery_plan steps that indicate forbidden operations
-_FORBIDDEN_STEP_KEYWORDS = frozenset({
-    "database", "schema", "migrate", "drop table", "delete from",
-    "credential", "password", "rotate", "shutdown", "terminate all",
-    "kill all", "config file", "write config",
-})
+_FORBIDDEN_STEP_KEYWORDS = frozenset(
+    {
+        "database",
+        "schema",
+        "migrate",
+        "drop table",
+        "delete from",
+        "credential",
+        "password",
+        "rotate",
+        "shutdown",
+        "terminate all",
+        "kill all",
+        "config file",
+        "write config",
+    }
+)
 
 
 @dataclass
@@ -119,6 +136,7 @@ def _contains_forbidden_operation(plan: tuple[str, ...]) -> str | None:
 def _infer_action_types(plan: tuple[str, ...]) -> list[RecoveryActionType]:
     """Map recovery_plan strings to RecoveryActionType for policy evaluation."""
     from .recovery.engine import _infer_action_type
+
     return [_infer_action_type(step) for step in plan]
 
 
@@ -147,7 +165,8 @@ class RecoveryPolicyEngine:
         if forbidden_kw:
             _log.warning(
                 "incident=%s policy BLOCK: forbidden operation '%s' in recovery plan",
-                incident.incident_id, forbidden_kw,
+                incident.incident_id,
+                forbidden_kw,
             )
             return PolicyDecision(
                 allowed=False,
@@ -206,7 +225,11 @@ class RecoveryPolicyEngine:
 
         _log.info(
             "incident=%s policy=%s approved=%s requires_human=%s dry_run=%s",
-            incident.incident_id, level, [str(a) for a in approved_list], needs_human, dry_run,
+            incident.incident_id,
+            level,
+            [str(a) for a in approved_list],
+            needs_human,
+            dry_run,
         )
 
         return PolicyDecision(

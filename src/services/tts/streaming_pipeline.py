@@ -115,14 +115,11 @@ class TrueStreamingPipeline:
             # subtle case where barge_in_event has already been cleared by
             # the next turn: barge_in_event.is_set() would then return
             # False, but playback.generation still shows the advance.
-            if (
-                playback.generation != scope_generation
-                or playback.barge_in_event.is_set()
-            ):
+            if playback.generation != scope_generation or playback.barge_in_event.is_set():
                 logger.info(
-                    "TrueStreamingPipeline: barge-in/gen-advance detected "
-                    "(scope_gen=%d, playback_gen=%d) — aborting",
-                    scope_generation, playback.generation,
+                    "TrueStreamingPipeline: barge-in/gen-advance detected (scope_gen=%d, playback_gen=%d) — aborting",
+                    scope_generation,
+                    playback.generation,
                 )
                 break
 
@@ -134,14 +131,8 @@ class TrueStreamingPipeline:
             # "हाँ।" (no trailing whitespace) are held here and emerge via
             # flush() below — never dropped.
             for clause_text in splitter.feed(chunk.text):
-                if (
-                    playback.generation != scope_generation
-                    or playback.barge_in_event.is_set()
-                ):
-                    logger.info(
-                        "TrueStreamingPipeline: barge-in/gen-advance "
-                        "detected mid-clause-loop — aborting"
-                    )
+                if playback.generation != scope_generation or playback.barge_in_event.is_set():
+                    logger.info("TrueStreamingPipeline: barge-in/gen-advance detected mid-clause-loop — aborting")
                     break
                 clauses = await self._synthesise_and_enqueue(
                     clause_text,
@@ -162,10 +153,7 @@ class TrueStreamingPipeline:
                 finish_seen = True
                 break
 
-        if (
-            playback.generation == scope_generation
-            and not playback.barge_in_event.is_set()
-        ):
+        if playback.generation == scope_generation and not playback.barge_in_event.is_set():
             final_text = splitter.flush()
             if final_text:
                 clauses = await self._synthesise_and_enqueue(
@@ -190,10 +178,7 @@ class TrueStreamingPipeline:
         # generation compare handles the post-barge-in-clear race that a
         # bare barge_in_event.is_set() check would miss.
         if gate is not None:
-            if (
-                playback.generation != scope_generation
-                or playback.barge_in_event.is_set()
-            ):
+            if playback.generation != scope_generation or playback.barge_in_event.is_set():
                 gate.discard()
             else:
                 await gate.flush_final()
@@ -287,10 +272,7 @@ class TrueStreamingPipeline:
             # finally block (see VeenaAdapter._stream_clause's
             # ``await resp.aclose()``), which is the practical mechanism
             # by which VeenaAdapter stops producing further stale audio.
-            if (
-                playback.generation != generation
-                or playback.barge_in_event.is_set()
-            ):
+            if playback.generation != generation or playback.barge_in_event.is_set():
                 break
             # Rebuild with correct clause_index, is_final flag, and stamp
             # with the scope generation so every downstream comparator

@@ -16,6 +16,7 @@ from src.libs.repositories.compliance_violations import ComplianceViolationRepos
 # Fake connection / cursor infrastructure
 # ---------------------------------------------------------------------------
 
+
 class _FakeCursor:
     """Minimal cursor double: captures SQL + params for assertion."""
 
@@ -55,6 +56,7 @@ class _FakeConn:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 class TestComplianceViolationRepositoryUpsertActive:
     def test_upsert_executes_insert_on_conflict(self) -> None:
@@ -169,9 +171,7 @@ class TestComplianceViolationRepositoryHydrate:
     def test_hydrate_resolved_at_none(self) -> None:
         from uuid import uuid4
 
-        conn = _FakeConn(
-            rows=[(str(uuid4()), "t-1", "r1", "s", "ACTIVE", datetime.now(UTC), None, None)]
-        )
+        conn = _FakeConn(rows=[(str(uuid4()), "t-1", "r1", "s", "ACTIVE", datetime.now(UTC), None, None)])
         repo = ComplianceViolationRepository(conn)
         rows = repo.list_active(TenantId("t-1"))
         assert rows[0]["resolved_at"] is None

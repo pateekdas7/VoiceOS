@@ -32,69 +32,33 @@ SCRIPT_TEMPLATES: dict[str, str] = {
         "Haan sir — account pe {outstanding} outstanding hai, "
         "CIBIL pe asar pad raha hai — aaj sort kar lete hain, kab tak ho sakta hai?"
     ),
-    "identity_reask": (
-        "माफ़ कीजिए sir, क्या आप {customer_name} जी बात कर रहे हैं?"
-    ),
-    "identity_deny": (
-        "माफ़ कीजिए, wrong number लग गया। Thanks।"
-    ),
-
+    "identity_reask": ("माफ़ कीजिए sir, क्या आप {customer_name} जी बात कर रहे हैं?"),
+    "identity_deny": ("माफ़ कीजिए, wrong number लग गया। Thanks।"),
     # ── Golden-path buckets (post-identity) ───────────────────────────────
-    "ask_who": (
-        "मैं {agent_name} हूँ, {lender_name} से — "
-        "account matter ke baare mein baat karni thi, 5 min milenge?"
-    ),
+    "ask_who": ("मैं {agent_name} हूँ, {lender_name} से — account matter ke baare mein baat karni thi, 5 min milenge?"),
     "ask_amount": (
-        "Sir, {outstanding} outstanding hai account pe — "
-        "10 ko ya 15 ko, kaunsa better rahega payment ke liye?"
+        "Sir, {outstanding} outstanding hai account pe — 10 ko ya 15 ko, kaunsa better rahega payment ke liye?"
     ),
-
     # ── Hardship — empathy first, then small-win ask ──────────────────────
-    "hardship": (
-        "Samajh sakti hoon, bilkul — kuch bhi possible hai is week? "
-        "Even thoda sa bhi chalega."
-    ),
-
+    "hardship": ("Samajh sakti hoon, bilkul — kuch bhi possible hai is week? Even thoda sa bhi chalega."),
     # ── Date confirmation ─────────────────────────────────────────────────
-    "gives_date_confirm": (
-        "Note kar liya — {date} full payment — confirm hai sir?"
-    ),
-    "gives_date_confirm_relative": (
-        "Note kar liya — {date} full payment confirm kar rahe hain?"
-    ),
-
+    "gives_date_confirm": ("Note kar liya — {date} full payment — confirm hai sir?"),
+    "gives_date_confirm_relative": ("Note kar liya — {date} full payment confirm kar rahe hain?"),
     # ── Amount / plan ─────────────────────────────────────────────────────
-    "gives_amount_plan": (
-        "{amount} monthly — pehli installment 5 ko ya 10 ko?"
-    ),
+    "gives_amount_plan": ("{amount} monthly — pehli installment 5 ko ya 10 ko?"),
     "plan_computed": (
-        "Theek hai — {amount} monthly pe lagbhag {months} mahine mein full clear. "
-        "Pehli installment kab karein?"
+        "Theek hai — {amount} monthly pe lagbhag {months} mahine mein full clear. Pehli installment kab karein?"
     ),
-    "plan_lumpsum_full": (
-        "Ek baar mein {amount} — account full clear ho jaayega. Confirm karein?"
-    ),
-    "plan_lumpsum_partial": (
-        "{amount} aaj, {remaining} baad mein — baaki kab tak ho jaayega?"
-    ),
-
+    "plan_lumpsum_full": ("Ek baar mein {amount} — account full clear ho jaayega. Confirm karein?"),
+    "plan_lumpsum_partial": ("{amount} aaj, {remaining} baad mein — baaki kab tak ho jaayega?"),
     # ── Stalling / next-month objection ───────────────────────────────────
     "stall_next_month": (
-        "Bilkul — lekin CIBIL pe mark aa raha hai, "
-        "ek date note kar lein toh file peace mein rahegi — 5 ko ya 10 ko?"
+        "Bilkul — lekin CIBIL pe mark aa raha hai, ek date note kar lein toh file peace mein rahegi — 5 ko ya 10 ko?"
     ),
-
     # ── CIBIL urgency (for repeat stalling) ───────────────────────────────
-    "cibil_urgency": (
-        "Har din interest add ho raha hai sir — "
-        "aaj confirm ho jaaye toh aage nahi badhega."
-    ),
-
+    "cibil_urgency": ("Har din interest add ho raha hai sir — aaj confirm ho jaaye toh aage nahi badhega."),
     # ── Anchor for anything unmatched ─────────────────────────────────────
-    "anchor": (
-        "Sir, {outstanding} outstanding hai account pe — "
-        "10 ko ya 15 ko, kaunsa better rahega?"
-    ),
+    "anchor": ("Sir, {outstanding} outstanding hai account pe — 10 ko ya 15 ko, kaunsa better rahega?"),
     # ── No authoritative outstanding-balance available ────────────────────
     # RI-5: asserting any amount here would be fabrication. This template
     # asks the customer to identify their loan without ever committing to
@@ -102,21 +66,11 @@ SCRIPT_TEMPLATES: dict[str, str] = {
     # when both CustomerContext.primary_loan AND
     # response_plan.facts['outstanding_balance_minor'] are absent — i.e.
     # the authoritative CRM/Collections lookup failed for this call.
-    "clarify_no_record": (
-        "Sir, आपके account का detail अभी हमारे पास नहीं है — "
-        "क्या आप अपना loan account number बता सकते हैं?"
-    ),
+    "clarify_no_record": ("Sir, आपके account का detail अभी हमारे पास नहीं है — क्या आप अपना loan account number बता सकते हैं?"),
     # ── Close scripts ─────────────────────────────────────────────────────
-    "close_soft": (
-        "Perfect sir — commitment note kar liya. "
-        "Our side se koi call nahi aayegi. Thanks, baat hui."
-    ),
-    "close_farewell": (
-        "Theek hai sir, hum baad mein baat karte hain. Thanks!"
-    ),
-    "close_callback": (
-        "Theek hai sir, team se check kara ke callback kar deti hoon."
-    ),
+    "close_soft": ("Perfect sir — commitment note kar liya. Our side se koi call nahi aayegi. Thanks, baat hui."),
+    "close_farewell": ("Theek hai sir, hum baad mein baat karte hain. Thanks!"),
+    "close_callback": ("Theek hai sir, team se check kara ke callback kar deti hoon."),
 }
 """Every state has a canonical response that fires without an LLM call."""
 

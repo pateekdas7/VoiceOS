@@ -82,9 +82,7 @@ class TTSMode(enum.StrEnum):
         try:
             return cls(raw)
         except ValueError:
-            logger.warning(
-                "Unknown %s=%r — defaulting to %s", _ENV_TTS_MODE, raw, cls.STREAMING.value
-            )
+            logger.warning("Unknown %s=%r — defaulting to %s", _ENV_TTS_MODE, raw, cls.STREAMING.value)
             return cls.STREAMING
 
 
@@ -105,7 +103,9 @@ def threshold_ms_from_env(env: Mapping[str, str] | None = None) -> int:
     except ValueError:
         logger.warning(
             "Non-integer %s=%r — defaulting to %d",
-            _ENV_TTS_BUFFER_MS, raw, _DEFAULT_THRESHOLD_MS,
+            _ENV_TTS_BUFFER_MS,
+            raw,
+            _DEFAULT_THRESHOLD_MS,
         )
         return _DEFAULT_THRESHOLD_MS
     if v < 0:
@@ -113,7 +113,10 @@ def threshold_ms_from_env(env: Mapping[str, str] | None = None) -> int:
     if v not in _ALLOWED_THRESHOLD_MS:
         logger.warning(
             "%s=%d not in fixed sweep set %s — defaulting to %d",
-            _ENV_TTS_BUFFER_MS, v, sorted(_ALLOWED_THRESHOLD_MS), _DEFAULT_THRESHOLD_MS,
+            _ENV_TTS_BUFFER_MS,
+            v,
+            sorted(_ALLOWED_THRESHOLD_MS),
+            _DEFAULT_THRESHOLD_MS,
         )
         return _DEFAULT_THRESHOLD_MS
     return v
@@ -161,9 +164,9 @@ class StartupBufferGate:
         self._mode = mode
         self._threshold_ms = max(0, int(threshold_ms))
         _cap = (
-            max_buffered_clauses if max_buffered_clauses is not None
-            else (_FULL_RESPONSE_MAX_CAP if mode == TTSMode.FULL_RESPONSE
-                  else _DEFAULT_MAX_BUFFERED_CLAUSES)
+            max_buffered_clauses
+            if max_buffered_clauses is not None
+            else (_FULL_RESPONSE_MAX_CAP if mode == TTSMode.FULL_RESPONSE else _DEFAULT_MAX_BUFFERED_CLAUSES)
         )
         self._max_buffered_clauses = max(1, int(_cap))
         self._bytes_per_sample = max(1, int(bytes_per_sample))
@@ -176,17 +179,14 @@ class StartupBufferGate:
         # NOT be forwarded to the scheduler — barge-in already advanced the
         # scheduler's generation, and the next turn may have cleared
         # barge_in_event, so a boolean-event check alone is insufficient.
-        self._scope_generation: int = (
-            int(generation) if generation is not None else playback.generation
-        )
+        self._scope_generation: int = int(generation) if generation is not None else playback.generation
         # STREAMING should never be gated at all (callers skip construction)
         # but if instantiated anyway, treat it as released-from-start so
         # behavior stays a pure pass-through. Threshold=0 in buffered mode
         # is equivalent to streaming. BLOCKING waits for is_final regardless
         # of threshold — do not short-circuit it here.
-        self._released: bool = (
-            self._mode == TTSMode.STREAMING
-            or (self._mode == TTSMode.BUFFERED_STREAMING and self._threshold_ms == 0)
+        self._released: bool = self._mode == TTSMode.STREAMING or (
+            self._mode == TTSMode.BUFFERED_STREAMING and self._threshold_ms == 0
         )
         self._discarded: bool = False
 
@@ -224,10 +224,7 @@ class StartupBufferGate:
         construction. Any drift on either side means the barge-in boundary
         has been crossed and the clause must be dropped, not forwarded.
         """
-        return (
-            clause.generation != self._scope_generation
-            or self._playback.generation != self._scope_generation
-        )
+        return clause.generation != self._scope_generation or self._playback.generation != self._scope_generation
 
     # ---- duration accounting ----
 
@@ -261,8 +258,10 @@ class StartupBufferGate:
                 "StartupBufferGate: dropping stale clause idx=%d "
                 "(clause_gen=%d, scope_gen=%d, playback_gen=%d) — "
                 "discarding %d buffered",
-                clause.clause_index, clause.generation,
-                self._scope_generation, self._playback.generation,
+                clause.clause_index,
+                clause.generation,
+                self._scope_generation,
+                self._playback.generation,
                 len(self._buffer),
             )
             self.discard()
@@ -270,9 +269,9 @@ class StartupBufferGate:
 
         if self._playback.barge_in_event.is_set():
             logger.debug(
-                "StartupBufferGate: barge-in observed at enqueue — discarding "
-                "buffered=%d, dropping clause idx=%d",
-                len(self._buffer), clause.clause_index,
+                "StartupBufferGate: barge-in observed at enqueue — discarding buffered=%d, dropping clause idx=%d",
+                len(self._buffer),
+                clause.clause_index,
             )
             self.discard()
             return
@@ -287,16 +286,17 @@ class StartupBufferGate:
         if len(self._buffer) >= self._max_buffered_clauses:
             if self._mode == TTSMode.FULL_RESPONSE:
                 logger.warning(
-                    "StartupBufferGate: FULL_RESPONSE cap %d hit "
-                    "(buffered_ms=%.1f) — failing closed (discard)",
-                    self._max_buffered_clauses, self._buffered_ms,
+                    "StartupBufferGate: FULL_RESPONSE cap %d hit (buffered_ms=%.1f) — failing closed (discard)",
+                    self._max_buffered_clauses,
+                    self._buffered_ms,
                 )
                 self.discard()
             else:
                 logger.warning(
-                    "StartupBufferGate: buffer cap %d hit (buffered_ms=%.1f, "
-                    "mode=%s) — forcing release",
-                    self._max_buffered_clauses, self._buffered_ms, self._mode.value,
+                    "StartupBufferGate: buffer cap %d hit (buffered_ms=%.1f, mode=%s) — forcing release",
+                    self._max_buffered_clauses,
+                    self._buffered_ms,
+                    self._mode.value,
                 )
                 await self._release_buffered()
                 if not self._discarded:
@@ -348,15 +348,15 @@ class StartupBufferGate:
                     "StartupBufferGate: playback generation advanced during "
                     "release (scope_gen=%d, playback_gen=%d) — dropping %d "
                     "remaining buffered clauses",
-                    self._scope_generation, self._playback.generation,
+                    self._scope_generation,
+                    self._playback.generation,
                     len(self._buffer),
                 )
                 self.discard()
                 return
             if self._playback.barge_in_event.is_set():
                 logger.info(
-                    "StartupBufferGate: barge-in during release — dropping "
-                    "%d remaining buffered clauses",
+                    "StartupBufferGate: barge-in during release — dropping %d remaining buffered clauses",
                     len(self._buffer),
                 )
                 self.discard()
@@ -364,9 +364,9 @@ class StartupBufferGate:
             clause = self._buffer.popleft()
             if clause.generation != self._scope_generation:
                 logger.warning(
-                    "StartupBufferGate: buffered clause idx=%d stale "
-                    "(clause_gen=%d, scope_gen=%d) — dropping",
-                    clause.clause_index, clause.generation,
+                    "StartupBufferGate: buffered clause idx=%d stale (clause_gen=%d, scope_gen=%d) — dropping",
+                    clause.clause_index,
+                    clause.generation,
                     self._scope_generation,
                 )
                 continue
@@ -384,8 +384,7 @@ class StartupBufferGate:
         n = len(self._buffer)
         if n:
             logger.info(
-                "StartupBufferGate: discarding %d buffered clauses "
-                "(barge-in/abort)",
+                "StartupBufferGate: discarding %d buffered clauses (barge-in/abort)",
                 n,
             )
         self._buffer.clear()

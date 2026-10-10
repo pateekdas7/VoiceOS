@@ -47,9 +47,7 @@ class _FakeHITLQueueRepository:
         return item
 
     def find_pending(self, tenant_id: str) -> tuple[HITLItem, ...]:
-        return tuple(
-            i for i in self._store.values() if i.tenant_id == tenant_id and i.status == HITLItemStatus.PENDING
-        )
+        return tuple(i for i in self._store.values() if i.tenant_id == tenant_id and i.status == HITLItemStatus.PENDING)
 
     def find_open(self, tenant_id: str | None = None) -> tuple[HITLItem, ...]:
         return tuple(
@@ -201,7 +199,11 @@ def app_client(
 def _tenant_token(codec: WebSessionCodec, tenant_id: str = TENANT_A, role: str = "SUPERVISOR") -> str:
     permissions = tuple(ROLE_PERMISSIONS.get(AuthzRole(role), frozenset()))
     return codec.encode(
-        actor_kind="tenant", subject="sup-1", role=role, permissions=permissions, email="sup@tenant.com",
+        actor_kind="tenant",
+        subject="sup-1",
+        role=role,
+        permissions=permissions,
+        email="sup@tenant.com",
         tenant_id=tenant_id,
     )
 
@@ -258,9 +260,7 @@ class TestClaimNext:
         queue_repo._store["medium"] = _item(TENANT_A, "medium", priority=HITLPriority.MEDIUM)
         queue_repo._store["critical"] = _item(TENANT_A, "critical", priority=HITLPriority.CRITICAL)
 
-        response = app_client.post(
-            "/hitl/queue/claim-next", cookies={"voiceos_session": _tenant_token(session_codec)}
-        )
+        response = app_client.post("/hitl/queue/claim-next", cookies={"voiceos_session": _tenant_token(session_codec)})
         assert response.status_code == 200
         body = response.json()
         assert body["hitl_item_id"] == "critical"
@@ -268,9 +268,7 @@ class TestClaimNext:
         assert body["claimed_by"] == "sup-1"
 
     def test_empty_queue_returns_404(self, app_client: TestClient, session_codec: WebSessionCodec) -> None:
-        response = app_client.post(
-            "/hitl/queue/claim-next", cookies={"voiceos_session": _tenant_token(session_codec)}
-        )
+        response = app_client.post("/hitl/queue/claim-next", cookies={"voiceos_session": _tenant_token(session_codec)})
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "QUEUE_EMPTY"
 

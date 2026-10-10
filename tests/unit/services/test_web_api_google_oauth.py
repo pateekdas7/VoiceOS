@@ -73,9 +73,7 @@ class TestResolveVerifiedEmail:
             await client.resolve_verified_email(code="c", redirect_uri="https://bff/callback")
 
     async def test_raises_when_userinfo_missing_email(self) -> None:
-        transport = _FakeTransport(
-            token_response={"access_token": "tok-1"}, userinfo_response={"email_verified": True}
-        )
+        transport = _FakeTransport(token_response={"access_token": "tok-1"}, userinfo_response={"email_verified": True})
         client = GoogleOAuthClient("client-id", "secret", transport)
         with pytest.raises(GoogleIdentityError, match="missing email"):
             await client.resolve_verified_email(code="c", redirect_uri="https://bff/callback")

@@ -19,6 +19,7 @@ Invariants under test (Gate 3D P3 checklist):
     (fail-open on the customer_id side, fail-closed downstream to
     clarify_no_record — never fabricates a balance).
 """
+
 from __future__ import annotations
 
 import re
@@ -57,7 +58,11 @@ def _make_app_with_customer_service(customer_service: object | None) -> tuple[Te
     customer_service so we can wire whichever behavior the test needs."""
     conversation_engine = MagicMock()
     clause = AudioClause(
-        audio_data=b"\x00\x00" * 960, sample_rate=24000, text="ok", clause_index=0, is_final=True,
+        audio_data=b"\x00\x00" * 960,
+        sample_rate=24000,
+        text="ok",
+        clause_index=0,
+        is_final=True,
     )
     conversation_engine.handle_turn = AsyncMock(return_value=[clause])
     conversation_engine.build_greeting = MagicMock(return_value=None)
@@ -106,8 +111,8 @@ def test_inbound_known_caller_emits_customer_id_from_ANI() -> None:
     client, _ = _make_app_with_customer_service(svc)
     params = _default_call_params("CAinbound1")
     params["Direction"] = "inbound"
-    params["From"] = "+919911954448"     # caller
-    params["To"]   = "+18008675309"      # our DID
+    params["From"] = "+919911954448"  # caller
+    params["To"] = "+18008675309"  # our DID
 
     resp = _post_voice(client, params)
     assert resp.status_code == 200, resp.text
@@ -132,8 +137,8 @@ def test_outbound_api_known_callee_emits_customer_id_from_DNIS() -> None:
     client, _ = _make_app_with_customer_service(svc)
     params = _default_call_params("CAoutbound9")
     params["Direction"] = "outbound-api"
-    params["From"] = "+18008675309"      # our DID
-    params["To"]   = "+919911954448"     # customer being dialed
+    params["From"] = "+18008675309"  # our DID
+    params["To"] = "+919911954448"  # customer being dialed
 
     resp = _post_voice(client, params)
     assert resp.status_code == 200, resp.text
@@ -239,7 +244,7 @@ def test_empty_phone_skips_lookup_and_admits_call() -> None:
     client, _ = _make_app_with_customer_service(svc)
     params = _default_call_params("CAemptyphone")
     params["Direction"] = "inbound"
-    params["From"] = ""    # nothing to look up
+    params["From"] = ""  # nothing to look up
     params["To"] = ""
 
     resp = _post_voice(client, params)

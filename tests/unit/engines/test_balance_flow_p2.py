@@ -28,6 +28,7 @@ CustomerContext with a real outstanding balance, ResponsePlanningEngine
 populates the fact under the exact key DialogueResponseEngine consumes,
 and the rendered text carries that amount — not clarify, not ₹0.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -62,9 +63,7 @@ from tests.unit.engines.test_dialogue_response import (
 from tests.unit.engines.test_response_planning import _build_engine
 
 
-def _make_full_context(
-    *, outstanding_minor: int, customer_name: str = "Prateek", dpd: int = 45
-) -> CustomerContext:
+def _make_full_context(*, outstanding_minor: int, customer_name: str = "Prateek", dpd: int = 45) -> CustomerContext:
     """A CustomerContext shaped exactly as CustomerContextAssembler would
     produce for a real call — every field DialogueResponseEngine and
     ResponsePlanningEngine actually read is populated."""
@@ -128,8 +127,9 @@ def test_p2_end_to_end_outstanding_balance_renders_in_reply() -> None:
 
     # Middle-of-chain proof: ResponsePlanningEngine populates the exact
     # key DialogueResponseEngine reads.
-    assert "outstanding_balance_minor" in plan.facts, \
+    assert "outstanding_balance_minor" in plan.facts, (
         f"ResponsePlanningEngine did not populate outstanding_balance_minor: facts={plan.facts!r}"
+    )
     assert plan.facts["outstanding_balance_minor"] == 5_000_000
 
     # End-of-chain proof: DialogueResponseEngine renders that amount.
@@ -137,16 +137,19 @@ def test_p2_end_to_end_outstanding_balance_renders_in_reply() -> None:
     session = _session()
     session.set_dialogue_state_name("CONVERSATION")
     out = dr_engine.generate_reply(
-        session=session, response_plan=plan, context=context,
-        user_text="kitna outstanding hai", lender_name=_LENDER,
+        session=session,
+        response_plan=plan,
+        context=context,
+        user_text="kitna outstanding hai",
+        lender_name=_LENDER,
     )
 
     # 5_000_000 minor units == Rs 50,000 == "50,000" formatted.
-    assert "50,000" in out.reply_text, \
-        f"Rs 50,000 outstanding did not render in reply_text: {out.reply_text!r}"
+    assert "50,000" in out.reply_text, f"Rs 50,000 outstanding did not render in reply_text: {out.reply_text!r}"
     # Never fabricated: no clarify_no_record.
-    assert "detail" not in out.reply_text.lower(), \
+    assert "detail" not in out.reply_text.lower(), (
         f"clarify_no_record leaked into reply despite authoritative balance: {out.reply_text!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -166,20 +169,23 @@ def test_p2_authoritative_zero_flows_through_and_renders_as_zero() -> None:
         retrieval=[],
     )
 
-    assert plan.facts.get("outstanding_balance_minor") == 0, \
+    assert plan.facts.get("outstanding_balance_minor") == 0, (
         f"authoritative zero lost between context and plan.facts: {plan.facts!r}"
+    )
 
     dr_engine = DialogueResponseEngine()
     session = _session()
     session.set_dialogue_state_name("CONVERSATION")
     out = dr_engine.generate_reply(
-        session=session, response_plan=plan, context=context,
-        user_text="kitna outstanding hai", lender_name=_LENDER,
+        session=session,
+        response_plan=plan,
+        context=context,
+        user_text="kitna outstanding hai",
+        lender_name=_LENDER,
     )
 
     # Genuine zero must NOT be routed to clarify_no_record.
-    assert "detail" not in out.reply_text.lower(), \
-        f"clarify_no_record fired for authoritative zero: {out.reply_text!r}"
+    assert "detail" not in out.reply_text.lower(), f"clarify_no_record fired for authoritative zero: {out.reply_text!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -205,16 +211,19 @@ def test_p2_missing_context_never_fabricates_and_asks_for_account_number() -> No
     session = _session()
     session.set_dialogue_state_name("CONVERSATION")
     out = dr_engine.generate_reply(
-        session=session, response_plan=plan, context=None,
-        user_text="kitna outstanding hai", lender_name=_LENDER,
+        session=session,
+        response_plan=plan,
+        context=None,
+        user_text="kitna outstanding hai",
+        lender_name=_LENDER,
     )
 
     forbidden = ("₹0", "₹ 0", "0 outstanding", "0 rupees", "rs. 0", "rs 0")
     for token in forbidden:
-        assert token.lower() not in out.reply_text.lower(), \
+        assert token.lower() not in out.reply_text.lower(), (
             f"fabricated {token!r} in reply despite missing context: {out.reply_text!r}"
+        )
     # Should route to clarify_no_record — the surviving safe path.
-    assert (
-        "loan account number" in out.reply_text
-        or "account का detail" in out.reply_text
-    ), f"expected clarify_no_record when context is None; got: {out.reply_text!r}"
+    assert "loan account number" in out.reply_text or "account का detail" in out.reply_text, (
+        f"expected clarify_no_record when context is None; got: {out.reply_text!r}"
+    )

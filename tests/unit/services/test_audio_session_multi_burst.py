@@ -55,8 +55,7 @@ class TestMultiBurstMonotonicChunks:
             for out in session.push_frame(_f(seq)):
                 emitted.append(out.seq)
         assert emitted == list(range(0, 225)), (
-            f"expected 225 monotone frames, got {len(emitted)}: "
-            f"first={emitted[:5]} last={emitted[-5:]}"
+            f"expected 225 monotone frames, got {len(emitted)}: first={emitted[:5]} last={emitted[-5:]}"
         )
 
     def test_larger_multiburst_no_stuck_frames(self) -> None:

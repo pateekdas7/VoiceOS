@@ -47,7 +47,7 @@ class DialerSessionManager:
         self._queue = dialer_queue
         self._lead_repo = lead_repo
         self._engines: dict[str, DialerEngine] = {}  # campaign_id → engine
-        self._tasks: dict[str, asyncio.Task] = {}    # campaign_id → task
+        self._tasks: dict[str, asyncio.Task] = {}  # campaign_id → task
         self._sessions: dict[str, DialerSessionInfo] = {}
 
     # ------------------------------------------------------------------
@@ -69,7 +69,8 @@ class DialerSessionManager:
         # Seed queue from PENDING leads
         pending = await asyncio.to_thread(
             self._lead_repo.find_queued_for_campaign,
-            tenant_id, campaign_id,
+            tenant_id,
+            campaign_id,
         )
         if pending:
             leads_dicts = [
@@ -82,9 +83,7 @@ class DialerSessionManager:
                 }
                 for lead in pending
             ]
-            await asyncio.to_thread(
-                self._queue.push_leads, tenant_id, campaign_id, leads_dicts
-            )
+            await asyncio.to_thread(self._queue.push_leads, tenant_id, campaign_id, leads_dicts)
             _log.info("seeded queue tenant=%s campaign=%s count=%d", tenant_id, campaign_id, len(leads_dicts))
 
         engine = self._factory()

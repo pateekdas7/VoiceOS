@@ -123,8 +123,12 @@ class GreetingCache:
                     pass
             return False
 
-        logger.info("GreetingCache: cached %d μ-law bytes (~%d ms audio) at %s",
-                    len(audio_bytes), len(audio_bytes) * 1000 // 8000, path)
+        logger.info(
+            "GreetingCache: cached %d μ-law bytes (~%d ms audio) at %s",
+            len(audio_bytes),
+            len(audio_bytes) * 1000 // 8000,
+            path,
+        )
         return True
 
     @staticmethod

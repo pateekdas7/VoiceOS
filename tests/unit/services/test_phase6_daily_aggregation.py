@@ -21,6 +21,7 @@ from src.services.analytics.aggregation import DailyAggregationJob
 # Fakes
 # ---------------------------------------------------------------------------
 
+
 class _FakeDispositionRepo:
     def find_between(self, tenant_id: TenantId, start: datetime, end: datetime):
         return ()
@@ -67,20 +68,17 @@ class _FakeLoanRepo:
 # Tests — without optional ports (backward compat)
 # ---------------------------------------------------------------------------
 
+
 class TestDailyAggregationJobWithoutOptionalPorts:
     def test_amount_collected_minor_is_zero_without_ptp_port(self) -> None:
         daily_repo = _FakeDailyRepo()
-        job = DailyAggregationJob(
-            _FakeDispositionRepo(), _FakeCampaignResultRepo(), daily_repo
-        )
+        job = DailyAggregationJob(_FakeDispositionRepo(), _FakeCampaignResultRepo(), daily_repo)
         rollup = job.run_for_day(TenantId("t-1"), date(2026, 9, 16))
         assert rollup.amount_collected_minor == 0
 
     def test_avg_dpd_is_zero_without_loan_port(self) -> None:
         daily_repo = _FakeDailyRepo()
-        job = DailyAggregationJob(
-            _FakeDispositionRepo(), _FakeCampaignResultRepo(), daily_repo
-        )
+        job = DailyAggregationJob(_FakeDispositionRepo(), _FakeCampaignResultRepo(), daily_repo)
         rollup = job.run_for_day(TenantId("t-1"), date(2026, 9, 16))
         assert rollup.avg_dpd == 0.0
 
@@ -88,6 +86,7 @@ class TestDailyAggregationJobWithoutOptionalPorts:
 # ---------------------------------------------------------------------------
 # Tests — with optional ports (Phase 6b)
 # ---------------------------------------------------------------------------
+
 
 class TestDailyAggregationJobWithPTPPort:
     def test_amount_collected_minor_uses_ptp_port(self) -> None:
@@ -165,9 +164,7 @@ class TestDailyAggregationJobWithLoanPort:
 class TestDailyAggregationJobIdempotency:
     def test_second_run_same_day_produces_second_upsert(self) -> None:
         daily_repo = _FakeDailyRepo()
-        job = DailyAggregationJob(
-            _FakeDispositionRepo(), _FakeCampaignResultRepo(), daily_repo
-        )
+        job = DailyAggregationJob(_FakeDispositionRepo(), _FakeCampaignResultRepo(), daily_repo)
         day = date(2026, 9, 16)
         job.run_for_day(TenantId("t-1"), day)
         job.run_for_day(TenantId("t-1"), day)

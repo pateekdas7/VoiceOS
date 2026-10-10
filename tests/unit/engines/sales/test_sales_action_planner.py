@@ -67,6 +67,7 @@ def _plan(
 # Priority 1: Risk override → HUMAN_HANDOFF always wins
 # ---------------------------------------------------------------------------
 
+
 def test_risk_escalation_overrides_everything():
     """human_handoff_required=True → HUMAN_HANDOFF regardless of other signals."""
     state = SalesState()
@@ -85,6 +86,7 @@ def test_escalation_required_overrides_everything():
 # Priority 2: ABUSE → END_CONVERSATION
 # ---------------------------------------------------------------------------
 
+
 def test_abuse_intent_ends_conversation():
     """ABUSE intent → END_CONVERSATION (priority 2, overrides objection handling)."""
     state = SalesState()
@@ -96,6 +98,7 @@ def test_abuse_intent_ends_conversation():
 # Priority 3: DISCONNECT → END_CONVERSATION
 # ---------------------------------------------------------------------------
 
+
 def test_disconnect_intent_ends_conversation():
     """DISCONNECT → END_CONVERSATION."""
     state = SalesState()
@@ -106,6 +109,7 @@ def test_disconnect_intent_ends_conversation():
 # ---------------------------------------------------------------------------
 # Priority 4: Explicit objection before any qualification action
 # ---------------------------------------------------------------------------
+
 
 def test_dispute_intent_gives_handle_objection():
     """DISPUTE intent this turn → HANDLE_OBJECTION (not ASK_BUDGET)."""
@@ -134,6 +138,7 @@ def test_hardship_intent_gives_handle_objection():
 # Priority 5: Strategy ESCALATE/TRANSFER → HUMAN_HANDOFF
 # ---------------------------------------------------------------------------
 
+
 def test_escalate_strategy_gives_human_handoff():
     """Strategy ESCALATE → HUMAN_HANDOFF (after abuse/disconnect/objection checks)."""
     state = SalesState()
@@ -152,6 +157,7 @@ def test_transfer_strategy_gives_human_handoff():
 # Priority 6: CALLBACK → SCHEDULE_FOLLOWUP
 # ---------------------------------------------------------------------------
 
+
 def test_callback_intent_schedules_followup():
     """CALLBACK intent → SCHEDULE_FOLLOWUP."""
     state = SalesState()
@@ -162,6 +168,7 @@ def test_callback_intent_schedules_followup():
 # ---------------------------------------------------------------------------
 # Priority 7+8: Site visit actions
 # ---------------------------------------------------------------------------
+
 
 def test_fully_qualified_site_visit_confirmed():
     """All fields confirmed + site_visit==CONFIRMED → CONFIRM_SITE_VISIT."""
@@ -189,16 +196,20 @@ def test_fully_qualified_high_intent_offers_site_visit():
 # Priority 9: next_question → maps to correct ASK_* action
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("field,expected_action", [
-    (QuestionField.PURPOSE, SalesAction.ASK_PURPOSE),
-    (QuestionField.LOCATION, SalesAction.ASK_LOCATION),
-    (QuestionField.PROPERTY_TYPE, SalesAction.ASK_PROPERTY_TYPE),
-    (QuestionField.BUDGET, SalesAction.ASK_BUDGET),
-    (QuestionField.TIMELINE, SalesAction.ASK_TIMELINE),
-    (QuestionField.DECISION_MAKER, SalesAction.ASK_DECISION_MAKER),
-    (QuestionField.FINANCING, SalesAction.ASK_FINANCING),
-    (QuestionField.SITE_VISIT_INTEREST, SalesAction.OFFER_SITE_VISIT),
-])
+
+@pytest.mark.parametrize(
+    "field,expected_action",
+    [
+        (QuestionField.PURPOSE, SalesAction.ASK_PURPOSE),
+        (QuestionField.LOCATION, SalesAction.ASK_LOCATION),
+        (QuestionField.PROPERTY_TYPE, SalesAction.ASK_PROPERTY_TYPE),
+        (QuestionField.BUDGET, SalesAction.ASK_BUDGET),
+        (QuestionField.TIMELINE, SalesAction.ASK_TIMELINE),
+        (QuestionField.DECISION_MAKER, SalesAction.ASK_DECISION_MAKER),
+        (QuestionField.FINANCING, SalesAction.ASK_FINANCING),
+        (QuestionField.SITE_VISIT_INTEREST, SalesAction.OFFER_SITE_VISIT),
+    ],
+)
 def test_field_maps_to_correct_ask_action(field: QuestionField, expected_action: SalesAction):
     """QuestionField → SalesAction mapping is correct."""
     state = SalesState()
@@ -209,6 +220,7 @@ def test_field_maps_to_correct_ask_action(field: QuestionField, expected_action:
 # ---------------------------------------------------------------------------
 # Default cases
 # ---------------------------------------------------------------------------
+
 
 def test_greeting_stage_returns_greet():
     """NEW stage with no other signal → GREET."""
@@ -229,6 +241,7 @@ def test_default_action_is_qualify():
 # ---------------------------------------------------------------------------
 # Human handoff intent
 # ---------------------------------------------------------------------------
+
 
 def test_disconnect_before_escalate_strategy():
     """DISCONNECT intent triggers END_CONVERSATION before strategy ESCALATE check."""

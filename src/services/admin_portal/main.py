@@ -72,6 +72,7 @@ def create_app():
     pub_key_path = os.environ.get("ADMIN_JWT_PUBLIC_KEY_PATH")
     if pub_key_path and os.path.exists(pub_key_path):
         from cryptography.hazmat.primitives import serialization
+
         with open(pub_key_path, "rb") as fh:
             pub_key = serialization.load_pem_public_key(fh.read())
         jwt_validator = JWTValidator(pub_key)
@@ -105,6 +106,7 @@ def create_app():
     class _AlwaysEntitledPolicy:
         def check(self, *a, **kw):
             from src.libs.contracts.models.billing import EntitlementResult
+
             return EntitlementResult(allowed=True)
 
     invoice_repo = InvoiceRepository(conn)

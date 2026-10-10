@@ -316,6 +316,7 @@ def create_web_api(
 
     async def _prometheus_metrics(_request: Request) -> Response:
         from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
         return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     async def system_health(_request: Request) -> JSONResponse:
@@ -362,8 +363,15 @@ def create_web_api(
     if campaign_service is not None and campaign_audience_repository is not None and crm_service is not None:
         routes.extend(_build_leads_routes(campaign_service, campaign_audience_repository, crm_service))
 
-    if pipeline_service is not None and lead_intake_service is not None and lead_repository is not None and lead_import_repository is not None:
-        routes.extend(_build_pipeline_lead_routes(pipeline_service, lead_intake_service, lead_repository, lead_import_repository))
+    if (
+        pipeline_service is not None
+        and lead_intake_service is not None
+        and lead_repository is not None
+        and lead_import_repository is not None
+    ):
+        routes.extend(
+            _build_pipeline_lead_routes(pipeline_service, lead_intake_service, lead_repository, lead_import_repository)
+        )
 
     if dialer_session_manager is not None:
         routes.extend(_build_dialer_routes(dialer_session_manager, twilio_auth_token))
@@ -462,7 +470,6 @@ def create_web_api(
     )
 
 
-
 def _build_crm_sync_routes(conn: Any) -> list[Route]:
     """Phase 4 CRM sync/import routes — LeadSquared credentials, sync log, import jobs."""
 
@@ -496,16 +503,16 @@ def _build_crm_sync_routes(conn: Any) -> list[Route]:
                     """SELECT cred_id::text, api_base_url, is_active, created_at::text, updated_at::text,
                               LEFT(access_key,8)||'...' AS access_key_preview
                        FROM leadsquared_credentials WHERE tenant_id=%s""",
-                    (tid,)
+                    (tid,),
                 )
                 row = cur.fetchone()
             if row:
-                cols = ['cred_id','api_base_url','is_active','created_at','updated_at','access_key_preview']
-                return JSONResponse({'config': dict(zip(cols, row, strict=False))})
-            return JSONResponse({'config': None})
+                cols = ["cred_id", "api_base_url", "is_active", "created_at", "updated_at", "access_key_preview"]
+                return JSONResponse({"config": dict(zip(cols, row, strict=False))})
+            return JSONResponse({"config": None})
         except Exception as e:
             conn.rollback()
-            return JSONResponse({'error': str(e)}, status_code=500)
+            return JSONResponse({"error": str(e)}, status_code=500)
 
     async def crm_put_config(request: Request) -> JSONResponse:
         try:
@@ -519,11 +526,11 @@ def _build_crm_sync_routes(conn: Any) -> list[Route]:
             body = await request.json()
         except Exception:
             return _error(400, "MALFORMED_PAYLOAD", "request body is not valid JSON")
-        ak = body.get('access_key')
-        sk = body.get('secret_key')
+        ak = body.get("access_key")
+        sk = body.get("secret_key")
         if not ak or not sk:
             return _error(422, "VALIDATION_ERROR", "access_key and secret_key required")
-        base = body.get('api_base_url', 'https://api.leadsquared.com')
+        base = body.get("api_base_url", "https://api.leadsquared.com")
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -533,15 +540,15 @@ def _build_crm_sync_routes(conn: Any) -> list[Route]:
                          access_key=EXCLUDED.access_key, secret_key=EXCLUDED.secret_key,
                          api_base_url=EXCLUDED.api_base_url, is_active=TRUE, updated_at=NOW()
                        RETURNING cred_id::text, api_base_url, is_active, updated_at::text""",
-                    (tid, ak, sk, base)
+                    (tid, ak, sk, base),
                 )
                 row = cur.fetchone()
             conn.commit()
-            cols = ['cred_id','api_base_url','is_active','updated_at']
-            return JSONResponse({'config': dict(zip(cols, row, strict=False))})
+            cols = ["cred_id", "api_base_url", "is_active", "updated_at"]
+            return JSONResponse({"config": dict(zip(cols, row, strict=False))})
         except Exception as e:
             conn.rollback()
-            return JSONResponse({'error': str(e)}, status_code=500)
+            return JSONResponse({"error": str(e)}, status_code=500)
 
     async def crm_delete_config(request: Request) -> JSONResponse:
         try:
@@ -554,14 +561,13 @@ def _build_crm_sync_routes(conn: Any) -> list[Route]:
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "UPDATE leadsquared_credentials SET is_active=FALSE, updated_at=NOW() WHERE tenant_id=%s",
-                    (tid,)
+                    "UPDATE leadsquared_credentials SET is_active=FALSE, updated_at=NOW() WHERE tenant_id=%s", (tid,)
                 )
             conn.commit()
-            return JSONResponse({'ok': True})
+            return JSONResponse({"ok": True})
         except Exception as e:
             conn.rollback()
-            return JSONResponse({'error': str(e)}, status_code=500)
+            return JSONResponse({"error": str(e)}, status_code=500)
 
     async def crm_sync_status(request: Request) -> JSONResponse:
         try:
@@ -581,24 +587,26 @@ def _build_crm_sync_routes(conn: Any) -> list[Route]:
                               COUNT(*) FILTER (WHERE sync_status='SKIPPED')  AS skipped,
                               MAX(synced_at)::text AS last_sync_at
                        FROM crm_sync_log WHERE tenant_id=%s GROUP BY entity_type""",
-                    (tid,)
+                    (tid,),
                 )
                 summary_rows = cur.fetchall()
                 cur.execute(
                     """SELECT entity_type, entity_id::text, last_error, attempt_count, updated_at::text
                        FROM crm_sync_log WHERE tenant_id=%s AND sync_status='FAILED'
                        ORDER BY updated_at DESC LIMIT 10""",
-                    (tid,)
+                    (tid,),
                 )
                 fail_rows = cur.fetchall()
-            sc = ['entity_type','pending','synced','failed','skipped','last_sync_at']
-            fc = ['entity_type','entity_id','last_error','attempt_count','updated_at']
-            return JSONResponse({
-                'summary': [dict(zip(sc, r, strict=False)) for r in summary_rows],
-                'recent_failures': [dict(zip(fc, r, strict=False)) for r in fail_rows],
-            })
+            sc = ["entity_type", "pending", "synced", "failed", "skipped", "last_sync_at"]
+            fc = ["entity_type", "entity_id", "last_error", "attempt_count", "updated_at"]
+            return JSONResponse(
+                {
+                    "summary": [dict(zip(sc, r, strict=False)) for r in summary_rows],
+                    "recent_failures": [dict(zip(fc, r, strict=False)) for r in fail_rows],
+                }
+            )
         except Exception as e:
-            return JSONResponse({'error': str(e)}, status_code=500)
+            return JSONResponse({"error": str(e)}, status_code=500)
 
     async def crm_trigger_disposition(request: Request) -> JSONResponse:
         try:
@@ -608,7 +616,7 @@ def _build_crm_sync_routes(conn: Any) -> list[Route]:
         except ForbiddenError as exc:
             return _error(403, "FORBIDDEN", str(exc))
         tid = _require_tenant_id(s)
-        call_id = request.path_params['call_id']
+        call_id = request.path_params["call_id"]
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -616,13 +624,13 @@ def _build_crm_sync_routes(conn: Any) -> list[Route]:
                        VALUES (%s,'disposition',%s::uuid,'PENDING')
                        ON CONFLICT (tenant_id,entity_type,entity_id) DO UPDATE
                        SET sync_status='PENDING', attempt_count=0, updated_at=NOW()""",
-                    (tid, call_id)
+                    (tid, call_id),
                 )
             conn.commit()
-            return JSONResponse({'queued': True, 'entity_id': call_id})
+            return JSONResponse({"queued": True, "entity_id": call_id})
         except Exception as e:
             conn.rollback()
-            return JSONResponse({'error': str(e)}, status_code=500)
+            return JSONResponse({"error": str(e)}, status_code=500)
 
     async def crm_trigger_ptp(request: Request) -> JSONResponse:
         try:
@@ -632,7 +640,7 @@ def _build_crm_sync_routes(conn: Any) -> list[Route]:
         except ForbiddenError as exc:
             return _error(403, "FORBIDDEN", str(exc))
         tid = _require_tenant_id(s)
-        ptp_id = request.path_params['ptp_id']
+        ptp_id = request.path_params["ptp_id"]
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -640,13 +648,13 @@ def _build_crm_sync_routes(conn: Any) -> list[Route]:
                        VALUES (%s,'ptp',%s::uuid,'PENDING')
                        ON CONFLICT (tenant_id,entity_type,entity_id) DO UPDATE
                        SET sync_status='PENDING', attempt_count=0, updated_at=NOW()""",
-                    (tid, ptp_id)
+                    (tid, ptp_id),
                 )
             conn.commit()
-            return JSONResponse({'queued': True, 'entity_id': ptp_id})
+            return JSONResponse({"queued": True, "entity_id": ptp_id})
         except Exception as e:
             conn.rollback()
-            return JSONResponse({'error': str(e)}, status_code=500)
+            return JSONResponse({"error": str(e)}, status_code=500)
 
     async def crm_trigger_settlement(request: Request) -> JSONResponse:
         try:
@@ -656,7 +664,7 @@ def _build_crm_sync_routes(conn: Any) -> list[Route]:
         except ForbiddenError as exc:
             return _error(403, "FORBIDDEN", str(exc))
         tid = _require_tenant_id(s)
-        sid = request.path_params['settlement_id']
+        sid = request.path_params["settlement_id"]
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -664,13 +672,13 @@ def _build_crm_sync_routes(conn: Any) -> list[Route]:
                        VALUES (%s,'settlement',%s::uuid,'PENDING')
                        ON CONFLICT (tenant_id,entity_type,entity_id) DO UPDATE
                        SET sync_status='PENDING', attempt_count=0, updated_at=NOW()""",
-                    (tid, sid)
+                    (tid, sid),
                 )
             conn.commit()
-            return JSONResponse({'queued': True, 'entity_id': sid})
+            return JSONResponse({"queued": True, "entity_id": sid})
         except Exception as e:
             conn.rollback()
-            return JSONResponse({'error': str(e)}, status_code=500)
+            return JSONResponse({"error": str(e)}, status_code=500)
 
     async def crm_import_leads(request: Request) -> JSONResponse:
         try:
@@ -684,35 +692,34 @@ def _build_crm_sync_routes(conn: Any) -> list[Route]:
             body = await request.json()
         except Exception:
             return _error(400, "MALFORMED_PAYLOAD", "request body is not valid JSON")
-        cid = body.get('campaign_id')
-        filters = body.get('filters', [])
-        max_leads = body.get('max_leads', 1000)
+        cid = body.get("campaign_id")
+        filters = body.get("filters", [])
+        max_leads = body.get("max_leads", 1000)
         try:
             with conn.cursor() as cur:
                 # Verify LS credentials
-                cur.execute(
-                    "SELECT cred_id FROM leadsquared_credentials WHERE tenant_id=%s AND is_active=TRUE",
-                    (tid,)
-                )
+                cur.execute("SELECT cred_id FROM leadsquared_credentials WHERE tenant_id=%s AND is_active=TRUE", (tid,))
                 if not cur.fetchone():
                     return JSONResponse(
-                        {'error': 'leadsquared_not_configured',
-                         'detail': 'Set credentials via PUT /crm/sync/config first'},
-                        status_code=422
+                        {
+                            "error": "leadsquared_not_configured",
+                            "detail": "Set credentials via PUT /crm/sync/config first",
+                        },
+                        status_code=422,
                     )
                 cur.execute(
                     """INSERT INTO leadsquared_import_log
                          (tenant_id, campaign_id, status, filters)
                        VALUES (%s, %s, 'QUEUED', %s::jsonb)
                        RETURNING import_id::text""",
-                    (tid, cid or None, _json_mod.dumps({'filters': filters, 'max_leads': max_leads}))
+                    (tid, cid or None, _json_mod.dumps({"filters": filters, "max_leads": max_leads})),
                 )
                 import_id = cur.fetchone()[0]
             conn.commit()
-            return JSONResponse({'import_id': import_id, 'status': 'QUEUED'}, status_code=202)
+            return JSONResponse({"import_id": import_id, "status": "QUEUED"}, status_code=202)
         except Exception as e:
             conn.rollback()
-            return JSONResponse({'error': str(e)}, status_code=500)
+            return JSONResponse({"error": str(e)}, status_code=500)
 
     async def crm_import_status(request: Request) -> JSONResponse:
         try:
@@ -723,7 +730,7 @@ def _build_crm_sync_routes(conn: Any) -> list[Route]:
             return _error(403, "FORBIDDEN", str(exc))
         tid = _require_tenant_id(s)
         try:
-            limit = min(50, int(request.query_params.get('limit', '10')))
+            limit = min(50, int(request.query_params.get("limit", "10")))
             with conn.cursor() as cur:
                 cur.execute(
                     """SELECT import_id::text, status, leads_fetched, leads_created,
@@ -731,14 +738,23 @@ def _build_crm_sync_routes(conn: Any) -> list[Route]:
                               started_at::text, completed_at::text
                        FROM leadsquared_import_log
                        WHERE tenant_id=%s ORDER BY started_at DESC LIMIT %s""",
-                    (tid, limit)
+                    (tid, limit),
                 )
                 rows = cur.fetchall()
-            cols = ['import_id','status','leads_fetched','leads_created',
-                    'leads_updated','leads_skipped','error_message','started_at','completed_at']
-            return JSONResponse({'imports': [dict(zip(cols, r, strict=False)) for r in rows]})
+            cols = [
+                "import_id",
+                "status",
+                "leads_fetched",
+                "leads_created",
+                "leads_updated",
+                "leads_skipped",
+                "error_message",
+                "started_at",
+                "completed_at",
+            ]
+            return JSONResponse({"imports": [dict(zip(cols, r, strict=False)) for r in rows]})
         except Exception as e:
-            return JSONResponse({'error': str(e)}, status_code=500)
+            return JSONResponse({"error": str(e)}, status_code=500)
 
     async def crm_get_field_mapping(request: Request) -> JSONResponse:
         try:
@@ -759,13 +775,13 @@ def _build_crm_sync_routes(conn: Any) -> list[Route]:
                        LEFT JOIN leadsquared_field_mapping t
                          ON t.voiceos_field=d.voiceos_field AND t.tenant_id=%s AND t.is_active=TRUE
                        ORDER BY d.voiceos_field""",
-                    (tid,)
+                    (tid,),
                 )
                 rows = cur.fetchall()
-            cols = ['voiceos_field','ls_field','description','is_overridden']
-            return JSONResponse({'mappings': [dict(zip(cols, r, strict=False)) for r in rows]})
+            cols = ["voiceos_field", "ls_field", "description", "is_overridden"]
+            return JSONResponse({"mappings": [dict(zip(cols, r, strict=False)) for r in rows]})
         except Exception as e:
-            return JSONResponse({'error': str(e)}, status_code=500)
+            return JSONResponse({"error": str(e)}, status_code=500)
 
     async def crm_put_field_mapping(request: Request) -> JSONResponse:
         try:
@@ -779,8 +795,8 @@ def _build_crm_sync_routes(conn: Any) -> list[Route]:
             body = await request.json()
         except Exception:
             return _error(400, "MALFORMED_PAYLOAD", "request body is not valid JSON")
-        vf = body.get('voiceos_field')
-        lf = body.get('ls_field')
+        vf = body.get("voiceos_field")
+        lf = body.get("ls_field")
         if not vf or not lf:
             return _error(422, "VALIDATION_ERROR", "voiceos_field and ls_field required")
         try:
@@ -791,28 +807,28 @@ def _build_crm_sync_routes(conn: Any) -> list[Route]:
                        ON CONFLICT (tenant_id, voiceos_field) DO UPDATE SET
                          ls_field=EXCLUDED.ls_field, is_active=TRUE
                        RETURNING mapping_id::text, voiceos_field, ls_field""",
-                    (tid, vf, lf)
+                    (tid, vf, lf),
                 )
                 row = cur.fetchone()
             conn.commit()
-            cols = ['mapping_id','voiceos_field','ls_field']
-            return JSONResponse({'mapping': dict(zip(cols, row, strict=False))})
+            cols = ["mapping_id", "voiceos_field", "ls_field"]
+            return JSONResponse({"mapping": dict(zip(cols, row, strict=False))})
         except Exception as e:
             conn.rollback()
-            return JSONResponse({'error': str(e)}, status_code=500)
+            return JSONResponse({"error": str(e)}, status_code=500)
 
     return [
-        Route("/crm/sync/config",                            crm_get_config,          methods=["GET"]),
-        Route("/crm/sync/config",                            crm_put_config,          methods=["PUT"]),
-        Route("/crm/sync/config",                            crm_delete_config,       methods=["DELETE"]),
-        Route("/crm/sync/status",                            crm_sync_status,         methods=["GET"]),
-        Route("/crm/sync/disposition/{call_id}",             crm_trigger_disposition, methods=["POST"]),
-        Route("/crm/sync/ptp/{ptp_id}",                      crm_trigger_ptp,         methods=["POST"]),
-        Route("/crm/sync/settlement/{settlement_id}",        crm_trigger_settlement,  methods=["POST"]),
-        Route("/crm/import/leadsquared",                     crm_import_leads,        methods=["POST"]),
-        Route("/crm/import/status",                          crm_import_status,       methods=["GET"]),
-        Route("/crm/field-mapping",                          crm_get_field_mapping,   methods=["GET"]),
-        Route("/crm/field-mapping",                          crm_put_field_mapping,   methods=["PUT"]),
+        Route("/crm/sync/config", crm_get_config, methods=["GET"]),
+        Route("/crm/sync/config", crm_put_config, methods=["PUT"]),
+        Route("/crm/sync/config", crm_delete_config, methods=["DELETE"]),
+        Route("/crm/sync/status", crm_sync_status, methods=["GET"]),
+        Route("/crm/sync/disposition/{call_id}", crm_trigger_disposition, methods=["POST"]),
+        Route("/crm/sync/ptp/{ptp_id}", crm_trigger_ptp, methods=["POST"]),
+        Route("/crm/sync/settlement/{settlement_id}", crm_trigger_settlement, methods=["POST"]),
+        Route("/crm/import/leadsquared", crm_import_leads, methods=["POST"]),
+        Route("/crm/import/status", crm_import_status, methods=["GET"]),
+        Route("/crm/field-mapping", crm_get_field_mapping, methods=["GET"]),
+        Route("/crm/field-mapping", crm_put_field_mapping, methods=["PUT"]),
     ]
 
 
@@ -1914,9 +1930,7 @@ def _build_pipeline_lead_routes(
         if not name:
             return _error(422, "VALIDATION_ERROR", "missing required field: name")
         campaign_id = CampaignId(request.path_params["campaign_id"])
-        pipeline = pipeline_service.create(
-            TenantId(guard.tenant_id), campaign_id, name, created_by=guard.subject
-        )
+        pipeline = pipeline_service.create(TenantId(guard.tenant_id), campaign_id, name, created_by=guard.subject)
         return JSONResponse(_pipeline_to_dict(pipeline), status_code=201)
 
     async def list_pipelines(request: Request) -> JSONResponse:
@@ -1979,7 +1993,8 @@ def _build_pipeline_lead_routes(
         pipeline_filter = request.query_params.get("pipeline_id") or None
         search = request.query_params.get("search") or None
         leads = lead_repository.find_by_campaign(
-            tenant_id, campaign_id,
+            tenant_id,
+            campaign_id,
             status=status_filter,
             pipeline_id=pipeline_filter,
             search=search,
@@ -2002,20 +2017,22 @@ def _build_pipeline_lead_routes(
         tenant_id = TenantId(guard.tenant_id)
         campaign_id = CampaignId(request.path_params["campaign_id"])
         imports = import_repository.find_by_campaign(tenant_id, campaign_id)
-        return JSONResponse([
-            {
-                "import_id": imp.import_id,
-                "filename": imp.filename,
-                "status": imp.status,
-                "total_rows": imp.total_rows,
-                "valid_rows": imp.valid_rows,
-                "invalid_rows": imp.invalid_rows,
-                "duplicate_rows": imp.duplicate_rows,
-                "created_at": imp.created_at.isoformat(),
-                "completed_at": imp.completed_at.isoformat() if imp.completed_at else None,
-            }
-            for imp in imports
-        ])
+        return JSONResponse(
+            [
+                {
+                    "import_id": imp.import_id,
+                    "filename": imp.filename,
+                    "status": imp.status,
+                    "total_rows": imp.total_rows,
+                    "valid_rows": imp.valid_rows,
+                    "invalid_rows": imp.invalid_rows,
+                    "duplicate_rows": imp.duplicate_rows,
+                    "created_at": imp.created_at.isoformat(),
+                    "completed_at": imp.completed_at.isoformat() if imp.completed_at else None,
+                }
+                for imp in imports
+            ]
+        )
 
     async def upload_leads(request: Request) -> JSONResponse:
         guard = await _guard_write(request)
@@ -2043,7 +2060,8 @@ def _build_pipeline_lead_routes(
             return _error(422, "VALIDATION_ERROR", "column_mapping must be an object of {csv_column: standard_field}")
         if "phone" not in column_mapping.values():
             return _error(
-                422, "VALIDATION_ERROR",
+                422,
+                "VALIDATION_ERROR",
                 "column_mapping must map at least one CSV column to 'phone' (required for outbound dialing)",
             )
         raw_pipeline_ids: list[str] = body.get("pipeline_ids") or []
@@ -2366,7 +2384,13 @@ def _serialize_insight(insight: Any) -> dict[str, Any]:
         "category": insight.category.value,
         "severity": insight.severity.value,
         "verified_facts": [
-            {"claim": f.claim, "source": f.source, "query": f.query, "value": f.value, "observed_at": f.observed_at.isoformat()}
+            {
+                "claim": f.claim,
+                "source": f.source,
+                "query": f.query,
+                "value": f.value,
+                "observed_at": f.observed_at.isoformat(),
+            }
             for f in insight.verified_facts
         ],
         "hypotheses": [
@@ -2587,23 +2611,25 @@ def _build_system_x_routes(system_x_service: Any) -> list[Route]:
             return _error(401 if isinstance(exc, SessionRequiredError) else 403, "forbidden", str(exc))
         active_only = request.query_params.get("active") == "true"
         incidents = system_x_service.list_incidents(active_only=active_only)
-        return JSONResponse({
-            "incidents": [
-                {
-                    "incident_id": i.incident_id,
-                    "title": i.title,
-                    "severity": str(i.severity),
-                    "status": str(i.status),
-                    "detected_at": i.detected_at.isoformat(),
-                    "resolved_at": i.resolved_at.isoformat() if i.resolved_at else None,
-                    "affected_services": list(i.affected_services),
-                    "total_downtime_s": i.total_downtime_s,
-                    "root_cause": i.root_cause,
-                    "recovery_summary": i.recovery_summary,
-                }
-                for i in incidents
-            ]
-        })
+        return JSONResponse(
+            {
+                "incidents": [
+                    {
+                        "incident_id": i.incident_id,
+                        "title": i.title,
+                        "severity": str(i.severity),
+                        "status": str(i.status),
+                        "detected_at": i.detected_at.isoformat(),
+                        "resolved_at": i.resolved_at.isoformat() if i.resolved_at else None,
+                        "affected_services": list(i.affected_services),
+                        "total_downtime_s": i.total_downtime_s,
+                        "root_cause": i.root_cause,
+                        "recovery_summary": i.recovery_summary,
+                    }
+                    for i in incidents
+                ]
+            }
+        )
 
     async def get_incident(request: Request) -> JSONResponse:
         try:
@@ -2615,32 +2641,36 @@ def _build_system_x_routes(system_x_service: Any) -> list[Route]:
         if not incident:
             return _error(404, "not_found", f"incident {incident_id} not found")
         analysis = incident.claude_analysis
-        return JSONResponse({
-            "incident": {
-                "incident_id": incident.incident_id,
-                "title": incident.title,
-                "severity": str(incident.severity),
-                "status": str(incident.status),
-                "detected_at": incident.detected_at.isoformat(),
-                "resolved_at": incident.resolved_at.isoformat() if incident.resolved_at else None,
-                "affected_services": list(incident.affected_services),
-                "alert_fingerprints": list(incident.alert_fingerprints),
-                "root_cause": incident.root_cause,
-                "recovery_summary": incident.recovery_summary,
-                "total_downtime_s": incident.total_downtime_s,
-                "claude_analysis": {
-                    "root_cause": analysis.root_cause,
-                    "confidence": analysis.confidence,
-                    "recommended_actions": list(analysis.recommended_actions),
-                    "recovery_plan": list(analysis.recovery_plan),
-                    "estimated_recovery_time_s": analysis.estimated_recovery_time_s,
-                    "risk_assessment": analysis.risk_assessment,
-                    "model": analysis.model,
-                    "analyzed_at": analysis.analyzed_at.isoformat(),
-                } if analysis else None,
-                "health_after": incident.health_after,
+        return JSONResponse(
+            {
+                "incident": {
+                    "incident_id": incident.incident_id,
+                    "title": incident.title,
+                    "severity": str(incident.severity),
+                    "status": str(incident.status),
+                    "detected_at": incident.detected_at.isoformat(),
+                    "resolved_at": incident.resolved_at.isoformat() if incident.resolved_at else None,
+                    "affected_services": list(incident.affected_services),
+                    "alert_fingerprints": list(incident.alert_fingerprints),
+                    "root_cause": incident.root_cause,
+                    "recovery_summary": incident.recovery_summary,
+                    "total_downtime_s": incident.total_downtime_s,
+                    "claude_analysis": {
+                        "root_cause": analysis.root_cause,
+                        "confidence": analysis.confidence,
+                        "recommended_actions": list(analysis.recommended_actions),
+                        "recovery_plan": list(analysis.recovery_plan),
+                        "estimated_recovery_time_s": analysis.estimated_recovery_time_s,
+                        "risk_assessment": analysis.risk_assessment,
+                        "model": analysis.model,
+                        "analyzed_at": analysis.analyzed_at.isoformat(),
+                    }
+                    if analysis
+                    else None,
+                    "health_after": incident.health_after,
+                }
             }
-        })
+        )
 
     async def get_audit_trail(request: Request) -> JSONResponse:
         try:
@@ -2649,20 +2679,22 @@ def _build_system_x_routes(system_x_service: Any) -> list[Route]:
             return _error(401 if isinstance(exc, SessionRequiredError) else 403, "forbidden", str(exc))
         incident_id = request.path_params["incident_id"]
         entries = system_x_service.get_audit_trail(incident_id)
-        return JSONResponse({
-            "audit_trail": [
-                {
-                    "entry_id": e.entry_id,
-                    "recorded_at": e.recorded_at.isoformat(),
-                    "actor": e.actor,
-                    "action": e.action,
-                    "result": e.result,
-                    "rollback_status": e.rollback_status,
-                    "verification_outcome": e.verification_outcome,
-                }
-                for e in entries
-            ]
-        })
+        return JSONResponse(
+            {
+                "audit_trail": [
+                    {
+                        "entry_id": e.entry_id,
+                        "recorded_at": e.recorded_at.isoformat(),
+                        "actor": e.actor,
+                        "action": e.action,
+                        "result": e.result,
+                        "rollback_status": e.rollback_status,
+                        "verification_outcome": e.verification_outcome,
+                    }
+                    for e in entries
+                ]
+            }
+        )
 
     async def get_recovery_actions(request: Request) -> JSONResponse:
         try:
@@ -2671,22 +2703,24 @@ def _build_system_x_routes(system_x_service: Any) -> list[Route]:
             return _error(401 if isinstance(exc, SessionRequiredError) else 403, "forbidden", str(exc))
         incident_id = request.path_params["incident_id"]
         actions = system_x_service.get_recovery_actions(incident_id)
-        return JSONResponse({
-            "recovery_actions": [
-                {
-                    "action_id": a.action_id,
-                    "action_type": str(a.action_type),
-                    "target_service": a.target_service,
-                    "status": str(a.status),
-                    "started_at": a.started_at.isoformat(),
-                    "completed_at": a.completed_at.isoformat() if a.completed_at else None,
-                    "result": a.result,
-                    "error": a.error,
-                    "rolled_back": a.rolled_back,
-                }
-                for a in actions
-            ]
-        })
+        return JSONResponse(
+            {
+                "recovery_actions": [
+                    {
+                        "action_id": a.action_id,
+                        "action_type": str(a.action_type),
+                        "target_service": a.target_service,
+                        "status": str(a.status),
+                        "started_at": a.started_at.isoformat(),
+                        "completed_at": a.completed_at.isoformat() if a.completed_at else None,
+                        "result": a.result,
+                        "error": a.error,
+                        "rolled_back": a.rolled_back,
+                    }
+                    for a in actions
+                ]
+            }
+        )
 
     async def get_notifications(request: Request) -> JSONResponse:
         try:
@@ -2695,22 +2729,24 @@ def _build_system_x_routes(system_x_service: Any) -> list[Route]:
             return _error(401 if isinstance(exc, SessionRequiredError) else 403, "forbidden", str(exc))
         incident_id = request.path_params["incident_id"]
         notifications = system_x_service.get_notifications(incident_id)
-        return JSONResponse({
-            "notifications": [
-                {
-                    "notification_id": n.notification_id,
-                    "channel": str(n.channel),
-                    "notification_type": n.notification_type,
-                    "recipient": n.recipient,
-                    "subject": n.subject,
-                    "status": str(n.status),
-                    "sent_at": n.sent_at.isoformat() if n.sent_at else None,
-                    "error": n.error,
-                    "created_at": n.created_at.isoformat(),
-                }
-                for n in notifications
-            ]
-        })
+        return JSONResponse(
+            {
+                "notifications": [
+                    {
+                        "notification_id": n.notification_id,
+                        "channel": str(n.channel),
+                        "notification_type": n.notification_type,
+                        "recipient": n.recipient,
+                        "subject": n.subject,
+                        "status": str(n.status),
+                        "sent_at": n.sent_at.isoformat() if n.sent_at else None,
+                        "error": n.error,
+                        "created_at": n.created_at.isoformat(),
+                    }
+                    for n in notifications
+                ]
+            }
+        )
 
     return [
         Route("/admin/system-x/incidents", list_incidents, methods=["GET"]),
@@ -2786,10 +2822,13 @@ def _build_startup_handlers(
             while True:
                 now = date.today()
                 yesterday = now - timedelta(days=1)
-                _log.info("DailyAggregationJob: would aggregate for %s (no tenant list available at startup)", yesterday)
+                _log.info(
+                    "DailyAggregationJob: would aggregate for %s (no tenant list available at startup)", yesterday
+                )
 
                 # Sleep until next midnight UTC.
                 from datetime import time as _time
+
                 tomorrow_dt = datetime.combine(now + timedelta(days=1), _time.min).replace(tzinfo=UTC)
                 sleep_s = (tomorrow_dt - datetime.now(UTC)).total_seconds()
                 await asyncio.sleep(max(sleep_s, 3600))
@@ -2859,8 +2898,7 @@ def _build_dialer_routes(
             timezone_name=body.get("timezone_name", "Asia/Kolkata"),
         )
         return JSONResponse(
-            {"status": info.status, "campaign_id": info.campaign_id,
-             "started_at": info.started_at.isoformat()},
+            {"status": info.status, "campaign_id": info.campaign_id, "started_at": info.started_at.isoformat()},
             status_code=200,
         )
 
@@ -2881,8 +2919,7 @@ def _build_dialer_routes(
         if info is None:
             return JSONResponse({"status": "idle", "campaign_id": campaign_id})
         return JSONResponse(
-            {"status": info.status, "campaign_id": info.campaign_id,
-             "started_at": info.started_at.isoformat()}
+            {"status": info.status, "campaign_id": info.campaign_id, "started_at": info.started_at.isoformat()}
         )
 
     async def twilio_status_callback(request: Request) -> JSONResponse:
@@ -2915,7 +2952,8 @@ def _build_dialer_routes(
             if not validate_signature(twilio_auth_token, signed_url, form_params, signature):
                 _log.warning(
                     "twilio_status rejected: invalid signature (url=%s remote=%s)",
-                    signed_url, request.client.host if request.client else "?",
+                    signed_url,
+                    request.client.host if request.client else "?",
                 )
                 return JSONResponse({"error": "invalid_signature"}, status_code=403)
 
@@ -2924,7 +2962,11 @@ def _build_dialer_routes(
         amd_status = form.get("AnsweredBy", "")
 
         # Retrieve tenant/campaign/lead context stored at call-placement time
-        raw = request.app.state.dialer_redis.get(f"dialer:sid:{call_sid}") if hasattr(request.app.state, "dialer_redis") else None
+        raw = (
+            request.app.state.dialer_redis.get(f"dialer:sid:{call_sid}")
+            if hasattr(request.app.state, "dialer_redis")
+            else None
+        )
         if raw:
             tenant_id, campaign_id, lead_id = (raw.decode() if isinstance(raw, bytes) else raw).split("|", 2)
         else:
@@ -2936,10 +2978,14 @@ def _build_dialer_routes(
 
         _log.info(
             "twilio_status call_sid=%s status=%s amd=%s lead_id=%s",
-            call_sid, call_status, amd_status, lead_id,
+            call_sid,
+            call_status,
+            amd_status,
+            lead_id,
         )
 
         from src.services.dialer import metrics as _dm
+
         terminal = call_status in ("completed", "busy", "failed", "no-answer", "canceled")
         if terminal:
             _dm.record_call_completed(tenant_id, campaign_id, call_status)

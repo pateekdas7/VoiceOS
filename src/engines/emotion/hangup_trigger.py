@@ -55,7 +55,8 @@ _DEFAULT_HOSTILE_THRESHOLD = 3
 # a Marathi/Tamil/etc. pack can be added when those tenants go live.
 _HANGUP_PHRASE_HINGLISH = (
     "Sir/Madam, main aapki baat samajh sakti hoon lekin ab main call end "
-    "kar rahi hoon. Aap humein " "1800-XXX-XXXX par call kar sakte hain jab "
+    "kar rahi hoon. Aap humein "
+    "1800-XXX-XXXX par call kar sakte hain jab "
     "convenient ho. Dhanyawaad."
 )
 
@@ -104,10 +105,7 @@ class HostilityHangupTracker:
         farewell_text: str = _HANGUP_PHRASE_HINGLISH,
     ) -> None:
         if consecutive_hostile_threshold < 1:
-            raise ValueError(
-                "consecutive_hostile_threshold must be >= 1 "
-                f"(got {consecutive_hostile_threshold})"
-            )
+            raise ValueError(f"consecutive_hostile_threshold must be >= 1 (got {consecutive_hostile_threshold})")
         self._threshold = consecutive_hostile_threshold
         self._farewell = farewell_text
         self._state: dict[str, _CallState] = {}
@@ -135,14 +133,13 @@ class HostilityHangupTracker:
         else:
             state.consecutive_hostile = 0
 
-        if (
-            state.consecutive_hostile >= self._threshold
-            and not state.already_triggered
-        ):
+        if state.consecutive_hostile >= self._threshold and not state.already_triggered:
             state.already_triggered = True
             _log.warning(
                 "graceful hangup triggered call_id=%s consecutive_hostile=%d threshold=%d",
-                call_id, state.consecutive_hostile, self._threshold,
+                call_id,
+                state.consecutive_hostile,
+                self._threshold,
             )
             return HangupDecision(
                 should_hangup=True,

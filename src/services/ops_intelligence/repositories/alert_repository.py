@@ -106,9 +106,7 @@ class PostgresAlertRepository(BaseRepository):
         if tenant_id is not None:
             where += " AND tenant_id = %s"
             params.append(tenant_id)
-        cur = self._execute(
-            f"SELECT {', '.join(_COLUMNS)} FROM {_TABLE} WHERE {where} ORDER BY fired_at ASC", params
-        )
+        cur = self._execute(f"SELECT {', '.join(_COLUMNS)} FROM {_TABLE} WHERE {where} ORDER BY fired_at ASC", params)
         return tuple(_row_to_alert(row) for row in cur.fetchall())
 
     def count_by_status(self) -> dict[tuple[AlertStatus, str], int]:

@@ -43,9 +43,7 @@ class _FakeCampaignRepository:
         return campaign
 
     def find_active_for_tenant(self, tenant_id: str) -> tuple[Campaign, ...]:
-        return tuple(
-            c for c in self._store.values() if c.tenant_id == tenant_id and c.status == CampaignStatus.ACTIVE
-        )
+        return tuple(c for c in self._store.values() if c.tenant_id == tenant_id and c.status == CampaignStatus.ACTIVE)
 
     def find_all_for_tenant(self, tenant_id: str) -> tuple[Campaign, ...]:
         return tuple(c for c in self._store.values() if c.tenant_id == tenant_id)
@@ -54,7 +52,9 @@ class _FakeCampaignRepository:
         campaign = self._store[campaign_id]
         self._store[campaign_id] = campaign.model_copy(update={"status": status})
 
-    def update_counts(self, tenant_id: str, campaign_id: str, target_call_count: int, completed_call_count: int) -> None:
+    def update_counts(
+        self, tenant_id: str, campaign_id: str, target_call_count: int, completed_call_count: int
+    ) -> None:
         campaign = self._store[campaign_id]
         self._store[campaign_id] = campaign.model_copy(
             update={"target_call_count": target_call_count, "completed_call_count": completed_call_count}
@@ -154,13 +154,19 @@ def app_client(session_codec: WebSessionCodec, campaign_repo: _FakeCampaignRepos
 def _tenant_token(codec: WebSessionCodec, tenant_id: str = TENANT_A, role: str = "MANAGER") -> str:
     permissions = tuple(ROLE_PERMISSIONS.get(AuthzRole(role), frozenset()))
     return codec.encode(
-        actor_kind="tenant", subject="u-1", role=role, permissions=permissions, email="u@tenant.com",
+        actor_kind="tenant",
+        subject="u-1",
+        role=role,
+        permissions=permissions,
+        email="u@tenant.com",
         tenant_id=tenant_id,
     )
 
 
 def _platform_token(codec: WebSessionCodec) -> str:
-    return codec.encode(actor_kind="platform", subject="pu-1", role="PLATFORM_ADMIN", email="a@voiceos.ai", tenant_id=None)
+    return codec.encode(
+        actor_kind="platform", subject="pu-1", role="PLATFORM_ADMIN", email="a@voiceos.ai", tenant_id=None
+    )
 
 
 class TestListCampaigns:
@@ -178,9 +184,7 @@ class TestListCampaigns:
         campaign_repo._store["c-a"] = _campaign("c-a", TENANT_A, "Tenant A Campaign")
         campaign_repo._store["c-b"] = _campaign("c-b", TENANT_B, "Tenant B Campaign")
 
-        response = app_client.get(
-            "/campaigns", cookies={"voiceos_session": _tenant_token(session_codec, TENANT_A)}
-        )
+        response = app_client.get("/campaigns", cookies={"voiceos_session": _tenant_token(session_codec, TENANT_A)})
         assert response.status_code == 200
         names = {c["name"] for c in response.json()}
         assert names == {"Tenant A Campaign"}
@@ -220,9 +224,7 @@ class TestCampaignLifecycle:
         approved = app_client.post(f"/campaigns/{campaign_id}/approve", cookies=cookies)
         assert approved.json()["status"] == "APPROVED"
 
-        started = app_client.post(
-            f"/campaigns/{campaign_id}/start", json={"target_call_count": 500}, cookies=cookies
-        )
+        started = app_client.post(f"/campaigns/{campaign_id}/start", json={"target_call_count": 500}, cookies=cookies)
         assert started.status_code == 200
         assert started.json()["status"] == "ACTIVE"
         assert started.json()["target_call_count"] == 500

@@ -167,13 +167,17 @@ class EvidenceBundler:
         age_seconds = (self._now() - sample.observed_at).total_seconds()
         if age_seconds > self._staleness_threshold_seconds:
             return None
-        return VerifiedFact(claim=claim, source=source, query=query, value=f"{sample.value:g}", observed_at=sample.observed_at)
+        return VerifiedFact(
+            claim=claim, source=source, query=query, value=f"{sample.value:g}", observed_at=sample.observed_at
+        )
 
     def _correlate_logs(self, spec: MetricCheckSpec, tenant_id: str | None) -> tuple[VerifiedFact, ...]:
         if self._logs is None:
             return ()
-        logql = f'{{service="{spec.affected_component}"}} |= "error"' if tenant_id is None else (
-            f'{{service="{spec.affected_component}", tenant_id="{tenant_id}"}} |= "error"'
+        logql = (
+            f'{{service="{spec.affected_component}"}} |= "error"'
+            if tenant_id is None
+            else (f'{{service="{spec.affected_component}", tenant_id="{tenant_id}"}} |= "error"')
         )
         lines = self._logs.query(logql, limit=5)
         if not lines:

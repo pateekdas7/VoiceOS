@@ -42,14 +42,24 @@ if TYPE_CHECKING:
 
 # Standard field → CSV column aliases used for auto-suggest
 _STANDARD_ALIASES: dict[str, list[str]] = {
-    "phone": ["phone", "mobile", "mobile no", "contact", "phone no", "phone number",
-               "mobileno", "mobile_no", "phoneno", "phone_no", "mob"],
+    "phone": [
+        "phone",
+        "mobile",
+        "mobile no",
+        "contact",
+        "phone no",
+        "phone number",
+        "mobileno",
+        "mobile_no",
+        "phoneno",
+        "phone_no",
+        "mob",
+    ],
     "name": ["name", "customer name", "full name", "fullname", "customer_name"],
     "email": ["email", "email address", "email_address", "emailid", "email id"],
     "loan_amount": ["loan amount", "loan_amount", "loanamount", "loan"],
     "dpd": ["dpd", "days past due", "days_past_due", "dayspastdue", "overdue days"],
-    "outstanding": ["outstanding", "outstanding amount", "outstanding_amount", "balance",
-                    "due amount", "due_amount"],
+    "outstanding": ["outstanding", "outstanding amount", "outstanding_amount", "balance", "due amount", "due_amount"],
     "product_type": ["product type", "product_type", "producttype", "product"],
     "city": ["city", "district"],
     "state": ["state", "province"],
@@ -156,10 +166,7 @@ class LeadIntakeService:
                 continue
 
             # Dedup: check both this batch and existing campaign leads.
-            is_dup = (
-                phone in seen_phones
-                or self._lead_repo.phone_exists_in_campaign(campaign_id, phone)
-            )
+            is_dup = phone in seen_phones or self._lead_repo.phone_exists_in_campaign(campaign_id, phone)
 
             name = mapped.get("name", "").strip()
             email = mapped.get("email", "").strip() or None
@@ -255,6 +262,7 @@ class LeadIntakeService:
 # ─────────────────────────────────────────────────────────────────────────────
 # Private helpers
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def _apply_mapping(row: dict[str, str], column_mapping: dict[str, str]) -> dict[str, str]:
     """Remap CSV columns to standard field names using column_mapping."""

@@ -318,7 +318,10 @@ class TwilioWebSocketAdapter(TransportAdapter):
         start = msg.get("start", {})
         self._stream_sid = start.get("streamSid", "")
         import logging as _lg
-        _lg.getLogger("voiceos.twilio_ws").info("CALL_DIAG: stream_sid=%r callSid=%r", self._stream_sid, start.get("callSid", ""))
+
+        _lg.getLogger("voiceos.twilio_ws").info(
+            "CALL_DIAG: stream_sid=%r callSid=%r", self._stream_sid, start.get("callSid", "")
+        )
 
         # Use the Twilio CallSid as the CallId if none was pre-assigned.
         if self._call_id is None:

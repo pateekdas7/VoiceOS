@@ -29,10 +29,7 @@ from src.services.media_gateway.consent_gate import (
     NullCustomerConsent,
 )
 
-_ENTRYPOINT = (
-    Path(__file__).resolve().parents[3]
-    / "src" / "services" / "media_gateway" / "twilio_ws_entrypoint.py"
-)
+_ENTRYPOINT = Path(__file__).resolve().parents[3] / "src" / "services" / "media_gateway" / "twilio_ws_entrypoint.py"
 
 
 class TestNullCustomerConsent:
@@ -59,9 +56,7 @@ class TestConsentBlockMetric:
     def test_counter_exists_with_expected_name(self) -> None:
         """Metric name is part of the alerting contract — Grafana panels
         and PromQL rules will reference this exact string."""
-        assert _m.CALLS_BLOCKED_CONSENT_REVOKED._name == (
-            "voiceos_media_gateway_calls_blocked_consent_revoked"
-        )
+        assert _m.CALLS_BLOCKED_CONSENT_REVOKED._name == ("voiceos_media_gateway_calls_blocked_consent_revoked")
 
     def test_recorder_increments_labelled_counter(self) -> None:
         tenant = "t-consent-test"
@@ -121,12 +116,8 @@ class TestEntrypointWiring:
         block_start = src.index("if consent_gate is None:")
         block_end = src.index("context = None", block_start)
         block = src[block_start:block_end]
-        assert "websocket.close(code=4003)" in block, (
-            "Consent revocation must close the WebSocket with code=4003."
-        )
-        assert "return" in block, (
-            "Consent revocation must return before the greeting starts."
-        )
+        assert "websocket.close(code=4003)" in block, "Consent revocation must close the WebSocket with code=4003."
+        assert "return" in block, "Consent revocation must return before the greeting starts."
 
     def test_revocation_increments_metric(self) -> None:
         src = self._src()

@@ -121,7 +121,9 @@ def _insight(claim: str = "regression detected", severity: Severity = Severity.W
         category=InsightCategory.REGRESSION,
         severity=severity,
         verified_facts=(VerifiedFact(claim=claim, source="prometheus", query="q", value="1", observed_at=PERIOD_END),),
-        hypotheses=(Hypothesis(claim="thermal throttling", reasoning="known pattern", confidence=ConfidenceLevel.MEDIUM),),
+        hypotheses=(
+            Hypothesis(claim="thermal throttling", reasoning="known pattern", confidence=ConfidenceLevel.MEDIUM),
+        ),
         affected_components=("tts",),
         confidence_level=ConfidenceLevel.MEDIUM,
         model="claude-sonnet-5",
@@ -138,7 +140,9 @@ class TestExecutiveSummaryDuplicationFix:
         source = _FakeExecutiveSummarySource(summary)
         generator = ReportGenerator(_FakeReportRepository(), _FakeReasoningAdapter(), executive_summary_source=source)
 
-        report = await generator.generate_executive_summary("tenant-1", period_start=PERIOD_START, period_end=PERIOD_END)
+        report = await generator.generate_executive_summary(
+            "tenant-1", period_start=PERIOD_START, period_end=PERIOD_END
+        )
 
         assert len(source.calls) == 1  # the ONLY source of these numbers
         assert report.report_type == ReportType.EXECUTIVE_SUMMARY
@@ -153,7 +157,9 @@ class TestExecutiveSummaryDuplicationFix:
         summary = _FakeExecutiveSummary(0.5, 200, -0.10, 0.95, 0.90)
         source = _FakeExecutiveSummarySource(summary)
         generator = ReportGenerator(_FakeReportRepository(), _FakeReasoningAdapter(), executive_summary_source=source)
-        report = await generator.generate_executive_summary("tenant-1", period_start=PERIOD_START, period_end=PERIOD_END)
+        report = await generator.generate_executive_summary(
+            "tenant-1", period_start=PERIOD_START, period_end=PERIOD_END
+        )
         assert report.severity == Severity.WARNING
 
     @pytest.mark.asyncio
@@ -166,11 +172,15 @@ class TestExecutiveSummaryDuplicationFix:
 class TestScorecardBasedReportsDuplicationFix:
     @pytest.mark.asyncio
     async def test_daily_health_calls_existing_ops_analytics_source(self) -> None:
-        scorecard = _FakeScorecard(_FakeTechnicalKPIs(0.9995, 300, 86400, 0.99), _FakeBusinessKPIs(500_000, 1_200_000, 50))
+        scorecard = _FakeScorecard(
+            _FakeTechnicalKPIs(0.9995, 300, 86400, 0.99), _FakeBusinessKPIs(500_000, 1_200_000, 50)
+        )
         source = _FakeOperatorScorecardSource(scorecard)
         generator = ReportGenerator(_FakeReportRepository(), _FakeReasoningAdapter(), operator_scorecard_source=source)
 
-        report = await generator.generate_daily_health(period_start=PERIOD_START, period_end=PERIOD_END, date_range="2026-07-25")
+        report = await generator.generate_daily_health(
+            period_start=PERIOD_START, period_end=PERIOD_END, date_range="2026-07-25"
+        )
 
         assert len(source.calls) == 1
         assert report.report_type == ReportType.DAILY_HEALTH
@@ -183,7 +193,9 @@ class TestScorecardBasedReportsDuplicationFix:
         scorecard = _FakeScorecard(_FakeTechnicalKPIs(0.95, 3000, 3600, 0.90), _FakeBusinessKPIs(0, 0, 0))
         source = _FakeOperatorScorecardSource(scorecard)
         generator = ReportGenerator(_FakeReportRepository(), _FakeReasoningAdapter(), operator_scorecard_source=source)
-        report = await generator.generate_weekly_health(period_start=PERIOD_START, period_end=PERIOD_END, date_range="week")
+        report = await generator.generate_weekly_health(
+            period_start=PERIOD_START, period_end=PERIOD_END, date_range="week"
+        )
         assert report.severity == Severity.CRITICAL
 
     @pytest.mark.asyncio
@@ -191,7 +203,9 @@ class TestScorecardBasedReportsDuplicationFix:
         scorecard = _FakeScorecard(_FakeTechnicalKPIs(0.999, 100, 10000, 0.999), _FakeBusinessKPIs(1, 1, 1))
         source = _FakeOperatorScorecardSource(scorecard)
         generator = ReportGenerator(_FakeReportRepository(), _FakeReasoningAdapter(), operator_scorecard_source=source)
-        report = await generator.generate_performance_report(period_start=PERIOD_START, period_end=PERIOD_END, date_range="range")
+        report = await generator.generate_performance_report(
+            period_start=PERIOD_START, period_end=PERIOD_END, date_range="range"
+        )
         assert report.report_type == ReportType.PERFORMANCE_REPORT
         assert len(source.calls) == 1
 
@@ -209,7 +223,9 @@ class TestInsightDerivedReports:
     async def test_incident_report_aggregates_multiple_insights(self) -> None:
         generator = ReportGenerator(_FakeReportRepository(), _FakeReasoningAdapter())
         insights = (_insight("issue A", Severity.WARNING), _insight("issue B", Severity.CRITICAL))
-        report = await generator.generate_incident_report(insights, tenant_id="tenant-2", period_start=PERIOD_START, period_end=PERIOD_END)
+        report = await generator.generate_incident_report(
+            insights, tenant_id="tenant-2", period_start=PERIOD_START, period_end=PERIOD_END
+        )
         assert report.severity == Severity.CRITICAL  # worst-of
         assert report.scope_level == ScopeLevel.TENANT
         assert len(report.evidence) == 2
@@ -218,7 +234,9 @@ class TestInsightDerivedReports:
     async def test_incident_report_requires_at_least_one_insight(self) -> None:
         generator = ReportGenerator(_FakeReportRepository(), _FakeReasoningAdapter())
         with pytest.raises(ValueError, match="requires at least one Insight"):
-            await generator.generate_incident_report((), tenant_id=None, period_start=PERIOD_START, period_end=PERIOD_END)
+            await generator.generate_incident_report(
+                (), tenant_id=None, period_start=PERIOD_START, period_end=PERIOD_END
+            )
 
 
 class TestCapacityReport:
@@ -253,7 +271,9 @@ class TestSchemaReconstructibility:
         summary = _FakeExecutiveSummary(0.72, 150, 0.03, 0.99, 0.95)
         source = _FakeExecutiveSummarySource(summary)
         generator = ReportGenerator(repo, _FakeReasoningAdapter(), executive_summary_source=source)
-        report = await generator.generate_executive_summary("tenant-1", period_start=PERIOD_START, period_end=PERIOD_END)
+        report = await generator.generate_executive_summary(
+            "tenant-1", period_start=PERIOD_START, period_end=PERIOD_END
+        )
 
         stored = repo.get(report.report_id)
         assert stored is not None

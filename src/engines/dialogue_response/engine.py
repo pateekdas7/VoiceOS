@@ -82,8 +82,18 @@ _MONTHLY_CUE = ("महीने का", "प्रति महीना", "mo
 _LUMPSUM_CUE = ("एक बार में", "एक साथ", "एक शॉट में", "one shot", "one-shot", "पूरा", "फुल", "full")
 
 _ENGLISH_MONTHS = (
-    "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
 )
 
 
@@ -122,9 +132,7 @@ def _format_date_for_speech(iso_date: str) -> str:
         return iso_date
 
 
-def _resolve_outstanding_minor(
-    context: CustomerContext | None, response_plan: ResponsePlan
-) -> int | None:
+def _resolve_outstanding_minor(context: CustomerContext | None, response_plan: ResponsePlan) -> int | None:
     """Return the authoritative outstanding balance in minor units, or None.
 
     ``None`` means the amount is UNRESOLVED — no CustomerContext with a
@@ -372,9 +380,7 @@ class DialogueResponseEngine:
         session.set_last_ask("when_pay")
         return self._anchor(outstanding_minor), bucket
 
-    def _handle_gives_amount(
-        self, session: DialogueSessionState, user_text: str, outstanding_minor: int | None
-    ) -> str:
+    def _handle_gives_amount(self, session: DialogueSessionState, user_text: str, outstanding_minor: int | None) -> str:
         amount_minor = session.commitment.get("amount_minor")
         if not amount_minor:
             session.set_last_ask("when_pay")
@@ -393,9 +399,7 @@ class DialogueResponseEngine:
 
     def _render_plan(self, plan: InstallmentPlan) -> str:
         if plan.kind == InstallmentPlanKind.MONTHLY:
-            return SCRIPT_TEMPLATES["plan_computed"].format(
-                amount=format_rupees(plan.amount_minor), months=plan.months
-            )
+            return SCRIPT_TEMPLATES["plan_computed"].format(amount=format_rupees(plan.amount_minor), months=plan.months)
         if plan.kind == InstallmentPlanKind.LUMPSUM_FULL:
             return SCRIPT_TEMPLATES["plan_lumpsum_full"].format(amount=format_rupees(plan.amount_minor))
         return SCRIPT_TEMPLATES["plan_lumpsum_partial"].format(
@@ -430,9 +434,7 @@ class DialogueResponseEngine:
     # Register/name/tone cleanup — defense-in-depth on our own templates.
     # ------------------------------------------------------------------
 
-    def _apply_guards(
-        self, reply: str, customer_name: str, outstanding_minor: int | None
-    ) -> str:
+    def _apply_guards(self, reply: str, customer_name: str, outstanding_minor: int | None) -> str:
         cleaned = dedupe_name(reply, customer_name)
         cleaned = sanitize_reply(cleaned)
         cleaned = strip_trailing_sir(cleaned)

@@ -1,4 +1,5 @@
 """HealthVerifier — post-recovery health verification for System X."""
+
 from __future__ import annotations
 
 import logging
@@ -35,7 +36,9 @@ class HealthVerifier:
                     try:
                         resp = await client.get(url)
                         ok = resp.status_code < 400
-                        body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+                        body = (
+                            resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+                        )
                         results[svc] = {
                             "status": "healthy" if ok else "degraded",
                             "http_status": resp.status_code,
@@ -57,7 +60,7 @@ class HealthVerifier:
 
     async def _check_via_prometheus(self, svc: str) -> dict[str, object]:
         svc_key = svc.replace("_", "_")
-        query = f'voiceos:{svc_key}_error_rate:ratio_5m'
+        query = f"voiceos:{svc_key}_error_rate:ratio_5m"
         try:
             async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
                 resp = await client.get(

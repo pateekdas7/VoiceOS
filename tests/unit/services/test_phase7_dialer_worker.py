@@ -25,13 +25,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_redis(messages: list[bytes | None]):
     """Build a fake redis client whose blpop returns messages in order."""
     redis = MagicMock()
-    responses = iter(
-        (b"voiceos:dialer:cmds", m) if m is not None else None
-        for m in messages
-    )
+    responses = iter((b"voiceos:dialer:cmds", m) if m is not None else None for m in messages)
     redis.blpop = MagicMock(side_effect=lambda key, timeout: next(responses, None))
     return redis
 
@@ -54,6 +52,7 @@ class _FakeDialerMgr:
 # Command dispatch tests
 # ---------------------------------------------------------------------------
 
+
 class TestDialerWorkerDispatch:
     def _make_cmd(self, payload: dict) -> bytes:
         return json.dumps(payload).encode()
@@ -61,13 +60,15 @@ class TestDialerWorkerDispatch:
     @pytest.mark.asyncio
     async def test_start_command_calls_start(self) -> None:
 
-        cmd = self._make_cmd({
-            "command": "start",
-            "tenant_id": "t-1",
-            "campaign_id": "c-1",
-            "daily_start_hour": 9,
-            "daily_end_hour": 21,
-        })
+        cmd = self._make_cmd(
+            {
+                "command": "start",
+                "tenant_id": "t-1",
+                "campaign_id": "c-1",
+                "daily_start_hour": 9,
+                "daily_end_hour": 21,
+            }
+        )
         # Provide one start command then a shutdown signal via None
         redis = _make_redis([cmd, None, None])
         mgr = _FakeDialerMgr()
@@ -104,7 +105,8 @@ class TestDialerWorkerDispatch:
                     msg = json.loads(raw_msg)
                     if msg["command"] == "start":
                         await dialer_mgr.start(
-                            msg["tenant_id"], msg["campaign_id"],
+                            msg["tenant_id"],
+                            msg["campaign_id"],
                             daily_start_hour=msg.get("daily_start_hour", 9),
                             daily_end_hour=msg.get("daily_end_hour", 21),
                             timezone_name=msg.get("timezone_name", "Asia/Kolkata"),
@@ -155,6 +157,7 @@ class TestDialerWorkerDispatch:
 # ---------------------------------------------------------------------------
 # Shutdown drain tests
 # ---------------------------------------------------------------------------
+
 
 class TestDialerWorkerShutdown:
     @pytest.mark.asyncio

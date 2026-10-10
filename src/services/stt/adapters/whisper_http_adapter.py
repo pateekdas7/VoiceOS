@@ -175,10 +175,7 @@ class WhisperHTTPAdapter:
                         raise  # circuit open — fail fast, never retry or wrap
                     last_exc = exc
                     # If breaker just opened on this failure, propagate original error.
-                    if (
-                        self._breaker is not None
-                        and self._breaker.state == CircuitState.OPEN
-                    ):
+                    if self._breaker is not None and self._breaker.state == CircuitState.OPEN:
                         raise
                     if attempt < self._max_retries:
                         logger.warning(
@@ -192,9 +189,7 @@ class WhisperHTTPAdapter:
                         await asyncio.sleep(self._retry_backoff_s)
             if last_exc is not None:
                 stt_requests_total.labels(status="error").inc()
-                raise STTRetryExhaustedError(
-                    f"STT failed after {self._max_retries + 1} attempts"
-                ) from last_exc
+                raise STTRetryExhaustedError(f"STT failed after {self._max_retries + 1} attempts") from last_exc
             stt_latency_ms.observe((time.monotonic() - infer_start) * 1000)
             stt_requests_total.labels(status="success").inc()
         except STTRetryExhaustedError:

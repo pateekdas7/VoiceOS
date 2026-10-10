@@ -78,7 +78,7 @@ class TestEmpathyStateClassifier:
         assert classifier.classify("Achha theek, ho jaayega") == EmpathyState.RELIEF
 
     def test_word_boundary_prevents_false_positive_substring_match(self) -> None:
-        """"chinta" (anxiety) must not match inside an unrelated longer word."""
+        """ "chinta" (anxiety) must not match inside an unrelated longer word."""
         classifier = EmpathyStateClassifier()
 
         assert classifier.classify("Machinta company ka number hai") == EmpathyState.NEUTRAL

@@ -4,6 +4,7 @@ Runs after each ETL batch (or on a schedule). Computes per-tenant/campaign
 call summary counts from raw_events payloads and upserts into the reporting
 table for fast dashboard reads.
 """
+
 from __future__ import annotations
 
 import logging

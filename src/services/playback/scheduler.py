@@ -75,8 +75,7 @@ class PlaybackScheduler:
         """
         if clause.generation != self._generation:
             logger.warning(
-                "PlaybackScheduler: dropping stale clause idx=%d "
-                "(clause_gen=%d, current_gen=%d) — post-barge-in race",
+                "PlaybackScheduler: dropping stale clause idx=%d (clause_gen=%d, current_gen=%d) — post-barge-in race",
                 clause.clause_index,
                 clause.generation,
                 self._generation,
@@ -137,10 +136,7 @@ class PlaybackScheduler:
         Returns:
             List of clauses that were flushed.
         """
-        if (
-            self._protected_generation is not None
-            and self._generation == self._protected_generation
-        ):
+        if self._protected_generation is not None and self._generation == self._protected_generation:
             logger.info(
                 "barge-in suppressed (greeting protection active) gen=%d",
                 self._generation,
@@ -152,7 +148,7 @@ class PlaybackScheduler:
         # agent was silent) doesn't sabotage the next reply.
         if not self._queue:
             logger.info(
-                'PlaybackScheduler: flush skipped — queue empty, gen unchanged=%d',
+                "PlaybackScheduler: flush skipped — queue empty, gen unchanged=%d",
                 self._generation,
             )
             return []
@@ -163,8 +159,7 @@ class PlaybackScheduler:
         self._clause_available.clear()
         self._barge_in_event.set()
         logger.info(
-            "PlaybackScheduler: flush on barge-in — discarded %d clauses, "
-            "generation now %d",
+            "PlaybackScheduler: flush on barge-in — discarded %d clauses, generation now %d",
             len(flushed),
             self._generation,
         )
@@ -195,8 +190,9 @@ class PlaybackScheduler:
         record_queue_depth(_QUEUE_NAME, 0)
         self._clause_available.clear()
         logger.info(
-            'PlaybackScheduler: preempt_current_clause dropped %d pending clauses '
-            '(gen unchanged=%d)', len(dropped), self._generation,
+            "PlaybackScheduler: preempt_current_clause dropped %d pending clauses (gen unchanged=%d)",
+            len(dropped),
+            self._generation,
         )
         return dropped
 

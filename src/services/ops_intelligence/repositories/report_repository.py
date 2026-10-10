@@ -117,10 +117,18 @@ def _insight_to_dict(insight: Insight) -> dict[str, Any]:
         "category": insight.category.value,
         "severity": insight.severity.value,
         "verified_facts": [
-            {"claim": f.claim, "source": f.source, "query": f.query, "value": f.value, "observed_at": f.observed_at.isoformat()}
+            {
+                "claim": f.claim,
+                "source": f.source,
+                "query": f.query,
+                "value": f.value,
+                "observed_at": f.observed_at.isoformat(),
+            }
             for f in insight.verified_facts
         ],
-        "hypotheses": [{"claim": h.claim, "reasoning": h.reasoning, "confidence": h.confidence.value} for h in insight.hypotheses],
+        "hypotheses": [
+            {"claim": h.claim, "reasoning": h.reasoning, "confidence": h.confidence.value} for h in insight.hypotheses
+        ],
         "affected_components": list(insight.affected_components),
         "confidence_level": insight.confidence_level.value,
         "model": insight.model,
@@ -137,10 +145,19 @@ def _dict_to_insight(d: dict[str, Any]) -> Insight:
         category=InsightCategory(d["category"]),
         severity=Severity(d["severity"]),
         verified_facts=tuple(
-            VerifiedFact(claim=f["claim"], source=f["source"], query=f["query"], value=f["value"], observed_at=datetime.fromisoformat(f["observed_at"]))
+            VerifiedFact(
+                claim=f["claim"],
+                source=f["source"],
+                query=f["query"],
+                value=f["value"],
+                observed_at=datetime.fromisoformat(f["observed_at"]),
+            )
             for f in d["verified_facts"]
         ),
-        hypotheses=tuple(Hypothesis(claim=h["claim"], reasoning=h["reasoning"], confidence=ConfidenceLevel(h["confidence"])) for h in d["hypotheses"]),
+        hypotheses=tuple(
+            Hypothesis(claim=h["claim"], reasoning=h["reasoning"], confidence=ConfidenceLevel(h["confidence"]))
+            for h in d["hypotheses"]
+        ),
         affected_components=tuple(d["affected_components"]),
         confidence_level=ConfidenceLevel(d["confidence_level"]),
         model=d["model"],
@@ -162,16 +179,32 @@ def _call_to_dict(call: SourceServiceCall) -> dict[str, Any]:
 
 def _dict_to_call(d: dict[str, Any]) -> SourceServiceCall:
     return SourceServiceCall(
-        service=d["service"], method=d["method"], params=d["params"], result_snapshot=d["result_snapshot"],
+        service=d["service"],
+        method=d["method"],
+        params=d["params"],
+        result_snapshot=d["result_snapshot"],
         called_at=datetime.fromisoformat(d["called_at"]),
     )
 
 
 def _row_to_report(row: tuple[Any, ...]) -> Report:
     (
-        report_id, report_type, period_start, period_end, scope_level, tenant_id, severity,
-        affected_components, business_impact, recommended_actions, confidence_level, evidence,
-        source_service_calls, narrative, generated_at, delivered_to,
+        report_id,
+        report_type,
+        period_start,
+        period_end,
+        scope_level,
+        tenant_id,
+        severity,
+        affected_components,
+        business_impact,
+        recommended_actions,
+        confidence_level,
+        evidence,
+        source_service_calls,
+        narrative,
+        generated_at,
+        delivered_to,
     ) = row
     return Report(
         report_id=str(report_id),

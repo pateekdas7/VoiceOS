@@ -44,6 +44,7 @@ Coverage grid (letters match the acceptance requirement handed by product):
       preserved and still force-releases on cap; test_greeting_blocking_p4
       passes; test_balance_flow_p2 passes).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -127,7 +128,9 @@ class _MultiClauseTTS:
         self.received_texts: list[str] = []
 
     async def synthesize_stream(
-        self, text_chunks: AsyncIterator[str], voice_config: VoiceConfig | None = None,
+        self,
+        text_chunks: AsyncIterator[str],
+        voice_config: VoiceConfig | None = None,
     ) -> AsyncIterator[AudioClause]:
         return self._gen(text_chunks)
 
@@ -228,8 +231,7 @@ async def test_D_128_clause_boundary_does_not_release_prematurely() -> None:
     for i in range(300):  # well past the BLOCKING 128 default
         await gate.enqueue(_clause(i, is_final=False))
         assert playback.enqueues_seen == [], (
-            f"FULL_RESPONSE force-released at clause {i} — the 128-cap "
-            f"BLOCKING behaviour leaked into FULL_RESPONSE"
+            f"FULL_RESPONSE force-released at clause {i} — the 128-cap BLOCKING behaviour leaked into FULL_RESPONSE"
         )
 
     assert gate.buffered_clauses == 300
@@ -254,7 +256,7 @@ async def test_E_very_long_response_remains_buffered_until_final() -> None:
     gate = StartupBufferGate(playback, mode=TTSMode.FULL_RESPONSE, threshold_ms=0)
 
     n = 1000  # ~85 seconds of Veena at 85.33 ms/clause — well beyond the
-              # 128-clause BLOCKING cap and far above any realistic response.
+    # 128-clause BLOCKING cap and far above any realistic response.
     for i in range(n):
         await gate.enqueue(_clause(i, is_final=False))
     assert playback.enqueues_seen == []
@@ -277,8 +279,8 @@ async def test_F_Q_fifo_and_monotonic_release() -> None:
     for i in range(50):
         await gate.enqueue(_clause(i, is_final=(i == 49)))
     idxs = [c.clause_index for c in playback.enqueues_seen]
-    assert idxs == sorted(idxs)          # never reordered
-    assert idxs == list(range(50))       # exact FIFO, no gaps
+    assert idxs == sorted(idxs)  # never reordered
+    assert idxs == list(range(50))  # exact FIFO, no gaps
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +293,9 @@ async def test_G_generation_id_change_discards_stale_buffer() -> None:
     playback = _RecordingScheduler()
     gen_before = playback.generation
     gate = StartupBufferGate(
-        playback, mode=TTSMode.FULL_RESPONSE, threshold_ms=0,
+        playback,
+        mode=TTSMode.FULL_RESPONSE,
+        threshold_ms=0,
         generation=gen_before,
     )
 
@@ -351,7 +355,10 @@ async def test_I_new_generation_after_bargein_starts_clean() -> None:
     # release independently, without any leak from turn 1.
     gen2 = playback.generation
     g2 = StartupBufferGate(
-        playback, mode=TTSMode.FULL_RESPONSE, threshold_ms=0, generation=gen2,
+        playback,
+        mode=TTSMode.FULL_RESPONSE,
+        threshold_ms=0,
+        generation=gen2,
     )
     for i in range(3):
         await g2.enqueue(_clause(i, is_final=False, generation=gen2))
@@ -370,11 +377,11 @@ async def test_I_new_generation_after_bargein_starts_clean() -> None:
 
 def test_J_greeting_wires_full_response() -> None:
     from src.services.media_gateway import twilio_ws_entrypoint
+
     src = inspect.getsource(twilio_ws_entrypoint)
-    assert (
-        'tts_mode="full_response"' in src
-        or "tts_mode='full_response'" in src
-    ), "greeting caller no longer passes tts_mode=full_response"
+    assert 'tts_mode="full_response"' in src or "tts_mode='full_response'" in src, (
+        "greeting caller no longer passes tts_mode=full_response"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -384,13 +391,11 @@ def test_J_greeting_wires_full_response() -> None:
 
 def test_K_L_engine_wires_full_response_for_scripted_and_llm_paths() -> None:
     from src.services.conversation_engine import engine as _engine_mod
+
     src = inspect.getsource(_engine_mod)
     # scripted per-turn path passes tts_mode="full_response".
-    assert src.count('tts_mode="full_response"') + src.count(
-        "tts_mode='full_response'"
-    ) >= 2, (
-        "engine.py must wire FULL_RESPONSE for BOTH the scripted golden "
-        "path AND the LLM streaming fallback"
+    assert src.count('tts_mode="full_response"') + src.count("tts_mode='full_response'") >= 2, (
+        "engine.py must wire FULL_RESPONSE for BOTH the scripted golden path AND the LLM streaming fallback"
     )
 
 
@@ -404,6 +409,7 @@ async def test_L_llm_streaming_path_builds_full_response_gate() -> None:
     # LLM stub that yields two chunks then finishes.
     async def _tokens():
         from src.libs.contracts.streaming import TokenChunk
+
         yield TokenChunk(text="Namaste sir. ", token_id=1, finish_reason=None)
         yield TokenChunk(text="Aap kaise hain?", token_id=2, finish_reason="stop")
 
@@ -411,11 +417,15 @@ async def test_L_llm_streaming_path_builds_full_response_gate() -> None:
 
     # Minimal response_plan (reuse the module-level default).
     from src.services.conversation_engine.engine import _default_response_plan
+
     plan = _default_response_plan()
 
     clauses = await engine._run_llm_streaming_path(
-        prompt_text="p", response_plan=plan, playback=playback,
-        customer_name="", tts_mode="full_response",
+        prompt_text="p",
+        response_plan=plan,
+        playback=playback,
+        customer_name="",
+        tts_mode="full_response",
     )
     # Even though the splitter emits multiple clauses, they all reach the
     # scheduler in one FIFO batch after is_final — no mid-response gap.
@@ -436,7 +446,10 @@ async def test_M_clause_splitter_still_runs_and_all_clauses_accumulated() -> Non
     # A 3-clause reply — ClauseSplitter should segment on ". ".
     text = "Namaste sir. Main Kavya bol rahi hoon. Aap kaise hain?"
     clauses = await engine.speak_scripted_text(
-        text, playback, response_plan=None, tts_mode="full_response",
+        text,
+        playback,
+        response_plan=None,
+        tts_mode="full_response",
     )
     assert len(clauses) >= 1
     # Every clause the pipeline produced reached the scheduler.
@@ -503,7 +516,9 @@ async def test_O_runaway_cap_hit_fails_closed_not_release() -> None:
     response reaching Twilio would be worse than silence."""
     playback = _RecordingScheduler()
     gate = StartupBufferGate(
-        playback, mode=TTSMode.FULL_RESPONSE, threshold_ms=0,
+        playback,
+        mode=TTSMode.FULL_RESPONSE,
+        threshold_ms=0,
         max_buffered_clauses=5,  # small cap for the test only
     )
     for i in range(5):
@@ -555,6 +570,7 @@ def test_R_ai_governance_still_constructed_on_engine() -> None:
     governance gate. AIGovernanceService is a mandatory constructor
     argument; if a refactor made it optional this test flags it."""
     from src.services.conversation_engine.engine import ConversationEngine
+
     sig = inspect.signature(ConversationEngine.__init__)
     assert "ai_governance_service" in sig.parameters
     # And it's still a required param (no default value).
@@ -567,6 +583,7 @@ def test_R_pipeline_still_runs_validator_and_governance() -> None:
     ``_synthesise_and_enqueue``. FULL_RESPONSE is purely a downstream
     playback-buffering change — governance runs BEFORE the gate."""
     from src.services.tts import streaming_pipeline
+
     src = inspect.getsource(streaming_pipeline)
     assert "validator.validate(" in src
     assert "_ai_governance_service" in src
@@ -586,7 +603,9 @@ async def test_S_blocking_mode_still_force_releases_on_cap() -> None:
     force-release semantics."""
     playback = _RecordingScheduler()
     gate = StartupBufferGate(
-        playback, mode=TTSMode.BLOCKING, threshold_ms=0,
+        playback,
+        mode=TTSMode.BLOCKING,
+        threshold_ms=0,
         max_buffered_clauses=3,
     )
     for i in range(3):

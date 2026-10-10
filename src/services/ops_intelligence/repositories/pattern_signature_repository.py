@@ -71,13 +71,25 @@ class PostgresPatternSignatureRepository(BaseRepository):
 
 
 def _row_to_signature(row: tuple[Any, ...]) -> PatternSignature:
-    signature_id, tenant_id, fingerprint_hash, category, affected_components, root_cause_summary, first_seen, last_seen, occurrence_count = row
+    (
+        signature_id,
+        tenant_id,
+        fingerprint_hash,
+        category,
+        affected_components,
+        root_cause_summary,
+        first_seen,
+        last_seen,
+        occurrence_count,
+    ) = row
     return PatternSignature(
         signature_id=str(signature_id),
         tenant_id=str(tenant_id) if tenant_id is not None else None,
         fingerprint_hash=fingerprint_hash,
         category=category,
-        affected_components=tuple(json.loads(affected_components) if isinstance(affected_components, str) else affected_components),
+        affected_components=tuple(
+            json.loads(affected_components) if isinstance(affected_components, str) else affected_components
+        ),
         root_cause_summary=root_cause_summary,
         first_seen=first_seen,
         last_seen=last_seen,

@@ -397,7 +397,9 @@ class TestLogout:
         assert response.status_code == 302
         assert response.headers["location"] == f"{FRONTEND_URL}/login"
         set_cookie_headers = response.headers.get_list("set-cookie")
-        assert any("voiceos_session=" in h and ("Max-Age=0" in h or "expires=" in h.lower()) for h in set_cookie_headers)
+        assert any(
+            "voiceos_session=" in h and ("Max-Age=0" in h or "expires=" in h.lower()) for h in set_cookie_headers
+        )
 
 
 class TestCORS:

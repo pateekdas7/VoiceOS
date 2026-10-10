@@ -46,6 +46,7 @@ def run(cmd: list[str], *, check: bool = True) -> subprocess.CompletedProcess:
 
 # ── Scenario 1: Worker crash mid-call ─────────────────────────────────────────
 
+
 def scenario_s1_worker_crash(pg_dsn: str) -> bool:
     """Kill dialer_worker mid-run, verify reconciliation on restart."""
     print("\nS1: Worker crash mid-call")
@@ -67,8 +68,9 @@ def scenario_s1_worker_crash(pg_dsn: str) -> bool:
     time.sleep(5)
 
     log("Checking recovery_log for reconciled attempts...")
-    result = run(["psql", pg_dsn, "-t", "-c",
-                  "SELECT COUNT(*) FROM recovery_log WHERE created_at > NOW() - INTERVAL '1 minute'"])
+    result = run(
+        ["psql", pg_dsn, "-t", "-c", "SELECT COUNT(*) FROM recovery_log WHERE created_at > NOW() - INTERVAL '1 minute'"]
+    )
     if not DRY_RUN:
         count = int(result.stdout.strip())
         if count == 0:
@@ -79,6 +81,7 @@ def scenario_s1_worker_crash(pg_dsn: str) -> bool:
 
 
 # ── Scenario 2: Crash before active_calls insert ──────────────────────────────
+
 
 def scenario_s2_crash_before_active_calls(pg_dsn: str) -> bool:
     """Verify orphaned INITIATED rows are reconciled to FAILED on restart."""
@@ -118,6 +121,7 @@ def scenario_s2_crash_before_active_calls(pg_dsn: str) -> bool:
 
 
 # ── Scenario 3: Crash after Twilio init before active_calls ───────────────────
+
 
 def scenario_s3_crash_after_twilio(pg_dsn: str) -> bool:
     """Verify attempt with call_sid but no active_calls row is reconciled correctly."""
@@ -164,16 +168,19 @@ def scenario_s3_crash_after_twilio(pg_dsn: str) -> bool:
 
 # ── Scenario 4: Forged /dialer/callback ───────────────────────────────────────
 
+
 def scenario_s4_forged_callback(bff_url: str, twilio_auth_token: str) -> bool:
     """POST a forged callback (wrong HMAC) and verify 403."""
     print("\nS4: Forged /dialer/callback")
 
-    payload = urllib.parse.urlencode({
-        "CallSid": "CAtest000000000000000000000000000001",
-        "CallStatus": "completed",
-        "To": "+911234567890",
-        "From": "+1555000000",
-    }).encode()
+    payload = urllib.parse.urlencode(
+        {
+            "CallSid": "CAtest000000000000000000000000000001",
+            "CallStatus": "completed",
+            "To": "+911234567890",
+            "From": "+1555000000",
+        }
+    ).encode()
 
     url = f"{bff_url}/dialer/callback"
     req = urllib.request.Request(url, data=payload, method="POST")
@@ -199,6 +206,7 @@ def scenario_s4_forged_callback(bff_url: str, twilio_auth_token: str) -> bool:
 
 # ── Scenario 5: Duplicate Twilio callback ─────────────────────────────────────
 
+
 def scenario_s5_duplicate_callback(bff_url: str, twilio_auth_token: str) -> bool:
     """Send identical callback twice; verify queue length increases by 1, not 2."""
     print("\nS5: Duplicate Twilio callback")
@@ -217,6 +225,7 @@ def scenario_s5_duplicate_callback(bff_url: str, twilio_auth_token: str) -> bool
     sig_base = url + body
     mac = hmac.new(twilio_auth_token.encode(), sig_base.encode(), hashlib.sha1)
     import base64
+
     signature = base64.b64encode(mac.digest()).decode()
 
     if DRY_RUN:
@@ -247,6 +256,7 @@ def scenario_s5_duplicate_callback(bff_url: str, twilio_auth_token: str) -> bool
 
 # ── Scenario 6: Redis restart during active call ──────────────────────────────
 
+
 def scenario_s6_redis_restart() -> bool:
     """Restart Redis mid-call; verify voice runtime is unaffected."""
     print("\nS6: Redis restart during active call")
@@ -270,6 +280,7 @@ def scenario_s6_redis_restart() -> bool:
 
 # ── Scenario 7: PostgreSQL failure during post-call write ─────────────────────
 
+
 def scenario_s7_postgres_failure() -> bool:
     """Induce PostgreSQL restart after call end; verify _handleCallEnd error is logged."""
     print("\nS7: PostgreSQL failure during post-call write")
@@ -284,8 +295,7 @@ def scenario_s7_postgres_failure() -> bool:
 
     log("Checking dialer_worker log for explicit error on post-call write failure...")
     result = subprocess.run(
-        ["journalctl", "-u", "voiceos-dialer-worker", "-n", "50", "--no-pager"],
-        capture_output=True, text=True
+        ["journalctl", "-u", "voiceos-dialer-worker", "-n", "50", "--no-pager"], capture_output=True, text=True
     )
     log_output = result.stdout
     postgres_error = "ECONNREFUSED" in log_output or "connection refused" in log_output.lower()
@@ -302,6 +312,7 @@ def scenario_s7_postgres_failure() -> bool:
 
 
 # ── Scenario 8: GPU timeout during live call ──────────────────────────────────
+
 
 def scenario_s8_gpu_timeout() -> bool:
     """Verify STT circuit breaker trips and voice runtime plays clarify_ask_repeat."""
@@ -324,6 +335,7 @@ def scenario_s8_gpu_timeout() -> bool:
 
 
 # ── Scenario 9: Voice runtime restart during 5 concurrent calls ───────────────
+
 
 def scenario_s9_graceful_drain() -> bool:
     """Send SIGTERM to voice runtime; verify drain gate prevents new connections."""
@@ -362,6 +374,7 @@ def scenario_s9_graceful_drain() -> bool:
 
 
 # ── Scenario 10: MongoDB unavailable ─────────────────────────────────────────
+
 
 def scenario_s10_mongodb_unavailable() -> bool:
     """Stop MongoDB; verify voice runtime continues and logs the failure."""
@@ -419,9 +432,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Phase 14 Productionization Chaos Tests")
     parser.add_argument("--execute", action="store_true", help="Actually run destructive commands (default: dry-run)")
     parser.add_argument("--scenario", choices=list(SCENARIOS.keys()), help="Run only this scenario")
-    parser.add_argument("--pg-dsn", default=os.getenv("DATABASE_URL", "postgresql://localhost/voiceos"), help="PostgreSQL DSN")
+    parser.add_argument(
+        "--pg-dsn", default=os.getenv("DATABASE_URL", "postgresql://localhost/voiceos"), help="PostgreSQL DSN"
+    )
     parser.add_argument("--bff-url", default="http://localhost:8000", help="bff.js base URL")
-    parser.add_argument("--twilio-auth-token", default=os.getenv("TWILIO_AUTH_TOKEN", ""), help="Twilio auth token for HMAC")
+    parser.add_argument(
+        "--twilio-auth-token", default=os.getenv("TWILIO_AUTH_TOKEN", ""), help="Twilio auth token for HMAC"
+    )
     args = parser.parse_args()
 
     DRY_RUN = not args.execute
@@ -439,7 +456,7 @@ def main() -> None:
     for name in to_run:
         fn = SCENARIOS[name]
         try:
-            sig = fn.__code__.co_varnames[:fn.__code__.co_argcount]
+            sig = fn.__code__.co_varnames[: fn.__code__.co_argcount]
             kwargs: dict = {}
             if "pg_dsn" in sig:
                 kwargs["pg_dsn"] = args.pg_dsn

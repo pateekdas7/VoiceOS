@@ -77,9 +77,13 @@ class CallRecorder:
                 f.write(json.dumps(ev, default=str) + "\n")
 
         if self._inbound_pcm:
-            self._write_wav(self._dir / f"{self._call_id}_customer.wav", bytes(self._inbound_pcm), self._inbound_sample_rate)
+            self._write_wav(
+                self._dir / f"{self._call_id}_customer.wav", bytes(self._inbound_pcm), self._inbound_sample_rate
+            )
         if self._outbound_pcm:
-            self._write_wav(self._dir / f"{self._call_id}_kavya.wav", bytes(self._outbound_pcm), self._outbound_sample_rate)
+            self._write_wav(
+                self._dir / f"{self._call_id}_kavya.wav", bytes(self._outbound_pcm), self._outbound_sample_rate
+            )
 
     @staticmethod
     def _write_wav(path: Path, pcm16le: bytes, sample_rate: int) -> None:

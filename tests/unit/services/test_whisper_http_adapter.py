@@ -75,8 +75,7 @@ def _mock_transcribe_response(
             200,
             json={
                 "words": [
-                    {"word": w, "confidence": c, "start_ms": s, "end_ms": e, "is_final": f}
-                    for w, c, s, e, f in words
+                    {"word": w, "confidence": c, "start_ms": s, "end_ms": e, "is_final": f} for w, c, s, e, f in words
                 ],
                 "language": "hi",
                 "duration_ms": 1000,

@@ -85,9 +85,7 @@ class CsvPhoneDNDList:
     """
 
     def __init__(self, phones: Iterable[str]) -> None:
-        self._phones: set[str] = {
-            n for n in (_normalise(p) for p in phones) if n
-        }
+        self._phones: set[str] = {n for n in (_normalise(p) for p in phones) if n}
         _log.info("CsvPhoneDNDList loaded phones=%d", len(self._phones))
 
     @classmethod

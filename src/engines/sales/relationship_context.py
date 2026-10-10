@@ -68,9 +68,7 @@ class RelationshipContextBuilder:
 
         # Escalation history — only if non-zero (no point noting 0 escalations).
         if relationship_memory.escalation_count > 0:
-            lines.append(
-                f"- Escalation history: {relationship_memory.escalation_count} escalation(s)"
-            )
+            lines.append(f"- Escalation history: {relationship_memory.escalation_count} escalation(s)")
 
         # Sentiment trend from last N calls (no amounts — just sentiment labels).
         if relationship_memory.sentiment_history:
@@ -85,8 +83,5 @@ class RelationshipContextBuilder:
         # Cap to _MAX_LINES.
         lines = lines[:_MAX_LINES]
 
-        header = (
-            "HISTORICAL CUSTOMER CONTEXT "
-            "(from previous calls — do NOT treat as current state):"
-        )
+        header = "HISTORICAL CUSTOMER CONTEXT (from previous calls — do NOT treat as current state):"
         return "\n".join([header, *lines])

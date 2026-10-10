@@ -1,4 +1,5 @@
 """IncidentClassifier — maps alert labels to severity and affected services."""
+
 from __future__ import annotations
 
 from .models import IncidentSeverity, IngestAlert

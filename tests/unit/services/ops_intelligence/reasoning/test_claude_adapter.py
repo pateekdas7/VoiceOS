@@ -61,7 +61,11 @@ class TestSuccessfulNarration:
             _claude_response(
                 {
                     "hypotheses": [
-                        {"claim": "GPU thermal throttling", "reasoning": "matches known TT-025 pattern", "confidence": "medium"}
+                        {
+                            "claim": "GPU thermal throttling",
+                            "reasoning": "matches known TT-025 pattern",
+                            "confidence": "medium",
+                        }
                     ],
                     "recommendation": "Check GPU temperature telemetry",
                     "confidence_level": "medium",
@@ -80,7 +84,9 @@ class TestSuccessfulNarration:
 
     @pytest.mark.asyncio
     async def test_sends_api_key_and_evidence_in_request(self) -> None:
-        http = _FakeHTTP(_claude_response({"hypotheses": [], "recommendation": None, "confidence_level": "low", "narrative": "x"}))
+        http = _FakeHTTP(
+            _claude_response({"hypotheses": [], "recommendation": None, "confidence_level": "low", "narrative": "x"})
+        )
         adapter = ClaudeReasoningAdapter(_FakeSecrets(), http)
         await adapter.narrate(_request())
 
@@ -91,7 +97,11 @@ class TestSuccessfulNarration:
 
     @pytest.mark.asyncio
     async def test_null_recommendation_is_preserved(self) -> None:
-        http = _FakeHTTP(_claude_response({"hypotheses": [], "recommendation": None, "confidence_level": "low", "narrative": "no issue"}))
+        http = _FakeHTTP(
+            _claude_response(
+                {"hypotheses": [], "recommendation": None, "confidence_level": "low", "narrative": "no issue"}
+            )
+        )
         adapter = ClaudeReasoningAdapter(_FakeSecrets(), http)
         result = await adapter.narrate(_request())
         assert result.recommendation is None
@@ -130,7 +140,9 @@ class TestFailureModes:
     @pytest.mark.asyncio
     async def test_invalid_confidence_value_degrades_to_empty_result(self) -> None:
         http = _FakeHTTP(
-            _claude_response({"hypotheses": [], "recommendation": None, "confidence_level": "extremely-sure", "narrative": "x"})
+            _claude_response(
+                {"hypotheses": [], "recommendation": None, "confidence_level": "extremely-sure", "narrative": "x"}
+            )
         )
         adapter = ClaudeReasoningAdapter(_FakeSecrets(), http)
         result = await adapter.narrate(_request())

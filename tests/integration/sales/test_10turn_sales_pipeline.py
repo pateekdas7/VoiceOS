@@ -174,14 +174,14 @@ def run_pipeline(verbose: bool = True) -> list[dict]:
         }
 
         if verbose:
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print(f"TURN {turn_num}")
             print(f"Customer: {utterance}")
             print(f"Intent: {report['intent']}")
             print(f"Risk flags: {report['risk_flags']}")
             print(f"Strategy: {report['strategy']}")
             print(f"Lead: stage={report['lead_stage']} temp={report['lead_temperature']}")
-            print(f"Budget: ₹{(state.budget_min or 0)//100000}L - ₹{(state.budget_max or 0)//100000}L")
+            print(f"Budget: ₹{(state.budget_min or 0) // 100000}L - ₹{(state.budget_max or 0) // 100000}L")
             print(f"Confirmed fields: {report['confirmed_fields']}")
             print(f"Uncertain fields: {report['uncertain_fields']}")
             print(f"Objections: {report['objections']}")
@@ -193,7 +193,7 @@ def run_pipeline(verbose: bool = True) -> list[dict]:
         previous_state = state
 
     if verbose:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"ASKED FIELDS (ordered): {asked_fields}")
         print(f"No duplicates: {len(asked_fields) == len(set(asked_fields))}")
 
@@ -219,7 +219,7 @@ def test_no_confirmed_field_re_asked(pipeline_reports):
         q = report["next_question"]
         if q is not None and q in previous_confirmed:
             raise AssertionError(
-                f"Turn {i+1}: field {q} was asked again after being confirmed. "
+                f"Turn {i + 1}: field {q} was asked again after being confirmed. "
                 f"Previously confirmed: {previous_confirmed}"
             )
         # Update confirmed set at end of this turn

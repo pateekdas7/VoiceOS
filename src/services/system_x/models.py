@@ -1,4 +1,5 @@
 """System X domain models — incidents, recovery, audit, notifications, governance."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -9,6 +10,7 @@ from typing import Any
 # ---------------------------------------------------------------------------
 # Core incident enums
 # ---------------------------------------------------------------------------
+
 
 class IncidentSeverity(StrEnum):
     WARNING = "WARNING"
@@ -59,11 +61,13 @@ class NotificationStatus(StrEnum):
 # Governance / policy enums
 # ---------------------------------------------------------------------------
 
+
 class PolicyLevel(StrEnum):
     """Recovery automation level per incident severity."""
-    LOW = "LOW"          # Full auto-recovery, all non-destructive actions
-    MEDIUM = "MEDIUM"    # Full auto-recovery + notification, all actions
-    HIGH = "HIGH"        # Auto for safe actions, human approval for destructive
+
+    LOW = "LOW"  # Full auto-recovery, all non-destructive actions
+    MEDIUM = "MEDIUM"  # Full auto-recovery + notification, all actions
+    HIGH = "HIGH"  # Auto for safe actions, human approval for destructive
     CRITICAL = "CRITICAL"  # Human approval required before any action
 
 
@@ -81,6 +85,7 @@ class ValidationOutcome(StrEnum):
 # ---------------------------------------------------------------------------
 # Domain dataclasses
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class ClaudeAnalysis:
@@ -101,6 +106,7 @@ class ClaudeAnalysis:
 @dataclass(frozen=True)
 class PolicyDecision:
     """Result of the Recovery Policy Engine evaluation."""
+
     allowed: bool
     policy_level: PolicyLevel
     approved_actions: frozenset[RecoveryActionType]
@@ -112,6 +118,7 @@ class PolicyDecision:
 @dataclass(frozen=True)
 class ValidationResult:
     """Result of ClaudeResponseValidator.validate()."""
+
     outcome: ValidationOutcome
     valid: bool
     message: str
@@ -121,8 +128,9 @@ class ValidationResult:
 @dataclass(frozen=True)
 class DiagnosticTurn:
     """One turn of the bidirectional diagnostic session with Claude."""
+
     turn: int
-    role: str   # "user" | "assistant"
+    role: str  # "user" | "assistant"
     tools_called: tuple[str, ...]
     evidence_fetched: tuple[str, ...]
     content_summary: str  # redacted summary, not raw payload
@@ -193,6 +201,7 @@ class NotificationRecord:
 @dataclass(frozen=True)
 class IngestAlert:
     """A normalized inbound alert from Alertmanager or compliance monitoring."""
+
     fingerprint: str
     alert_name: str
     severity: str

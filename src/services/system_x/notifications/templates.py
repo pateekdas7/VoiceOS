@@ -1,4 +1,5 @@
 """Notification message templates for System X incidents."""
+
 from __future__ import annotations
 
 from ..models import ClaudeAnalysis, IncidentRecord, IncidentSeverity
@@ -46,7 +47,7 @@ def analysis_complete_subject(incident: IncidentRecord) -> str:
 
 
 def analysis_complete_body(incident: IncidentRecord, analysis: ClaudeAnalysis) -> str:
-    steps = "\n".join(f"  {i+1}. {s}" for i, s in enumerate(analysis.recovery_plan))
+    steps = "\n".join(f"  {i + 1}. {s}" for i, s in enumerate(analysis.recovery_plan))
     actions = "\n".join(f"  - {a}" for a in analysis.recommended_actions)
     return (
         f"Claude has completed analysis for incident {incident.incident_id}.\n\n"
@@ -74,7 +75,7 @@ def resolved_subject(incident: IncidentRecord) -> str:
 
 def resolved_body(incident: IncidentRecord) -> str:
     downtime = f"{incident.total_downtime_s}s" if incident.total_downtime_s else "unknown"
-    resolved_at = incident.resolved_at.strftime('%Y-%m-%d %H:%M:%S UTC') if incident.resolved_at else "N/A"
+    resolved_at = incident.resolved_at.strftime("%Y-%m-%d %H:%M:%S UTC") if incident.resolved_at else "N/A"
     return (
         f"Incident {incident.incident_id} has been resolved.\n\n"
         f"Title: {incident.title}\n"
@@ -125,8 +126,16 @@ def approval_required_whatsapp(incident: IncidentRecord, reason: str) -> str:
 
 
 __all__ = [
-    "analysis_complete_body", "analysis_complete_subject", "analysis_complete_whatsapp",
-    "approval_required_body", "approval_required_subject", "approval_required_whatsapp",
-    "incident_start_body", "incident_start_subject", "incident_start_whatsapp",
-    "resolved_body", "resolved_subject", "resolved_whatsapp",
+    "analysis_complete_body",
+    "analysis_complete_subject",
+    "analysis_complete_whatsapp",
+    "approval_required_body",
+    "approval_required_subject",
+    "approval_required_whatsapp",
+    "incident_start_body",
+    "incident_start_subject",
+    "incident_start_whatsapp",
+    "resolved_body",
+    "resolved_subject",
+    "resolved_whatsapp",
 ]

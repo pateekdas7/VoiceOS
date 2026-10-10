@@ -97,14 +97,15 @@ class TwilioOutboundCallService:
             raise CallPlacementError(f"network error placing call to {to_number}: {exc}") from exc
 
         if resp.status_code >= 400:
-            raise CallPlacementError(
-                f"Twilio {resp.status_code} placing call to {to_number}: {resp.text[:300]}"
-            )
+            raise CallPlacementError(f"Twilio {resp.status_code} placing call to {to_number}: {resp.text[:300]}")
 
         data = resp.json()
         call_sid: str = data["sid"]
         _log.info(
             "call placed to=%s lead_id=%s campaign_id=%s call_sid=%s",
-            to_number, lead_id, campaign_id, call_sid,
+            to_number,
+            lead_id,
+            campaign_id,
+            call_sid,
         )
         return call_sid

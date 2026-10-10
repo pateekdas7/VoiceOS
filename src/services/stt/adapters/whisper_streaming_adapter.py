@@ -1,4 +1,5 @@
 """WhisperStreamingAdapter -- STT over WebSocket."""
+
 from __future__ import annotations
 
 import asyncio
@@ -44,7 +45,6 @@ class WhisperStreamingAdapter:
         self._timeout = timeout
         self._breaker = breaker
 
-
     async def transcribe_stream(
         self,
         audio_frames: AsyncIterator[AudioFrame],
@@ -72,9 +72,7 @@ class WhisperStreamingAdapter:
         gpu_allocation_time_ms.observe((time.monotonic() - alloc_start) * 1000)
         if decision != AdmissionDecision.APPROVE or token is None:
             stt_requests_total.labels(status="rejected").inc()
-            raise RuntimeError(
-                f"GPU Scheduler rejected VRAM request for {self._model_name} ({self._vram_mb} MB)"
-            )
+            raise RuntimeError(f"GPU Scheduler rejected VRAM request for {self._model_name} ({self._vram_mb} MB)")
 
         lang_q = language or ""
         ws_url = _http_to_ws_url(self._base_url) + "?language=" + lang_q

@@ -24,13 +24,16 @@ def _read(name: str) -> str:
 
 
 class TestRequiredUnitsExist:
-    @pytest.mark.parametrize("unit", [
-        "voiceos-bff.service",
-        "voiceos-frontend.service",
-        "voiceos-webapi.service",
-        "voiceos-voice-runtime.service",
-        "voiceos-dialer-worker.service",
-    ])
+    @pytest.mark.parametrize(
+        "unit",
+        [
+            "voiceos-bff.service",
+            "voiceos-frontend.service",
+            "voiceos-webapi.service",
+            "voiceos-voice-runtime.service",
+            "voiceos-dialer-worker.service",
+        ],
+    )
     def test_unit_file_exists(self, unit: str) -> None:
         assert (_SYSTEMD / unit).exists(), f"Missing: scripts/systemd/{unit}"
 
@@ -52,9 +55,7 @@ class TestWebApiService:
 class TestVoiceRuntimeService:
     def test_has_timeout_stop_sec_45(self) -> None:
         content = _read("voiceos-voice-runtime.service")
-        assert "TimeoutStopSec=45" in content, (
-            "voiceos-voice-runtime.service must have TimeoutStopSec=45 for WS drain"
-        )
+        assert "TimeoutStopSec=45" in content, "voiceos-voice-runtime.service must have TimeoutStopSec=45 for WS drain"
 
     def test_exec_start_calls_serve(self) -> None:
         content = _read("voiceos-voice-runtime.service")
@@ -73,9 +74,7 @@ class TestVoiceRuntimeService:
 class TestDialerWorkerService:
     def test_has_timeout_stop_sec_45(self) -> None:
         content = _read("voiceos-dialer-worker.service")
-        assert "TimeoutStopSec=45" in content, (
-            "voiceos-dialer-worker.service must have TimeoutStopSec=45"
-        )
+        assert "TimeoutStopSec=45" in content, "voiceos-dialer-worker.service must have TimeoutStopSec=45"
 
     def test_exec_start_calls_run_dialer_worker(self) -> None:
         content = _read("voiceos-dialer-worker.service")

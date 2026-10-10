@@ -62,6 +62,7 @@ class TTSFailureError(RuntimeError):
     the call cannot continue without audio synthesis capability.
     """
 
+
 _VEENA_MODEL_NAME = "veena"
 _VEENA_VRAM_MB = 7974  # measured: Veena 3B BF16 + SNAC 24kHz = 7,974 MB actual footprint
 _DEFAULT_BASE_URL = "http://localhost:8200"
@@ -233,6 +234,7 @@ class VeenaAdapter:
             # pause between attempts. After both attempts fail, raise
             # TTSFailureError so the orchestrator can hang up cleanly.
             import asyncio as _asyncio
+
             resp = None
             for _attempt in range(2):
                 try:
@@ -247,23 +249,17 @@ class VeenaAdapter:
                     if _attempt == 0:
                         # If this failure just tripped the breaker open, propagate
                         # the original error immediately instead of retrying.
-                        if (
-                            self._breaker is not None
-                            and self._breaker.state == CircuitState.OPEN
-                        ):
+                        if self._breaker is not None and self._breaker.state == CircuitState.OPEN:
                             raise
                         logger.warning(
-                            "TTS connection failed on first attempt (%s: %s), "
-                            "retrying after %.1fs",
+                            "TTS connection failed on first attempt (%s: %s), retrying after %.1fs",
                             type(_tts_exc).__name__,
                             _tts_exc,
                             self._tts_retry_wait_s,
                         )
                         await _asyncio.sleep(self._tts_retry_wait_s)
                     else:
-                        raise TTSFailureError(
-                            f"TTS failed after retry: {_tts_exc}"
-                        ) from _tts_exc
+                        raise TTSFailureError(f"TTS failed after retry: {_tts_exc}") from _tts_exc
             assert resp is not None
             try:
                 async for raw_chunk in resp.aiter_bytes():

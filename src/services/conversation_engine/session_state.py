@@ -256,9 +256,7 @@ class ConversationSessionState:
         self._hallucination_hits = int(snapshot.state.get("hallucination_hits", 0))
         self._farewell_requested = bool(snapshot.state.get("farewell_requested", False))
         self._commitment = dict(
-            snapshot.state.get(
-                "commitment", {"amount_minor": None, "months": None, "date": None, "cadence": None}
-            )
+            snapshot.state.get("commitment", {"amount_minor": None, "months": None, "date": None, "cadence": None})
         )
         self._assistant_replies = list(snapshot.state.get("assistant_replies", []))
         self._last_empathy_state = str(snapshot.state.get("last_empathy_state", ""))

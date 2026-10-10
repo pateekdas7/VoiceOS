@@ -382,7 +382,9 @@ class ResponsePlanningEngine:
         decisions: list[DecisionRecord] = []
         call_id = turn.call_id
         tenant_id = turn.tenant_id
-        tracker = conversation_state_tracker if conversation_state_tracker is not None else ConversationStateIntelligence()
+        tracker = (
+            conversation_state_tracker if conversation_state_tracker is not None else ConversationStateIntelligence()
+        )
 
         # ------------------------------------------------------------------
         # Stage 1: Perception

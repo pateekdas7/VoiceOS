@@ -29,14 +29,10 @@ _DIRECT_QUESTION_INTENTS = frozenset(
 )
 
 # Intents that block qualification resumption immediately
-_BLOCK_QUALIFICATION_INTENTS = frozenset(
-    {IntentLabel.DISCONNECT, IntentLabel.ABUSE, IntentLabel.CONSENT_REVOKE}
-)
+_BLOCK_QUALIFICATION_INTENTS = frozenset({IntentLabel.DISCONNECT, IntentLabel.ABUSE, IntentLabel.CONSENT_REVOKE})
 
 # Strategy actions that mean qualification should stop
-_STOP_STRATEGIES = frozenset(
-    {StrategyAction.ESCALATE, StrategyAction.TRANSFER, StrategyAction.CLOSE}
-)
+_STOP_STRATEGIES = frozenset({StrategyAction.ESCALATE, StrategyAction.TRANSFER, StrategyAction.CLOSE})
 
 
 class QuestionSelector:
@@ -118,11 +114,7 @@ class QuestionSelector:
                 return None
 
         # Compute which required fields are still missing
-        missing = [
-            f
-            for f in self._domain.required_fields
-            if f.value not in state.confirmed_fields
-        ]
+        missing = [f for f in self._domain.required_fields if f.value not in state.confirmed_fields]
 
         if not missing:
             logger.debug("QuestionSelector: None — all required fields confirmed")
@@ -132,10 +124,7 @@ class QuestionSelector:
         available = [
             f
             for f in missing
-            if all(
-                prereq.value in state.confirmed_fields
-                for prereq in self._domain.dependencies.get(f, [])
-            )
+            if all(prereq.value in state.confirmed_fields for prereq in self._domain.dependencies.get(f, []))
         ]
 
         if not available:

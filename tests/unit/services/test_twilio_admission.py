@@ -33,6 +33,7 @@ The suite exercises the real production entrypoint (create_twilio_media_stream_a
 via a Starlette TestClient — no monkey-patching of admission internals —
 so any regression in the admission path is caught end-to-end.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -82,10 +83,16 @@ def _twilio_sign(url: str, params: dict[str, str], auth_token: str = _AUTH_TOKEN
     return base64.b64encode(mac.digest()).decode()
 
 
-def _make_app(*, admission_ttl_s: float = DEFAULT_ADMISSION_TTL_S, now=None) -> tuple[TestClient, SharedCallDependencies]:
+def _make_app(
+    *, admission_ttl_s: float = DEFAULT_ADMISSION_TTL_S, now=None
+) -> tuple[TestClient, SharedCallDependencies]:
     conversation_engine = MagicMock()
     clause = AudioClause(
-        audio_data=b"\x00\x00" * 960, sample_rate=24000, text="ok", clause_index=0, is_final=True,
+        audio_data=b"\x00\x00" * 960,
+        sample_rate=24000,
+        text="ok",
+        clause_index=0,
+        is_final=True,
     )
     conversation_engine.handle_turn = AsyncMock(return_value=[clause])
     conversation_engine.build_greeting = MagicMock(return_value=None)
@@ -136,8 +143,13 @@ def _extract_admission_token(twiml_body: str) -> str:
     return m.group(1)
 
 
-def _wss_start(call_sid: str, account_sid: str = _ACCOUNT_SID, token: str | None = None,
-                stream_sid: str = "MZstream", extra_params: dict | None = None) -> dict:
+def _wss_start(
+    call_sid: str,
+    account_sid: str = _ACCOUNT_SID,
+    token: str | None = None,
+    stream_sid: str = "MZstream",
+    extra_params: dict | None = None,
+) -> dict:
     custom = {"admission_token": token} if token is not None else {}
     if extra_params:
         custom.update(extra_params)
@@ -230,10 +242,12 @@ def test_D_wss_missing_call_and_stream_sid_rejected() -> None:
     with pytest.raises(Exception):
         with client.websocket_connect("/twilio/media-stream") as ws:
             ws.send_json({"event": "connected"})
-            ws.send_json({
-                "event": "start",
-                "start": {"mediaFormat": {"sampleRate": 8000}},
-            })
+            ws.send_json(
+                {
+                    "event": "start",
+                    "start": {"mediaFormat": {"sampleRate": 8000}},
+                }
+            )
             ws.receive_json()
 
 
@@ -402,7 +416,9 @@ async def test_K_legacy_adapter_hmac_path_still_works() -> None:
     from src.services.media_gateway.adapters.twilio_websocket import TwilioWebSocketAdapter
 
     a = TwilioWebSocketAdapter(
-        account_sid=_ACCOUNT_SID, auth_token=_AUTH_TOKEN, tenant_id=TenantId("tenant-1"),
+        account_sid=_ACCOUNT_SID,
+        auth_token=_AUTH_TOKEN,
+        tenant_id=TenantId("tenant-1"),
     )
     url = "https://example.com/webhook"
     params: dict[str, str] = {}

@@ -26,6 +26,7 @@ so that:
          framing contract implicitly by preserving ``AudioClause.audio_data``
          intact through the gate (i.e. gating never rewrites payload).
 """
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
@@ -61,7 +62,9 @@ class _MultiClauseTTS:
         self.received_texts: list[str] = []
 
     async def synthesize_stream(
-        self, text_chunks: AsyncIterator[str], voice_config: VoiceConfig | None = None,
+        self,
+        text_chunks: AsyncIterator[str],
+        voice_config: VoiceConfig | None = None,
     ) -> AsyncIterator[AudioClause]:
         return self._generate(text_chunks)
 
@@ -71,7 +74,7 @@ class _MultiClauseTTS:
             # Match production semantics: every synthesis call yields a
             # single clause with is_final matching what the pipeline sets.
             yield AudioClause(
-                audio_data=b"\x00" * 960,   # 40ms of PCM16 @ 24kHz (contract intact)
+                audio_data=b"\x00" * 960,  # 40ms of PCM16 @ 24kHz (contract intact)
                 sample_rate=24000,
                 text=chunk,
                 clause_index=0,
@@ -164,7 +167,10 @@ async def test_p4_blocking_greeting_produces_ordered_stamped_clauses() -> None:
 
     text = "Namaste sir. Main Kavya bol rahi hoon. Aap kaise hain?"
     clauses = await engine.speak_scripted_text(
-        text, playback, response_plan=None, tts_mode="blocking",
+        text,
+        playback,
+        response_plan=None,
+        tts_mode="blocking",
     )
 
     assert len(clauses) >= 1
@@ -174,17 +180,18 @@ async def test_p4_blocking_greeting_produces_ordered_stamped_clauses() -> None:
     # zero-indexed clause per synth call — the invariant is 'never
     # reordered', not 'strictly increasing').
     indexes = [c.clause_index for c in playback.enqueues_seen]
-    assert indexes == sorted(indexes), \
-        f"blocking release reordered clauses: {indexes!r}"
+    assert indexes == sorted(indexes), f"blocking release reordered clauses: {indexes!r}"
 
     # P4.3 — Every reached clause is stamped with the scope generation
     # (Phase E). Scheduler's live generation matches. This is what
     # makes barge-in a fail-closed operation.
     for c in playback.enqueues_seen:
-        assert c.generation == generation_at_start, \
+        assert c.generation == generation_at_start, (
             f"clause generation drift: got={c.generation} expected={generation_at_start}"
-    assert playback.generation == generation_at_start, \
+        )
+    assert playback.generation == generation_at_start, (
         "scheduler generation advanced unexpectedly during BLOCKING greeting"
+    )
 
     # P4.6 — Audio payload preserved intact through the gate (no
     # slicing/re-encoding). Every enqueued clause carries the same
@@ -220,8 +227,12 @@ async def test_p4_bargein_during_blocking_greeting_drops_stale_clauses() -> None
 
     # A clause synthesised under the OLD generation must be dropped.
     stale = AudioClause(
-        audio_data=b"\x00" * 960, sample_rate=24000, text="stale",
-        clause_index=0, is_final=True, generation=gen_before,
+        audio_data=b"\x00" * 960,
+        sample_rate=24000,
+        text="stale",
+        clause_index=0,
+        is_final=True,
+        generation=gen_before,
     )
     await playback.enqueue(stale)
 
@@ -230,8 +241,7 @@ async def test_p4_bargein_during_blocking_greeting_drops_stale_clauses() -> None
     # our override), but the base PlaybackScheduler._queue rejected it,
     # so dequeue() would time out. Check the queue depth via the private
     # attr (guarded by our own subclass) instead of racing on dequeue.
-    assert len(playback._queue) == 0, \
-        "stale clause was accepted despite superseded generation"
+    assert len(playback._queue) == 0, "stale clause was accepted despite superseded generation"
 
 
 # ---------------------------------------------------------------------------
@@ -257,8 +267,10 @@ def test_p4_ws_entrypoint_greeting_passes_response_level_buffer_mode() -> None:
 
     src = inspect.getsource(twilio_ws_entrypoint)
     accepted = (
-        'tts_mode="blocking"', "tts_mode='blocking'",
-        'tts_mode="full_response"', "tts_mode='full_response'",
+        'tts_mode="blocking"',
+        "tts_mode='blocking'",
+        'tts_mode="full_response"',
+        "tts_mode='full_response'",
     )
     assert any(marker in src for marker in accepted), (
         "greeting caller in twilio_ws_entrypoint no longer passes a "

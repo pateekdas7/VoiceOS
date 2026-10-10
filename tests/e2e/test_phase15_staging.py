@@ -66,6 +66,7 @@ class StagingClient:
 
 # ── Scenario 1: Full happy path ────────────────────────────────────────────────
 
+
 def scenario_1_full_happy_path(client: StagingClient) -> bool:
     """Create tenant → user → campaign → upload leads → verify."""
     print("\nScenario 1: Full happy path")
@@ -74,12 +75,16 @@ def scenario_1_full_happy_path(client: StagingClient) -> bool:
     log("Creating tenant...")
     tenant_email = f"staging-{uuid.uuid4().hex[:8]}@voiceos-test.local"
     tenant_name = f"Staging Tenant {uuid.uuid4().hex[:6]}"
-    resp = client.post("/auth/register", {
-        "email": tenant_email,
-        "password": "StagingTest@1234",
-        "name": "Test User",
-        "tenant_name": tenant_name,
-    }, auth=False)
+    resp = client.post(
+        "/auth/register",
+        {
+            "email": tenant_email,
+            "password": "StagingTest@1234",
+            "name": "Test User",
+            "tenant_name": tenant_name,
+        },
+        auth=False,
+    )
     tenant_id = resp.get("tenant_id")
     if not tenant_id:
         log(f"FAIL: register did not return tenant_id: {resp}")
@@ -92,11 +97,14 @@ def scenario_1_full_happy_path(client: StagingClient) -> bool:
 
     # 1c. Create campaign
     log("Creating campaign...")
-    resp = client.post("/campaigns", {
-        "name": f"Staging Campaign {uuid.uuid4().hex[:6]}",
-        "product": "test_product",
-        "language": "hi-IN",
-    })
+    resp = client.post(
+        "/campaigns",
+        {
+            "name": f"Staging Campaign {uuid.uuid4().hex[:6]}",
+            "product": "test_product",
+            "language": "hi-IN",
+        },
+    )
     campaign_id = resp.get("id") or resp.get("campaign_id")
     if not campaign_id:
         log(f"FAIL: campaign create did not return id: {resp}")
@@ -114,10 +122,14 @@ def scenario_1_full_happy_path(client: StagingClient) -> bool:
 
     boundary = uuid.uuid4().hex
     body = (
-        f"--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="file"; filename="test_leads.csv"\r\n'
-        f"Content-Type: text/csv\r\n\r\n"
-    ).encode() + csv_bytes + f"\r\n--{boundary}--\r\n".encode()
+        (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="test_leads.csv"\r\n'
+            f"Content-Type: text/csv\r\n\r\n"
+        ).encode()
+        + csv_bytes
+        + f"\r\n--{boundary}--\r\n".encode()
+    )
 
     url = client.bff_url + f"/campaigns/{campaign_id}/leads"
     req = urllib.request.Request(url, data=body, method="POST")
@@ -157,6 +169,7 @@ def scenario_1_full_happy_path(client: StagingClient) -> bool:
 
 # ── Scenario 2: Post-call durability ──────────────────────────────────────────
 
+
 def scenario_2_post_call_durability(client: StagingClient, pg_dsn: str) -> bool:
     """Simulate a completed call via /dialer/callback; verify call_attempts updated."""
     print("\nScenario 2: Post-call write durability")
@@ -165,6 +178,7 @@ def scenario_2_post_call_durability(client: StagingClient, pg_dsn: str) -> bool:
 
     # Seed a call_attempts row directly in DB
     import subprocess
+
     seed_sql = f"""
     DO $$
     DECLARE
@@ -195,6 +209,7 @@ def scenario_2_post_call_durability(client: StagingClient, pg_dsn: str) -> bool:
 
 # ── Scenario 3: HITL escalation ───────────────────────────────────────────────
 
+
 def scenario_3_hitl_escalation(client: StagingClient) -> bool:
     """Trigger HITL item claim + resolve via bff.js."""
     print("\nScenario 3: HITL escalation")
@@ -216,17 +231,21 @@ def scenario_3_hitl_escalation(client: StagingClient) -> bool:
 
 # ── Scenario 4: Import resume ─────────────────────────────────────────────────
 
+
 def scenario_4_import_resume(client: StagingClient) -> bool:
     """Upload 100 rows, abort mid-import, resume, verify all processed."""
     print("\nScenario 4: Import resume")
 
     # Create a campaign for resume test
     try:
-        resp = client.post("/campaigns", {
-            "name": "Resume Test Campaign",
-            "product": "test_product",
-            "language": "hi-IN",
-        })
+        resp = client.post(
+            "/campaigns",
+            {
+                "name": "Resume Test Campaign",
+                "product": "test_product",
+                "language": "hi-IN",
+            },
+        )
         campaign_id = resp.get("id") or resp.get("campaign_id")
     except Exception as e:
         log(f"WARN: Could not create campaign: {e}")
@@ -243,10 +262,14 @@ def scenario_4_import_resume(client: StagingClient) -> bool:
 
     boundary = uuid.uuid4().hex
     body = (
-        f"--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="file"; filename="resume_test.csv"\r\n'
-        f"Content-Type: text/csv\r\n\r\n"
-    ).encode() + csv_bytes + f"\r\n--{boundary}--\r\n".encode()
+        (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="resume_test.csv"\r\n'
+            f"Content-Type: text/csv\r\n\r\n"
+        ).encode()
+        + csv_bytes
+        + f"\r\n--{boundary}--\r\n".encode()
+    )
 
     url = client.bff_url + f"/campaigns/{campaign_id}/leads"
     req = urllib.request.Request(url, data=body, method="POST")
@@ -285,6 +308,7 @@ def scenario_4_import_resume(client: StagingClient) -> bool:
 
 # ── Scenario 5: Crash recovery ────────────────────────────────────────────────
 
+
 def scenario_5_crash_recovery(pg_dsn: str) -> bool:
     """Kill dialer_worker at peak; verify leads recovered on restart."""
     print("\nScenario 5: Crash recovery")
@@ -308,9 +332,15 @@ def scenario_5_crash_recovery(pg_dsn: str) -> bool:
 
     log("Checking recovery_log for reconciled attempts...")
     result = subprocess.run(
-        ["psql", pg_dsn, "-t", "-c",
-         "SELECT COUNT(*) FROM recovery_log WHERE created_at > NOW() - INTERVAL '1 minute'"],
-        capture_output=True, text=True,
+        [
+            "psql",
+            pg_dsn,
+            "-t",
+            "-c",
+            "SELECT COUNT(*) FROM recovery_log WHERE created_at > NOW() - INTERVAL '1 minute'",
+        ],
+        capture_output=True,
+        text=True,
     )
     if result.returncode == 0:
         count = result.stdout.strip()
@@ -322,6 +352,7 @@ def scenario_5_crash_recovery(pg_dsn: str) -> bool:
 
 
 # ── Scenario 6: Billing — invoice generation ──────────────────────────────────
+
 
 def scenario_6_billing(client: StagingClient) -> bool:
     """Run usage events; verify invoice generated."""
@@ -354,11 +385,11 @@ SCENARIOS = {
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Phase 15 Staging E2E Tests")
-    parser.add_argument("--bff-url", default=os.getenv("BFF_URL", "http://localhost:8100"),
-                        help="Staging bff.js base URL")
+    parser.add_argument(
+        "--bff-url", default=os.getenv("BFF_URL", "http://localhost:8100"), help="Staging bff.js base URL"
+    )
     parser.add_argument("--pg-dsn", default=os.getenv("STAGING_DATABASE_URL", "postgresql://localhost/voiceos_staging"))
-    parser.add_argument("--scenario", type=int, choices=list(SCENARIOS.keys()),
-                        help="Run only this scenario")
+    parser.add_argument("--scenario", type=int, choices=list(SCENARIOS.keys()), help="Run only this scenario")
     args = parser.parse_args()
 
     print(f"\nPhase 15 Staging Validation — {args.bff_url}")
@@ -373,6 +404,7 @@ def main() -> None:
         fn = SCENARIOS[n]
         try:
             import inspect
+
             sig = inspect.signature(fn)
             kwargs: dict = {}
             if "client" in sig.parameters:

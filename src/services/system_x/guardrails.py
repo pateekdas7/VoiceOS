@@ -13,6 +13,7 @@ Enforces:
   - Incident deduplication (same alert fingerprint within dedup window)
   - Recovery timeout (action must complete within timeout_s)
 """
+
 from __future__ import annotations
 
 import logging
@@ -23,10 +24,10 @@ from dataclasses import dataclass, field
 _log = logging.getLogger("system_x.guardrails")
 
 _MAX_RECOVERIES_PER_HOUR = 10
-_MAX_RESTARTS_PER_SERVICE = 3       # within cooldown window
-_COOLDOWN_S = 300                   # 5 minutes between recoveries for same service
-_DEDUP_WINDOW_S = 120               # same fingerprint within 2 min = duplicate
-_RECOVERY_TIMEOUT_S = 600           # 10 minutes max per recovery
+_MAX_RESTARTS_PER_SERVICE = 3  # within cooldown window
+_COOLDOWN_S = 300  # 5 minutes between recoveries for same service
+_DEDUP_WINDOW_S = 120  # same fingerprint within 2 min = duplicate
+_RECOVERY_TIMEOUT_S = 600  # 10 minutes max per recovery
 
 
 @dataclass
@@ -81,8 +82,7 @@ class RecoveryGuardrails:
 
         # 1. Deduplication: if all fingerprints were seen recently, skip
         if alert_fingerprints and all(
-            now - self._seen_fingerprints.get(fp, 0) < self._dedup_window_s
-            for fp in alert_fingerprints
+            now - self._seen_fingerprints.get(fp, 0) < self._dedup_window_s for fp in alert_fingerprints
         ):
             return False, f"Duplicate incident suppressed: all fingerprints seen within {self._dedup_window_s}s window"
 
@@ -142,8 +142,7 @@ class RecoveryGuardrails:
         """True if all fingerprints were recently seen (dedup check)."""
         now = time.monotonic()
         return bool(fingerprints) and all(
-            now - self._seen_fingerprints.get(fp, 0) < self._dedup_window_s
-            for fp in fingerprints
+            now - self._seen_fingerprints.get(fp, 0) < self._dedup_window_s for fp in fingerprints
         )
 
     # ------------------------------------------------------------------

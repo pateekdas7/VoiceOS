@@ -286,7 +286,7 @@ class PromptBuilder:
     def _build_intents_section(self, plan: ResponsePlan) -> str:
         lines = ["\nCUSTOMER INTENTS (ranked by confidence):"]
         for i, intent in enumerate(plan.intents, 1):
-            span = f" — \"{intent.source_span}\"" if intent.source_span else ""
+            span = f' — "{intent.source_span}"' if intent.source_span else ""
             lines.append(f"  {i}. {intent.label.value} ({intent.confidence:.2f}){span}")
         return "\n".join(lines)
 
@@ -346,8 +346,7 @@ class PromptBuilder:
             )
         else:
             lines.append(
-                "  → Start at ceiling. Bridge to floor if customer counters low. "
-                "After max concessions, hold firm."
+                "  → Start at ceiling. Bridge to floor if customer counters low. After max concessions, hold firm."
             )
         return "\n".join(lines)
 
@@ -394,9 +393,7 @@ class PromptBuilder:
 
         next_q = sales_state.get("next_question")
         next_action = sales_state.get("next_action", "")
-        lines.append(
-            f"\nMissing (ask this turn): {next_q if next_q else 'All key requirements known'}"
-        )
+        lines.append(f"\nMissing (ask this turn): {next_q if next_q else 'All key requirements known'}")
         lines.append(f"NEXT ACTION: {next_action}")
 
         if next_q:
@@ -418,23 +415,15 @@ class PromptBuilder:
                 "Sound natural. Do NOT mention scores, stages, or system names."
             )
         elif next_action == "HANDLE_OBJECTION":
-            lines.append(
-                "\nINSTRUCTION: Address the customer's concern empathetically before "
-                "resuming qualification."
-            )
+            lines.append("\nINSTRUCTION: Address the customer's concern empathetically before resuming qualification.")
         elif next_action == "HUMAN_HANDOFF":
             lines.append(
-                "\nINSTRUCTION: Politely indicate you will connect them with a specialist "
-                "who can help them further."
+                "\nINSTRUCTION: Politely indicate you will connect them with a specialist who can help them further."
             )
         elif next_action == "OFFER_SITE_VISIT":
-            lines.append(
-                "\nINSTRUCTION: Invite the customer for a site visit in a warm, natural way."
-            )
+            lines.append("\nINSTRUCTION: Invite the customer for a site visit in a warm, natural way.")
         elif next_action == "CONFIRM_SITE_VISIT":
-            lines.append(
-                "\nINSTRUCTION: Confirm the site visit details and provide next steps."
-            )
+            lines.append("\nINSTRUCTION: Confirm the site visit details and provide next steps.")
 
         return "\n".join(lines)
 

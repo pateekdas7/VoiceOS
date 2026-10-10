@@ -141,7 +141,9 @@ class AlertLifecycleService:
         for alert in self._repository.list_open():
             if alert.status != AlertStatus.FIRING:
                 continue
-            timeout_seconds = self._escalation_timeouts.get(alert.severity, DEFAULT_ESCALATION_TIMEOUTS_SECONDS[Severity.INFO])
+            timeout_seconds = self._escalation_timeouts.get(
+                alert.severity, DEFAULT_ESCALATION_TIMEOUTS_SECONDS[Severity.INFO]
+            )
             age_seconds = (current_time - alert.fired_at).total_seconds()
             if age_seconds >= timeout_seconds:
                 escalated.append(self.escalate(alert.alert_id, to=_next_escalation_tier(alert.severity)))

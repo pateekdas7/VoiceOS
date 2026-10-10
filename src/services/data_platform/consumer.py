@@ -1,4 +1,5 @@
 """Data Platform ETL consumer — drains Redis Streams into raw_events table."""
+
 from __future__ import annotations
 
 import asyncio
@@ -10,17 +11,17 @@ import asyncpg
 
 _log = logging.getLogger("voiceos.data_platform.consumer")
 
-STREAM_NAME    = "voiceos-events"
+STREAM_NAME = "voiceos-events"
 CONSUMER_GROUP = "data-platform-etl"
-CONSUMER_NAME  = "etl-worker-0"
-BATCH_SIZE     = 200
-POLL_INTERVAL  = 5.0
+CONSUMER_NAME = "etl-worker-0"
+BATCH_SIZE = 200
+POLL_INTERVAL = 5.0
 
 
 class ETLConsumer:
     def __init__(self, redis: Any, pg_pool: asyncpg.Pool) -> None:
         self._redis = redis
-        self._pool  = pg_pool
+        self._pool = pg_pool
 
     def _ensure_group(self) -> None:
         try:
@@ -35,7 +36,8 @@ class ETLConsumer:
                VALUES ($1, $2, NOW())
                ON CONFLICT (consumer_group) DO UPDATE
                SET last_entry_id=EXCLUDED.last_entry_id, updated_at=NOW()""",
-            CONSUMER_GROUP, entry_id,
+            CONSUMER_GROUP,
+            entry_id,
         )
 
     async def _ingest_batch(self, entries: list) -> int:
@@ -49,17 +51,19 @@ class ETLConsumer:
             except Exception as e:
                 _log.warning("ETL: failed to parse envelope entry=%s: %s", entry_id, e)
                 continue
-            rows.append((
-                env.get("event_id", ""),
-                env.get("event_type", ""),
-                int(env.get("version", 1)),
-                env.get("tenant_id", ""),
-                env.get("correlation_id", ""),
-                env.get("causation_id"),
-                env.get("trace_id", ""),
-                env.get("occurred_at"),
-                json.dumps(env.get("payload", {})),
-            ))
+            rows.append(
+                (
+                    env.get("event_id", ""),
+                    env.get("event_type", ""),
+                    int(env.get("version", 1)),
+                    env.get("tenant_id", ""),
+                    env.get("correlation_id", ""),
+                    env.get("causation_id"),
+                    env.get("trace_id", ""),
+                    env.get("occurred_at"),
+                    json.dumps(env.get("payload", {})),
+                )
+            )
         if not rows:
             return 0
         await self._pool.executemany(
@@ -75,7 +79,8 @@ class ETLConsumer:
     async def run_once(self) -> int:
         self._ensure_group()
         raw = self._redis.xreadgroup(
-            CONSUMER_GROUP, CONSUMER_NAME,
+            CONSUMER_GROUP,
+            CONSUMER_NAME,
             {STREAM_NAME: ">"},
             count=BATCH_SIZE,
             block=0,

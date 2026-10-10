@@ -59,6 +59,7 @@ _NEG_FLOOR_FIXTURE = _SYNTHETIC_DIR / "negotiation_floor_violation_001.json"
 # Helper factories
 # ---------------------------------------------------------------------------
 
+
 def _ctx(
     outstanding: float = 50000.0,
     settlement_pct: float = 0.5,
@@ -124,6 +125,7 @@ def _customer_turn(
 # Stub IntentAccuracyEvaluator for FounderValidationSuite injection
 # ---------------------------------------------------------------------------
 
+
 class _FixedIntentEvaluator(IntentAccuracyEvaluator):
     """Returns a pre-built IntentEvalResult regardless of input transcripts."""
 
@@ -137,6 +139,7 @@ class _FixedIntentEvaluator(IntentAccuracyEvaluator):
 # ---------------------------------------------------------------------------
 # CallTranscript.from_json
 # ---------------------------------------------------------------------------
+
 
 class TestCallTranscriptFromJson:
     def test_good_call_loads_correctly(self) -> None:
@@ -166,11 +169,7 @@ class TestCallTranscriptFromJson:
 
     def test_negotiation_floor_violation_loads_correctly(self) -> None:
         t = CallTranscript.from_json(_NEG_FLOOR_FIXTURE)
-        agent_offers = [
-            turn.negotiation_offer_inr
-            for turn in t.turns
-            if turn.negotiation_offer_inr is not None
-        ]
+        agent_offers = [turn.negotiation_offer_inr for turn in t.turns if turn.negotiation_offer_inr is not None]
         assert len(agent_offers) == 1
         assert agent_offers[0] == 10000.0
 
@@ -191,6 +190,7 @@ class TestCallTranscriptFromJson:
 # ---------------------------------------------------------------------------
 # LawOfAuthorityReplayChecker
 # ---------------------------------------------------------------------------
+
 
 class TestLawOfAuthorityReplayChecker:
     @pytest.fixture(autouse=True)
@@ -323,6 +323,7 @@ class TestLawOfAuthorityReplayChecker:
 # RBIComplianceChecker
 # ---------------------------------------------------------------------------
 
+
 class TestRBIComplianceChecker:
     @pytest.fixture(autouse=True)
     def checker(self) -> RBIComplianceChecker:
@@ -409,6 +410,7 @@ class TestRBIComplianceChecker:
 # ---------------------------------------------------------------------------
 # NegotiationEnvelopeChecker
 # ---------------------------------------------------------------------------
+
 
 class TestNegotiationEnvelopeChecker:
     @pytest.fixture(autouse=True)
@@ -504,6 +506,7 @@ class TestNegotiationEnvelopeChecker:
 # IntentAccuracyEvaluator
 # ---------------------------------------------------------------------------
 
+
 @requires_pydantic_v2
 class TestIntentAccuracyEvaluator:
     """Tests use the keyword-mode IntentModel (no ONNX file required).
@@ -516,10 +519,10 @@ class TestIntentAccuracyEvaluator:
 
     # Keyword-predictable (text → expected IntentLabel.value)
     _CORRECT_PAIRS: list[tuple[str, str]] = [
-        ("Haan", "CONSENT_GRANT"),           # \bhaan\b
-        ("yeh galat hai dispute", "DISPUTE"), # \bgalat\b (higher priority wins)
-        ("main dunga", "PROMISE_TO_PAY"),     # \bdunga\b
-        ("hardship hai", "HARDSHIP"),         # \bhardship\b
+        ("Haan", "CONSENT_GRANT"),  # \bhaan\b
+        ("yeh galat hai dispute", "DISPUTE"),  # \bgalat\b (higher priority wins)
+        ("main dunga", "PROMISE_TO_PAY"),  # \bdunga\b
+        ("hardship hai", "HARDSHIP"),  # \bhardship\b
         ("baad mein call karo", "CALLBACK"),  # \bbaad mein\b
     ]
 
@@ -528,10 +531,7 @@ class TestIntentAccuracyEvaluator:
         call_id: str,
         pairs: list[tuple[str, str]],
     ) -> CallTranscript:
-        turns = [
-            _customer_turn(i * 2 + 1, text, intent)
-            for i, (text, intent) in enumerate(pairs)
-        ]
+        turns = [_customer_turn(i * 2 + 1, text, intent) for i, (text, intent) in enumerate(pairs)]
         return _transcript(call_id, _ctx(), turns)
 
     def test_perfect_accuracy_passes(self) -> None:
@@ -598,7 +598,7 @@ class TestIntentAccuracyEvaluator:
         evaluator = IntentAccuracyEvaluator()
         # One correct + one wrong
         pairs = [
-            ("Haan", "CONSENT_GRANT"),   # correct
+            ("Haan", "CONSENT_GRANT"),  # correct
             ("zxywvuts", "CONSENT_GRANT"),  # keyword → OTHER ≠ CONSENT_GRANT → wrong
         ]
         t = self._make_transcript_with_customer_turns("ev-6", pairs)
@@ -624,12 +624,8 @@ class TestIntentAccuracyEvaluator:
 
     def test_multiple_transcripts_aggregated(self) -> None:
         evaluator = IntentAccuracyEvaluator()
-        t1 = self._make_transcript_with_customer_turns(
-            "ev-8a", [("Haan", "CONSENT_GRANT")]
-        )
-        t2 = self._make_transcript_with_customer_turns(
-            "ev-8b", [("main dunga", "PROMISE_TO_PAY")]
-        )
+        t1 = self._make_transcript_with_customer_turns("ev-8a", [("Haan", "CONSENT_GRANT")])
+        t2 = self._make_transcript_with_customer_turns("ev-8b", [("main dunga", "PROMISE_TO_PAY")])
         result = evaluator.evaluate_transcripts([t1, t2])
         assert result.total_labeled == 2
         assert result.correct == 2
@@ -638,6 +634,7 @@ class TestIntentAccuracyEvaluator:
         # Inject mock model that always predicts CONSENT_GRANT
         from src.engines.intent.model import IntentModel
         from src.libs.contracts.response_plan import IntentLabel
+
         scores = [0.0] * IntentModel.NUM_LABELS
         cg_idx = list(IntentLabel).index(IntentLabel.CONSENT_GRANT)
         scores[cg_idx] = 10.0
@@ -655,13 +652,12 @@ class TestIntentAccuracyEvaluator:
 # FounderValidationSuite
 # ---------------------------------------------------------------------------
 
+
 class TestFounderValidationSuite:
     @pytest.fixture(autouse=True)
     def _stub_evaluator(self) -> None:
         # Use a fixed perfect intent result so tests are deterministic
-        self._stub = _FixedIntentEvaluator(
-            IntentEvalResult(total_labeled=8, correct=8, accuracy=1.0)
-        )
+        self._stub = _FixedIntentEvaluator(IntentEvalResult(total_labeled=8, correct=8, accuracy=1.0))
 
     def _suite(self) -> FounderValidationSuite:
         return FounderValidationSuite(intent_evaluator=self._stub)
@@ -674,6 +670,7 @@ class TestFounderValidationSuite:
     def test_load_transcripts_ignores_underscore_prefix(self, tmp_path: Path) -> None:
         # Copy one fixture and add an _ignored.json
         import shutil
+
         shutil.copy(_GOOD_CALL_FIXTURE, tmp_path / "good_call_001.json")
         (tmp_path / "_notes.json").write_text("{}", encoding="utf-8")
         suite = self._suite()
@@ -694,7 +691,7 @@ class TestFounderValidationSuite:
     def test_run_correct_call_pass_fail_counts(self) -> None:
         report = self._suite().run(_SYNTHETIC_DIR)
         assert report.total_calls == 5
-        assert report.calls_passed == 1   # only good_call_001
+        assert report.calls_passed == 1  # only good_call_001
         assert report.calls_failed == 4
 
     def test_evaluate_call_good_transcript_passes(self) -> None:
@@ -741,6 +738,7 @@ class TestFounderValidationSuite:
 # Phase-2 fields must be PENDING (None / False) — never fabricated
 # ---------------------------------------------------------------------------
 
+
 class TestFounderValidationReportPhase2Pending:
     """Verify Sprint-029 Phase-2 dimensions are not populated until real
     infrastructure execution completes.  These assertions are regression guards
@@ -748,9 +746,7 @@ class TestFounderValidationReportPhase2Pending:
 
     @pytest.fixture
     def report(self) -> FounderValidationReport:
-        stub = _FixedIntentEvaluator(
-            IntentEvalResult(total_labeled=0, correct=0, accuracy=0.0)
-        )
+        stub = _FixedIntentEvaluator(IntentEvalResult(total_labeled=0, correct=0, accuracy=0.0))
         return FounderValidationSuite(intent_evaluator=stub).run(_SYNTHETIC_DIR)
 
     def test_tone_empathy_score_none(self, report: FounderValidationReport) -> None:
@@ -777,13 +773,12 @@ class TestFounderValidationReportPhase2Pending:
         assert report.phase1_passed is False
 
     def test_phase1_passed_with_clean_transcript(self) -> None:
-        stub = _FixedIntentEvaluator(
-            IntentEvalResult(total_labeled=1, correct=1, accuracy=1.0)
-        )
+        stub = _FixedIntentEvaluator(IntentEvalResult(total_labeled=1, correct=1, accuracy=1.0))
         suite = FounderValidationSuite(intent_evaluator=stub)
         # Run against only the good call
         import shutil
         import tempfile
+
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             shutil.copy(_GOOD_CALL_FIXTURE, tmp_path / "good_call_001.json")
@@ -794,9 +789,7 @@ class TestFounderValidationReportPhase2Pending:
 
     def test_phase2_fields_not_set_by_run(self) -> None:
         # Ensure run() never touches phase-2 fields
-        stub = _FixedIntentEvaluator(
-            IntentEvalResult(total_labeled=0, correct=0, accuracy=0.0)
-        )
+        stub = _FixedIntentEvaluator(IntentEvalResult(total_labeled=0, correct=0, accuracy=0.0))
         report = FounderValidationSuite(intent_evaluator=stub).run(_SYNTHETIC_DIR)
         phase2_fields = [
             report.tone_empathy_score,
@@ -805,15 +798,14 @@ class TestFounderValidationReportPhase2Pending:
             report.first_audio_p95_ms,
             report.call_completion_rate,
         ]
-        assert all(f is None for f in phase2_fields), (
-            f"Phase-2 fields must be None — found: {phase2_fields}"
-        )
+        assert all(f is None for f in phase2_fields), f"Phase-2 fields must be None — found: {phase2_fields}"
         assert report.founder_signed_off is False
 
 
 # ---------------------------------------------------------------------------
 # CallEvalResult properties
 # ---------------------------------------------------------------------------
+
 
 class TestCallEvalResult:
     def test_total_violations_sum(self) -> None:
@@ -839,6 +831,7 @@ class TestCallEvalResult:
 # ---------------------------------------------------------------------------
 # FounderValidationReport properties
 # ---------------------------------------------------------------------------
+
 
 class TestFounderValidationReportProperties:
     def _make_report(

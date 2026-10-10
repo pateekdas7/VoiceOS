@@ -69,8 +69,12 @@ class TestPostgresInsightRepository:
             tenant_id=None,
             category=InsightCategory.REGRESSION,
             severity=Severity.WARNING,
-            verified_facts=(VerifiedFact(claim="latency up", source="prometheus", query="q", value="900", observed_at=NOW),),
-            hypotheses=(Hypothesis(claim="thermal throttle", reasoning="pattern match", confidence=ConfidenceLevel.MEDIUM),),
+            verified_facts=(
+                VerifiedFact(claim="latency up", source="prometheus", query="q", value="900", observed_at=NOW),
+            ),
+            hypotheses=(
+                Hypothesis(claim="thermal throttle", reasoning="pattern match", confidence=ConfidenceLevel.MEDIUM),
+            ),
             affected_components=("tts",),
             confidence_level=ConfidenceLevel.MEDIUM,
             model="claude-sonnet-5",
@@ -102,7 +106,9 @@ class TestPostgresInsightRepository:
                     tenant_id=tenant_id,
                     category=InsightCategory.ANOMALY,
                     severity=Severity.INFO,
-                    verified_facts=(VerifiedFact(claim="x", source="prometheus", query="q", value="1", observed_at=NOW),),
+                    verified_facts=(
+                        VerifiedFact(claim="x", source="prometheus", query="q", value="1", observed_at=NOW),
+                    ),
                     hypotheses=(),
                     affected_components=(),
                     confidence_level=ConfidenceLevel.LOW,
@@ -169,12 +175,27 @@ class TestPostgresAlertRepository:
     def test_list_open_excludes_resolved(self, pg_conn: Any) -> None:
         repo = PostgresAlertRepository(pg_conn)
         open_alert = AlertRecord(
-            alert_id=str(uuid.uuid4()), tenant_id=None, source=AlertSource.ALERTMANAGER, fingerprint="fp-open",
-            severity=Severity.WARNING, status=AlertStatus.FIRING, fired_at=NOW, labels={}, annotations={},
+            alert_id=str(uuid.uuid4()),
+            tenant_id=None,
+            source=AlertSource.ALERTMANAGER,
+            fingerprint="fp-open",
+            severity=Severity.WARNING,
+            status=AlertStatus.FIRING,
+            fired_at=NOW,
+            labels={},
+            annotations={},
         )
         resolved_alert = AlertRecord(
-            alert_id=str(uuid.uuid4()), tenant_id=None, source=AlertSource.ALERTMANAGER, fingerprint="fp-resolved",
-            severity=Severity.WARNING, status=AlertStatus.RESOLVED, fired_at=NOW, labels={}, annotations={}, resolved_at=NOW,
+            alert_id=str(uuid.uuid4()),
+            tenant_id=None,
+            source=AlertSource.ALERTMANAGER,
+            fingerprint="fp-resolved",
+            severity=Severity.WARNING,
+            status=AlertStatus.RESOLVED,
+            fired_at=NOW,
+            labels={},
+            annotations={},
+            resolved_at=NOW,
         )
         try:
             repo.create(open_alert)
@@ -196,18 +217,36 @@ class TestPostgresReportRepository:
     def test_create_and_get_round_trips_full_evidence_chain(self, pg_conn: Any) -> None:
         repo = PostgresReportRepository(pg_conn)
         insight = Insight(
-            insight_id=str(uuid.uuid4()), tenant_id=None, category=InsightCategory.RCA, severity=Severity.CRITICAL,
+            insight_id=str(uuid.uuid4()),
+            tenant_id=None,
+            category=InsightCategory.RCA,
+            severity=Severity.CRITICAL,
             verified_facts=(VerifiedFact(claim="x", source="prometheus", query="q", value="1", observed_at=NOW),),
-            hypotheses=(), affected_components=("gpu",), confidence_level=ConfidenceLevel.HIGH, model="m",
-            prompt_version="v1", generated_at=NOW,
+            hypotheses=(),
+            affected_components=("gpu",),
+            confidence_level=ConfidenceLevel.HIGH,
+            model="m",
+            prompt_version="v1",
+            generated_at=NOW,
         )
         report = Report(
-            report_id=str(uuid.uuid4()), report_type=ReportType.RCA, period_start=NOW, period_end=NOW,
-            scope_level=ScopeLevel.PLATFORM, tenant_id=None, severity=Severity.CRITICAL,
-            affected_components=("gpu",), business_impact="impact", recommended_actions=("fix it",),
-            confidence_level=ConfidenceLevel.HIGH, evidence=(insight,),
-            source_service_calls=(SourceServiceCall(service="s", method="m", params={}, result_snapshot={"x": 1}, called_at=NOW),),
-            narrative="narrative text", generated_at=NOW,
+            report_id=str(uuid.uuid4()),
+            report_type=ReportType.RCA,
+            period_start=NOW,
+            period_end=NOW,
+            scope_level=ScopeLevel.PLATFORM,
+            tenant_id=None,
+            severity=Severity.CRITICAL,
+            affected_components=("gpu",),
+            business_impact="impact",
+            recommended_actions=("fix it",),
+            confidence_level=ConfidenceLevel.HIGH,
+            evidence=(insight,),
+            source_service_calls=(
+                SourceServiceCall(service="s", method="m", params={}, result_snapshot={"x": 1}, called_at=NOW),
+            ),
+            narrative="narrative text",
+            generated_at=NOW,
         )
         try:
             repo.create(report)
@@ -227,9 +266,14 @@ class TestPostgresCapacityForecastRepository:
     def test_create_and_latest(self, pg_conn: Any) -> None:
         repo = PostgresCapacityForecastRepository(pg_conn)
         forecast = CapacityForecast(
-            forecast_id=str(uuid.uuid4()), tenant_id=None, resource="gpu", horizon_days=30,
-            forecast_data={"method": "arima_proxy_linear_trend"}, headroom_pct=42.5,
-            confidence=ConfidenceLevel.MEDIUM, generated_at=NOW,
+            forecast_id=str(uuid.uuid4()),
+            tenant_id=None,
+            resource="gpu",
+            horizon_days=30,
+            forecast_data={"method": "arima_proxy_linear_trend"},
+            headroom_pct=42.5,
+            confidence=ConfidenceLevel.MEDIUM,
+            generated_at=NOW,
         )
         try:
             repo.create(forecast)
@@ -247,9 +291,15 @@ class TestPostgresPatternSignatureRepository:
     def test_upsert_creates_then_increments(self, pg_conn: Any) -> None:
         repo = PostgresPatternSignatureRepository(pg_conn)
         signature = PatternSignature(
-            signature_id=str(uuid.uuid4()), tenant_id=None, fingerprint_hash="fp-hash-int-1",
-            category="regression", affected_components=("tts",), root_cause_summary="thermal throttle",
-            first_seen=NOW, last_seen=NOW, occurrence_count=1,
+            signature_id=str(uuid.uuid4()),
+            tenant_id=None,
+            fingerprint_hash="fp-hash-int-1",
+            category="regression",
+            affected_components=("tts",),
+            root_cause_summary="thermal throttle",
+            first_seen=NOW,
+            last_seen=NOW,
+            occurrence_count=1,
         )
         try:
             repo.upsert_occurrence(signature)

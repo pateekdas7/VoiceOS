@@ -12,6 +12,7 @@ this validator, which enforces:
 If validation fails, System X rejects the analysis, audits the rejection,
 notifies operators, and does not execute any recovery actions.
 """
+
 from __future__ import annotations
 
 import logging
@@ -32,11 +33,21 @@ _SECRET_PATTERNS = [
 ]
 
 # Forbidden operations that must never appear in recovery_plan steps
-_FORBIDDEN_KEYWORDS = frozenset({
-    "drop table", "delete from", "truncate", "alter table",
-    "schema change", "migrate database", "rotate credential",
-    "rm -rf", "format disk", "wipe", "destroy",
-})
+_FORBIDDEN_KEYWORDS = frozenset(
+    {
+        "drop table",
+        "delete from",
+        "truncate",
+        "alter table",
+        "schema change",
+        "migrate database",
+        "rotate credential",
+        "rm -rf",
+        "format disk",
+        "wipe",
+        "destroy",
+    }
+)
 
 _VALID_CONFIDENCE = {"low", "medium", "high"}
 _MIN_RECOVERY_TIME_S = 10
@@ -153,6 +164,7 @@ class ClaudeResponseValidator:
         # All checks passed — build ClaudeAnalysis
         # (analyzed_at and model are set by the caller)
         from datetime import UTC, datetime
+
         analysis = ClaudeAnalysis(
             root_cause=raw["root_cause"].strip(),
             confidence=confidence,

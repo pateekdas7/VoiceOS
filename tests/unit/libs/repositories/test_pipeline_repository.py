@@ -23,6 +23,7 @@ NOW = datetime.now(UTC)
 # Minimal in-memory connection double (mirrors base.py test approach)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class _InMemoryCursor:
     def __init__(self, store: dict[str, list[Any]]) -> None:
         self._store = store
@@ -41,7 +42,7 @@ class _InMemoryCursor:
             campaign_id_filter: Any = None
             status_filter: str | None = None
 
-            extra_params = list(params[1: -1 if has_limit else None])
+            extra_params = list(params[1 : -1 if has_limit else None])
             if "PIPELINE_ID = %S" in sql_upper:
                 pipeline_id_filter = extra_params[0] if extra_params else None
             if "CAMPAIGN_ID = %S" in sql_upper and "STATUS = 'ACTIVE'" not in sql_upper:
@@ -116,6 +117,7 @@ def _make_pipeline(
 # ─────────────────────────────────────────────────────────────────────────────
 # Tests
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestPipelineRepositoryCreate:
     def test_create_commits(self) -> None:

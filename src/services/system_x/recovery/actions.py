@@ -1,4 +1,5 @@
 """Concrete recovery action implementations for System X."""
+
 from __future__ import annotations
 
 import logging

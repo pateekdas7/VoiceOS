@@ -1,4 +1,5 @@
 """SystemXNotificationRepository — notification record persistence."""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -17,8 +18,17 @@ def _dt(val: Any) -> datetime | None:
 
 def _row_to_record(row: tuple) -> NotificationRecord:
     (
-        notification_id, incident_id, channel, notification_type, recipient,
-        subject, body, status, sent_at, error, created_at,
+        notification_id,
+        incident_id,
+        channel,
+        notification_type,
+        recipient,
+        subject,
+        body,
+        status,
+        sent_at,
+        error,
+        created_at,
     ) = row
     return NotificationRecord(
         notification_id=notification_id,
@@ -48,9 +58,16 @@ class SystemXNotificationRepository:
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                    ON CONFLICT (notification_id) DO NOTHING""",
                 (
-                    record.notification_id, record.incident_id, str(record.channel),
-                    record.notification_type, record.recipient, record.subject,
-                    record.body, str(record.status), record.sent_at, record.error,
+                    record.notification_id,
+                    record.incident_id,
+                    str(record.channel),
+                    record.notification_type,
+                    record.recipient,
+                    record.subject,
+                    record.body,
+                    str(record.status),
+                    record.sent_at,
+                    record.error,
                     record.created_at,
                 ),
             )

@@ -60,9 +60,7 @@ class TestGpuServiceHealthCheck:
         assert await check.check() == HealthStatus.DEGRADED
 
     @pytest.mark.asyncio
-    async def test_connection_error_is_unhealthy(
-        self, _patch_httpx: dict[str, _StubTransport]
-    ) -> None:
+    async def test_connection_error_is_unhealthy(self, _patch_httpx: dict[str, _StubTransport]) -> None:
         _patch_httpx["transport"] = _StubTransport(raise_exc=httpx.ConnectError("refused"))
         check = GpuServiceHealthCheck("stt", "http://gpu:8100/health")
 
@@ -70,9 +68,7 @@ class TestGpuServiceHealthCheck:
 
     @pytest.mark.asyncio
     async def test_timeout_is_unhealthy(self, _patch_httpx: dict[str, _StubTransport]) -> None:
-        _patch_httpx["transport"] = _StubTransport(
-            raise_exc=httpx.ReadTimeout("timed out")
-        )
+        _patch_httpx["transport"] = _StubTransport(raise_exc=httpx.ReadTimeout("timed out"))
         check = GpuServiceHealthCheck("stt", "http://gpu:8100/health")
 
         assert await check.check() == HealthStatus.UNHEALTHY
@@ -93,9 +89,7 @@ class TestReadinessProbeWithGpuChecks:
         assert await probe.check() == HealthStatus.HEALTHY
 
     @pytest.mark.asyncio
-    async def test_one_gpu_unreachable_not_ready(
-        self, _patch_httpx: dict[str, _StubTransport]
-    ) -> None:
+    async def test_one_gpu_unreachable_not_ready(self, _patch_httpx: dict[str, _StubTransport]) -> None:
         _patch_httpx["transport"] = _StubTransport(raise_exc=httpx.ConnectError("no route"))
         probe = ReadinessProbe(LivenessProbe(), build_gpu_health_checks("gpu"))
 

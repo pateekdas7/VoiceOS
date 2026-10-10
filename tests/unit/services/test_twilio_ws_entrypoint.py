@@ -269,7 +269,12 @@ async def test_send_clauses_drains_playback_queue_across_many_turns() -> None:
     orch = _make_orchestrator()
 
     for turn in range(20):
-        clauses = [AudioClause(audio_data=b"\x00\x00" * 160, sample_rate=24000, text=f"turn {turn}", clause_index=i, is_final=(i == 29)) for i in range(30)]
+        clauses = [
+            AudioClause(
+                audio_data=b"\x00\x00" * 160, sample_rate=24000, text=f"turn {turn}", clause_index=i, is_final=(i == 29)
+            )
+            for i in range(30)
+        ]
         for clause in clauses:
             await orch._playback.enqueue(clause)  # what TrueStreamingPipeline._synthesise_and_enqueue() does
 
@@ -303,7 +308,9 @@ async def test_speak_greeting_synthesizes_and_sends_when_wired() -> None:
     await orch._speak_greeting()
 
     orch._deps.conversation_engine.speak_scripted_text.assert_awaited_once()
-    assert orch._deps.conversation_engine.speak_scripted_text.call_args.args[0] == "Namaste sir, main Kavya bol rahi hoon."
+    assert (
+        orch._deps.conversation_engine.speak_scripted_text.call_args.args[0] == "Namaste sir, main Kavya bol rahi hoon."
+    )
     assert orch._adapter.send_frame.await_count == 2
     for call in orch._adapter.send_frame.call_args_list:
         f: AudioFrame = call.args[0]

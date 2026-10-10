@@ -92,9 +92,7 @@ class TestCsvPhoneDNDList:
     def test_from_csv_single_column(self, tmp_path: Path) -> None:
         f = tmp_path / "dnd.csv"
         f.write_text(
-            "+919876543210\n"
-            "+919000000001\n"
-            "+919000000002\n",
+            "+919876543210\n+919000000001\n+919000000002\n",
             encoding="utf-8",
         )
         lst = CsvPhoneDNDList.from_csv(f)
@@ -108,9 +106,7 @@ class TestCsvPhoneDNDList:
         get a bogus 'phone' key."""
         f = tmp_path / "dnd_with_header.csv"
         f.write_text(
-            "phone\n"
-            "+919876543210\n"
-            "+919000000001\n",
+            "phone\n+919876543210\n+919000000001\n",
             encoding="utf-8",
         )
         lst = CsvPhoneDNDList.from_csv(f)
@@ -123,9 +119,7 @@ class TestCsvPhoneDNDList:
         crash the loader."""
         f = tmp_path / "dnd_multi.csv"
         f.write_text(
-            "phone,reason,expires_at\n"
-            "+919876543210,fully-blocked,2027-01-01\n"
-            "+919000000001,partial,2026-06-30\n",
+            "phone,reason,expires_at\n+919876543210,fully-blocked,2027-01-01\n+919000000001,partial,2026-06-30\n",
             encoding="utf-8",
         )
         lst = CsvPhoneDNDList.from_csv(f)
@@ -137,8 +131,7 @@ class TestCsvPhoneDNDList:
         must normalise on ingest, not just on lookup."""
         f = tmp_path / "dnd_formatted.csv"
         f.write_text(
-            "+91 98765 43210\n"
-            "+91-90000-00001\n",
+            "+91 98765 43210\n+91-90000-00001\n",
             encoding="utf-8",
         )
         lst = CsvPhoneDNDList.from_csv(f)
@@ -148,10 +141,7 @@ class TestCsvPhoneDNDList:
     def test_from_csv_skips_blank_rows(self, tmp_path: Path) -> None:
         f = tmp_path / "dnd_blank.csv"
         f.write_text(
-            "+919876543210\n"
-            "\n"
-            "\n"
-            "+919000000001\n",
+            "+919876543210\n\n\n+919000000001\n",
             encoding="utf-8",
         )
         lst = CsvPhoneDNDList.from_csv(f)

@@ -1,4 +1,5 @@
 """SystemXIncidentRepository — persists incidents and recovery actions."""
+
 from __future__ import annotations
 
 import json
@@ -25,19 +26,21 @@ def _dt(val: Any) -> datetime | None:
 
 
 def _analysis_to_json(a: ClaudeAnalysis) -> str:
-    return json.dumps({
-        "root_cause": a.root_cause,
-        "confidence": a.confidence,
-        "recommended_actions": list(a.recommended_actions),
-        "recovery_plan": list(a.recovery_plan),
-        "estimated_recovery_time_s": a.estimated_recovery_time_s,
-        "risk_assessment": a.risk_assessment,
-        "model": a.model,
-        "analyzed_at": a.analyzed_at.isoformat(),
-        "conversation_id": a.conversation_id,
-        "turn_count": a.turn_count,
-        "evidence_keys": list(a.evidence_keys),
-    })
+    return json.dumps(
+        {
+            "root_cause": a.root_cause,
+            "confidence": a.confidence,
+            "recommended_actions": list(a.recommended_actions),
+            "recovery_plan": list(a.recovery_plan),
+            "estimated_recovery_time_s": a.estimated_recovery_time_s,
+            "risk_assessment": a.risk_assessment,
+            "model": a.model,
+            "analyzed_at": a.analyzed_at.isoformat(),
+            "conversation_id": a.conversation_id,
+            "turn_count": a.turn_count,
+            "evidence_keys": list(a.evidence_keys),
+        }
+    )
 
 
 def _analysis_from_dict(d: dict) -> ClaudeAnalysis:
@@ -58,9 +61,21 @@ def _analysis_from_dict(d: dict) -> ClaudeAnalysis:
 
 def _row_to_incident(row: tuple) -> IncidentRecord:
     (
-        incident_id, title, severity, status, detected_at, resolved_at,
-        affected_services, alert_fingerprints, root_cause, recovery_summary,
-        claude_analysis, health_after, total_downtime_s, notifications_sent, metadata,
+        incident_id,
+        title,
+        severity,
+        status,
+        detected_at,
+        resolved_at,
+        affected_services,
+        alert_fingerprints,
+        root_cause,
+        recovery_summary,
+        claude_analysis,
+        health_after,
+        total_downtime_s,
+        notifications_sent,
+        metadata,
     ) = row
     analysis = _analysis_from_dict(claude_analysis) if claude_analysis else None
     return IncidentRecord(
@@ -84,8 +99,17 @@ def _row_to_incident(row: tuple) -> IncidentRecord:
 
 def _row_to_action(row: tuple) -> RecoveryAction:
     (
-        action_id, incident_id, action_type, target_service, status,
-        started_at, completed_at, result, error, rolled_back, metadata,
+        action_id,
+        incident_id,
+        action_type,
+        target_service,
+        status,
+        started_at,
+        completed_at,
+        result,
+        error,
+        rolled_back,
+        metadata,
     ) = row
     return RecoveryAction(
         action_id=action_id,
@@ -118,13 +142,20 @@ class SystemXIncidentRepository:
                 ON CONFLICT (incident_id) DO NOTHING
                 """,
                 (
-                    incident.incident_id, incident.title, str(incident.severity),
-                    str(incident.status), incident.detected_at, incident.resolved_at,
-                    list(incident.affected_services), list(incident.alert_fingerprints),
-                    incident.root_cause, incident.recovery_summary,
+                    incident.incident_id,
+                    incident.title,
+                    str(incident.severity),
+                    str(incident.status),
+                    incident.detected_at,
+                    incident.resolved_at,
+                    list(incident.affected_services),
+                    list(incident.alert_fingerprints),
+                    incident.root_cause,
+                    incident.recovery_summary,
                     _analysis_to_json(incident.claude_analysis) if incident.claude_analysis else None,
                     json.dumps(incident.health_after),
-                    incident.total_downtime_s, list(incident.notifications_sent),
+                    incident.total_downtime_s,
+                    list(incident.notifications_sent),
                     json.dumps(incident.metadata),
                 ),
             )
@@ -217,10 +248,17 @@ class SystemXIncidentRepository:
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                    ON CONFLICT (action_id) DO NOTHING""",
                 (
-                    action.action_id, action.incident_id, str(action.action_type),
-                    action.target_service, str(action.status), action.started_at,
-                    action.completed_at, action.result, action.error,
-                    action.rolled_back, json.dumps(action.metadata),
+                    action.action_id,
+                    action.incident_id,
+                    str(action.action_type),
+                    action.target_service,
+                    str(action.status),
+                    action.started_at,
+                    action.completed_at,
+                    action.result,
+                    action.error,
+                    action.rolled_back,
+                    json.dumps(action.metadata),
                 ),
             )
         self._conn.commit()

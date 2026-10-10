@@ -11,6 +11,7 @@ Scope: exercises _send_clause via a stubbed adapter/audio-output/scheduler
 — no real Kaggle GPU, no real Twilio, no real WebSocket. Gate 2 covers
 the live Veena PCM path.
 """
+
 from __future__ import annotations
 
 import itertools
@@ -157,18 +158,17 @@ async def test_cross_clause_boundary_carry_completes_next_frame() -> None:
     orch, adapter, _ = _make_orchestrator()
 
     # 100 bytes: emits 0 frames, carry = 100 bytes of 0xAA.
-    await orch._send_clause(_clause(b"\xAA" * 100, idx=0))
+    await orch._send_clause(_clause(b"\xaa" * 100, idx=0))
     assert len(adapter.frames) == 0
-    assert orch._send_ulaw_carry == b"\xAA" * 100
+    assert orch._send_ulaw_carry == b"\xaa" * 100
 
     # 60 more bytes of 0xBB: total buf = 160 bytes → exactly one frame,
     # first 100 bytes 0xAA (from clause 0) + 60 bytes 0xBB (from clause 1).
-    await orch._send_clause(_clause(b"\xBB" * 60, idx=1))
+    await orch._send_clause(_clause(b"\xbb" * 60, idx=1))
     assert len(adapter.frames) == 1
     frame = adapter.frames[0]
     assert len(frame) == 160
-    assert frame == (b"\xAA" * 100) + (b"\xBB" * 60), \
-        "cross-clause carry did not concatenate correctly"
+    assert frame == (b"\xaa" * 100) + (b"\xbb" * 60), "cross-clause carry did not concatenate correctly"
     assert orch._send_ulaw_carry == b"", "carry should be empty after boundary flush"
 
 
@@ -184,8 +184,8 @@ async def test_generation_bump_mid_clause_drops_stale_carry() -> None:
     orch, adapter, playback = _make_orchestrator(generation=0)
 
     # Leave 90 bytes of pre-barge-in carry.
-    await orch._send_clause(_clause(b"\xCC" * 90, idx=0, generation=0))
-    assert orch._send_ulaw_carry == b"\xCC" * 90
+    await orch._send_clause(_clause(b"\xcc" * 90, idx=0, generation=0))
+    assert orch._send_ulaw_carry == b"\xcc" * 90
     assert adapter.frames == []
 
     # Adapter that trips the generation right after the first frame is sent.
@@ -204,7 +204,7 @@ async def test_generation_bump_mid_clause_drops_stale_carry() -> None:
     # 400 bytes with prior 90-byte carry gives 490 bytes = 3 full frames
     # + 10 tail. After frame #1 the generation flips, so we expect exactly
     # 1 frame emitted and the carry cleared to b"".
-    long_clause = _clause(b"\xDD" * 400, idx=1, generation=0)
+    long_clause = _clause(b"\xdd" * 400, idx=1, generation=0)
     await orch._send_clause(long_clause)
 
     assert len(orch._adapter.frames) == 1, "mid-clause barge-in should stop after one frame"
@@ -212,11 +212,11 @@ async def test_generation_bump_mid_clause_drops_stale_carry() -> None:
 
     # New generation: clause arrives at the correct generation and framing restarts clean.
     orch2, adapter2, _pb2 = _make_orchestrator(generation=1)
-    await orch2._send_clause(_clause(b"\xEE" * 320, idx=0, generation=1))
+    await orch2._send_clause(_clause(b"\xee" * 320, idx=0, generation=1))
     assert len(adapter2.frames) == 2
     for f in adapter2.frames:
         assert len(f) == 160
-        assert f == b"\xEE" * 160
+        assert f == b"\xee" * 160
     assert orch2._send_ulaw_carry == b""
 
 

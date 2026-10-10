@@ -53,7 +53,7 @@ if TYPE_CHECKING:
 
 # RBI Fair Practice Code constraints (V4 Ch17; packs/rbi.py)
 _RBI_HOUR_MIN = 8
-_RBI_HOUR_MAX = 20   # exclusive — 20:00 is the cut-off
+_RBI_HOUR_MAX = 20  # exclusive — 20:00 is the cut-off
 _RBI_MAX_CALLS_PER_DAY = 3
 
 # Regex patterns for fact extraction from agent text (mirrors law_of_authority.py)
@@ -68,10 +68,10 @@ class TranscriptTurn:
     """One turn in a call transcript."""
 
     turn_index: int
-    speaker: str          # "agent" or "customer"
+    speaker: str  # "agent" or "customer"
     text: str
-    human_intent: str | None = None          # human-labeled intent for customer turns
-    negotiation_offer_inr: float | None = None   # if agent is making a settlement offer
+    human_intent: str | None = None  # human-labeled intent for customer turns
+    negotiation_offer_inr: float | None = None  # if agent is making a settlement offer
 
 
 @dataclass(frozen=True)
@@ -81,11 +81,11 @@ class TranscriptCustomerContext:
 
     outstanding_amount_inr: float
     outstanding_amount_minor: int
-    minimum_settlement_pct: float   # e.g. 0.5 → floor = 50% of outstanding
+    minimum_settlement_pct: float  # e.g. 0.5 → floor = 50% of outstanding
     loan_id: str
-    due_date: str                   # ISO-8601 date string e.g. "2026-08-01"
+    due_date: str  # ISO-8601 date string e.g. "2026-08-01"
     calls_today_count: int
-    call_hour: int                  # 0-23 local hour
+    call_hour: int  # 0-23 local hour
 
 
 @dataclass
@@ -137,6 +137,7 @@ class CallTranscript:
 # Violation types
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class Violation:
     checker: str
@@ -148,6 +149,7 @@ class Violation:
 # ---------------------------------------------------------------------------
 # LawOfAuthorityReplayChecker
 # ---------------------------------------------------------------------------
+
 
 class LawOfAuthorityReplayChecker:
     """Replay agent turns against CustomerContext and detect invented facts.
@@ -221,42 +223,48 @@ class LawOfAuthorityReplayChecker:
             except ValueError:
                 continue
             if not any(abs(amount - a) < _AMOUNT_TOLERANCE for a in auth_amounts):
-                violations.append(Violation(
-                    checker="LawOfAuthority",
-                    call_id=call_id,
-                    turn_index=turn.turn_index,
-                    description=(
-                        f"Agent stated amount ₹{amount:,.2f} not in authoritative CustomerContext "
-                        f"(authoritative amounts: {sorted(auth_amounts)})"
-                    ),
-                ))
+                violations.append(
+                    Violation(
+                        checker="LawOfAuthority",
+                        call_id=call_id,
+                        turn_index=turn.turn_index,
+                        description=(
+                            f"Agent stated amount ₹{amount:,.2f} not in authoritative CustomerContext "
+                            f"(authoritative amounts: {sorted(auth_amounts)})"
+                        ),
+                    )
+                )
 
         # Check dates
         for parsed in self._extract_dates(turn.text):
             if auth_dates and not any(abs((parsed - d).days) <= 1 for d in auth_dates):
-                violations.append(Violation(
-                    checker="LawOfAuthority",
-                    call_id=call_id,
-                    turn_index=turn.turn_index,
-                    description=(
-                        f"Agent stated date {parsed.date()} not within ±1 day of authoritative due dates "
-                        f"({[d.date() for d in auth_dates]})"
-                    ),
-                ))
+                violations.append(
+                    Violation(
+                        checker="LawOfAuthority",
+                        call_id=call_id,
+                        turn_index=turn.turn_index,
+                        description=(
+                            f"Agent stated date {parsed.date()} not within ±1 day of authoritative due dates "
+                            f"({[d.date() for d in auth_dates]})"
+                        ),
+                    )
+                )
 
         # Check loan/account IDs (8+ digit sequences or explicit loan ID patterns)
         if auth_ids:
             for candidate in re.findall(r"\bLOAN-\S+|\b[A-Z]{2,}-\d{8,}\b", turn.text.upper()):
                 if candidate not in auth_ids:
-                    violations.append(Violation(
-                        checker="LawOfAuthority",
-                        call_id=call_id,
-                        turn_index=turn.turn_index,
-                        description=(
-                            f"Agent stated loan/account ID '{candidate}' not in authoritative context "
-                            f"(authoritative: {auth_ids})"
-                        ),
-                    ))
+                    violations.append(
+                        Violation(
+                            checker="LawOfAuthority",
+                            call_id=call_id,
+                            turn_index=turn.turn_index,
+                            description=(
+                                f"Agent stated loan/account ID '{candidate}' not in authoritative context "
+                                f"(authoritative: {auth_ids})"
+                            ),
+                        )
+                    )
 
         return violations
 
@@ -284,6 +292,7 @@ class LawOfAuthorityReplayChecker:
 # RBIComplianceChecker
 # ---------------------------------------------------------------------------
 
+
 class RBIComplianceChecker:
     """Verify RBI Fair Practice Code rules against transcript metadata.
 
@@ -308,42 +317,48 @@ class RBIComplianceChecker:
 
         # Rule 1: calling hours
         if not (_RBI_HOUR_MIN <= ctx.call_hour < _RBI_HOUR_MAX):
-            violations.append(Violation(
-                checker="RBICompliance",
-                call_id=transcript.call_id,
-                turn_index=None,
-                description=(
-                    f"Call placed at hour {ctx.call_hour:02d}:xx, outside RBI permitted window "
-                    f"{_RBI_HOUR_MIN:02d}:00-{_RBI_HOUR_MAX:02d}:00 (RBI-CALLING-HOURS)"
-                ),
-            ))
+            violations.append(
+                Violation(
+                    checker="RBICompliance",
+                    call_id=transcript.call_id,
+                    turn_index=None,
+                    description=(
+                        f"Call placed at hour {ctx.call_hour:02d}:xx, outside RBI permitted window "
+                        f"{_RBI_HOUR_MIN:02d}:00-{_RBI_HOUR_MAX:02d}:00 (RBI-CALLING-HOURS)"
+                    ),
+                )
+            )
 
         # Rule 2: call frequency
         if ctx.calls_today_count >= _RBI_MAX_CALLS_PER_DAY:
-            violations.append(Violation(
-                checker="RBICompliance",
-                call_id=transcript.call_id,
-                turn_index=None,
-                description=(
-                    f"calls_today_count={ctx.calls_today_count} already at/exceeds RBI maximum "
-                    f"of {_RBI_MAX_CALLS_PER_DAY} per customer per day (RBI-MAX-CALLS-PER-DAY)"
-                ),
-            ))
+            violations.append(
+                Violation(
+                    checker="RBICompliance",
+                    call_id=transcript.call_id,
+                    turn_index=None,
+                    description=(
+                        f"calls_today_count={ctx.calls_today_count} already at/exceeds RBI maximum "
+                        f"of {_RBI_MAX_CALLS_PER_DAY} per customer per day (RBI-MAX-CALLS-PER-DAY)"
+                    ),
+                )
+            )
 
         # Rule 3: no abusive language in agent turns
         for turn in transcript.turns:
             if turn.speaker != "agent":
                 continue
             if self._ABUSIVE_PATTERNS.search(turn.text):
-                violations.append(Violation(
-                    checker="RBICompliance",
-                    call_id=transcript.call_id,
-                    turn_index=turn.turn_index,
-                    description=(
-                        f"Agent turn {turn.turn_index} contains potentially abusive/threatening language: "
-                        f"{turn.text[:100]!r}"
-                    ),
-                ))
+                violations.append(
+                    Violation(
+                        checker="RBICompliance",
+                        call_id=transcript.call_id,
+                        turn_index=turn.turn_index,
+                        description=(
+                            f"Agent turn {turn.turn_index} contains potentially abusive/threatening language: "
+                            f"{turn.text[:100]!r}"
+                        ),
+                    )
+                )
 
         return violations
 
@@ -351,6 +366,7 @@ class RBIComplianceChecker:
 # ---------------------------------------------------------------------------
 # NegotiationEnvelopeChecker
 # ---------------------------------------------------------------------------
+
 
 class NegotiationEnvelopeChecker:
     """Verify all agent settlement offers lie within the configured floor/ceiling.
@@ -374,24 +390,26 @@ class NegotiationEnvelopeChecker:
                 continue
             offer = turn.negotiation_offer_inr
             if offer < floor - _AMOUNT_TOLERANCE:
-                violations.append(Violation(
-                    checker="NegotiationEnvelope",
-                    call_id=transcript.call_id,
-                    turn_index=turn.turn_index,
-                    description=(
-                        f"Agent offer ₹{offer:,.2f} is below configured floor ₹{floor:,.2f} "
-                        f"({ctx.minimum_settlement_pct:.0%} of ₹{ceiling:,.2f} outstanding)"
-                    ),
-                ))
+                violations.append(
+                    Violation(
+                        checker="NegotiationEnvelope",
+                        call_id=transcript.call_id,
+                        turn_index=turn.turn_index,
+                        description=(
+                            f"Agent offer ₹{offer:,.2f} is below configured floor ₹{floor:,.2f} "
+                            f"({ctx.minimum_settlement_pct:.0%} of ₹{ceiling:,.2f} outstanding)"
+                        ),
+                    )
+                )
             elif offer > ceiling + _AMOUNT_TOLERANCE:
-                violations.append(Violation(
-                    checker="NegotiationEnvelope",
-                    call_id=transcript.call_id,
-                    turn_index=turn.turn_index,
-                    description=(
-                        f"Agent offer ₹{offer:,.2f} exceeds outstanding ceiling ₹{ceiling:,.2f}"
-                    ),
-                ))
+                violations.append(
+                    Violation(
+                        checker="NegotiationEnvelope",
+                        call_id=transcript.call_id,
+                        turn_index=turn.turn_index,
+                        description=(f"Agent offer ₹{offer:,.2f} exceeds outstanding ceiling ₹{ceiling:,.2f}"),
+                    )
+                )
 
         return violations
 
@@ -399,6 +417,7 @@ class NegotiationEnvelopeChecker:
 # ---------------------------------------------------------------------------
 # IntentAccuracyEvaluator
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class IntentEvalResult:
@@ -425,6 +444,7 @@ class IntentAccuracyEvaluator:
     def __init__(self, model: IntentModel | None = None) -> None:
         from src.engines.intent.engine import IntentEngine as _IntentEngine
         from src.engines.intent.model import IntentModel as _IntentModel
+
         self._engine = _IntentEngine(model=model if model is not None else _IntentModel())
 
     def evaluate_transcripts(self, transcripts: list[CallTranscript]) -> IntentEvalResult:
@@ -444,14 +464,16 @@ class IntentAccuracyEvaluator:
                 if predicted == expected:
                     correct += 1
                 else:
-                    wrong.append({
-                        "call_id": transcript.call_id,
-                        "turn_index": str(turn_idx),
-                        "text": turn.text[:80],
-                        "expected": expected,
-                        "predicted": predicted,
-                        "confidence": str(round(result.confidence, 4)),
-                    })
+                    wrong.append(
+                        {
+                            "call_id": transcript.call_id,
+                            "turn_index": str(turn_idx),
+                            "text": turn.text[:80],
+                            "expected": expected,
+                            "predicted": predicted,
+                            "confidence": str(round(result.confidence, 4)),
+                        }
+                    )
 
         accuracy = correct / total if total > 0 else 0.0
         return IntentEvalResult(
@@ -475,6 +497,7 @@ def _make_turn_input(turn: TranscriptTurn, call_id: str) -> TurnInput:
     from src.libs.contracts.turn import (
         UtteranceSegment as _UtteranceSegment,
     )
+
     text = turn.text
     return _TurnInput(
         turn_id=f"replay-{call_id}-t{turn.turn_index}",
@@ -502,6 +525,7 @@ def _make_turn_input(turn: TranscriptTurn, call_id: str) -> TurnInput:
 # ---------------------------------------------------------------------------
 # Per-call result and aggregate report
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class CallEvalResult:
@@ -536,12 +560,12 @@ class FounderValidationReport:
     per_call: list[CallEvalResult]
 
     # Phase-2 dimensions — not populated until real infrastructure execution
-    tone_empathy_score: float | None = None          # PENDING REAL INFRASTRUCTURE
+    tone_empathy_score: float | None = None  # PENDING REAL INFRASTRUCTURE
     language_naturalness_score: float | None = None  # PENDING REAL INFRASTRUCTURE
-    audio_mos_score: float | None = None             # PENDING REAL INFRASTRUCTURE
-    first_audio_p95_ms: float | None = None          # PENDING REAL INFRASTRUCTURE
-    call_completion_rate: float | None = None        # PENDING REAL INFRASTRUCTURE
-    founder_signed_off: bool = False                 # PENDING REAL INFRASTRUCTURE
+    audio_mos_score: float | None = None  # PENDING REAL INFRASTRUCTURE
+    first_audio_p95_ms: float | None = None  # PENDING REAL INFRASTRUCTURE
+    call_completion_rate: float | None = None  # PENDING REAL INFRASTRUCTURE
+    founder_signed_off: bool = False  # PENDING REAL INFRASTRUCTURE
 
     @property
     def loa_passed(self) -> bool:
@@ -571,16 +595,24 @@ class FounderValidationReport:
         print(f"Calls passed:             {self.calls_passed}")
         print(f"Calls failed:             {self.calls_failed}")
         print()
-        print(f"Law of Authority (RI-5):  {'PASS' if self.loa_passed else 'FAIL'} "
-              f"({self.total_loa_violations} violations)")
-        print(f"RBI Compliance:           {'PASS' if self.rbi_passed else 'FAIL'} "
-              f"({self.total_rbi_violations} violations)")
-        print(f"Negotiation Envelope:     {'PASS' if self.negotiation_passed else 'FAIL'} "
-              f"({self.total_negotiation_violations} violations)")
+        print(
+            f"Law of Authority (RI-5):  {'PASS' if self.loa_passed else 'FAIL'} "
+            f"({self.total_loa_violations} violations)"
+        )
+        print(
+            f"RBI Compliance:           {'PASS' if self.rbi_passed else 'FAIL'} "
+            f"({self.total_rbi_violations} violations)"
+        )
+        print(
+            f"Negotiation Envelope:     {'PASS' if self.negotiation_passed else 'FAIL'} "
+            f"({self.total_negotiation_violations} violations)"
+        )
         if self.intent_eval is not None:
             pct = self.intent_eval.accuracy * 100
-            print(f"Intent Accuracy:          {'PASS' if self.intent_passed else 'FAIL'} "
-                  f"({pct:.1f}% — {self.intent_eval.correct}/{self.intent_eval.total_labeled} correct)")
+            print(
+                f"Intent Accuracy:          {'PASS' if self.intent_passed else 'FAIL'} "
+                f"({pct:.1f}% — {self.intent_eval.correct}/{self.intent_eval.total_labeled} correct)"
+            )
         print()
         print("Phase-2 dimensions (PENDING REAL INFRASTRUCTURE EXECUTION):")
         print("  Tone & Empathy score:   PENDING")
@@ -605,6 +637,7 @@ class FounderValidationReport:
 # ---------------------------------------------------------------------------
 # FounderValidationSuite — top-level orchestrator
 # ---------------------------------------------------------------------------
+
 
 class FounderValidationSuite:
     """Orchestrates all Phase-1 automated evaluation checks.
@@ -670,6 +703,7 @@ class FounderValidationSuite:
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
+
 
 def main() -> int:
     import argparse

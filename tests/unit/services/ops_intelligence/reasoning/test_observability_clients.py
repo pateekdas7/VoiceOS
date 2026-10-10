@@ -34,7 +34,10 @@ class TestPrometheusQueryAdapter:
             assert request.url.path == "/api/v1/query"
             return httpx.Response(
                 200,
-                json={"status": "success", "data": {"resultType": "vector", "result": [{"metric": {}, "value": [1721908800, "910.5"]}]}},
+                json={
+                    "status": "success",
+                    "data": {"resultType": "vector", "result": [{"metric": {}, "value": [1721908800, "910.5"]}]},
+                },
             )
 
         _patch_client(monkeypatch, httpx.MockTransport(_handler))
@@ -106,7 +109,7 @@ class TestLokiQueryAdapter:
 
         _patch_client(monkeypatch, httpx.MockTransport(_handler))
         adapter = LokiQueryAdapter()
-        lines = adapter.query("{service=\"tts\"}", limit=3)
+        lines = adapter.query('{service="tts"}', limit=3)
         assert len(lines) == 3
 
 

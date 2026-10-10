@@ -156,9 +156,7 @@ def test_semicolon_boundary_splits() -> None:
 
 
 def test_hindi_danda_splits() -> None:
-    result = _all_clauses(
-        ClauseSplitter(), ["आपका बकाया राशि है। क्या आप भुगतान कर सकते हैं?"]
-    )
+    result = _all_clauses(ClauseSplitter(), ["आपका बकाया राशि है। क्या आप भुगतान कर सकते हैं?"])
     assert len(result) == 2
     assert result[0].endswith("।")
 
@@ -169,9 +167,7 @@ def test_hindi_danda_splits() -> None:
 
 
 def test_comma_does_not_split_english() -> None:
-    result = _all_clauses(
-        ClauseSplitter(), ["Well, we understand your situation, and we can help."]
-    )
+    result = _all_clauses(ClauseSplitter(), ["Well, we understand your situation, and we can help."])
     assert result == ["Well, we understand your situation, and we can help."]
 
 
@@ -187,15 +183,11 @@ def test_comma_does_not_split_hindi() -> None:
 
 
 def test_decimal_number_not_split() -> None:
-    assert _all_clauses(ClauseSplitter(), ["The rate is 3.14 today."]) == [
-        "The rate is 3.14 today."
-    ]
+    assert _all_clauses(ClauseSplitter(), ["The rate is 3.14 today."]) == ["The rate is 3.14 today."]
 
 
 def test_currency_rs_not_split() -> None:
-    assert _all_clauses(ClauseSplitter(), ["Amount is Rs. 5,000 today."]) == [
-        "Amount is Rs. 5,000 today."
-    ]
+    assert _all_clauses(ClauseSplitter(), ["Amount is Rs. 5,000 today."]) == ["Amount is Rs. 5,000 today."]
 
 
 def test_currency_rs_terminal_period_still_splits() -> None:
@@ -404,6 +396,7 @@ async def test_veena_adapter_does_not_re_split_input() -> None:
 
     calls: list[str] = []
     with patch.object(adapter, "_stream_clause", side_effect=_capture_stream_clause_calls(calls)):
+
         async def _chunks() -> AsyncIterator[str]:
             yield "Alpha, beta. "
             yield "Gamma; delta! "

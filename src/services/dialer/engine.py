@@ -117,7 +117,11 @@ class DialerEngine:
         tz = _resolve_tz(timezone_name)
         _log.info(
             "dialer session starting tenant=%s campaign=%s window=%02d:00-%02d:00 tz=%s",
-            tenant_id, campaign_id, daily_start_hour, daily_end_hour, timezone_name,
+            tenant_id,
+            campaign_id,
+            daily_start_hour,
+            daily_end_hour,
+            timezone_name,
         )
         _m.SESSIONS_ACTIVE.labels(tenant_id=tenant_id).inc()
         try:
@@ -145,15 +149,18 @@ class DialerEngine:
             if not (daily_start_hour <= now_hour < daily_end_hour):
                 _log.info(
                     "dialer window closed (local_hour=%d tz=%s window=%02d:00-%02d:00) tenant=%s campaign=%s",
-                    now_hour, tz_label, daily_start_hour, daily_end_hour, tenant_id, campaign_id,
+                    now_hour,
+                    tz_label,
+                    daily_start_hour,
+                    daily_end_hour,
+                    tenant_id,
+                    campaign_id,
                 )
                 break
 
             # Drain queue up to concurrency limit
             while len(self._active_calls) < self._max_concurrent:
-                lead = await asyncio.to_thread(
-                    self._queue.pop_next, tenant_id, campaign_id
-                )
+                lead = await asyncio.to_thread(self._queue.pop_next, tenant_id, campaign_id)
                 if lead is None:
                     break  # Queue empty — wait for next poll or stop
                 await self._place(lead, tenant_id, campaign_id)
@@ -161,15 +168,11 @@ class DialerEngine:
             _m.QUEUE_DEPTH.labels(tenant_id=tenant_id, campaign_id=campaign_id).set(
                 await asyncio.to_thread(self._queue.size, tenant_id, campaign_id)
             )
-            _m.ACTIVE_CALLS.labels(tenant_id=tenant_id, campaign_id=campaign_id).set(
-                len(self._active_calls)
-            )
+            _m.ACTIVE_CALLS.labels(tenant_id=tenant_id, campaign_id=campaign_id).set(len(self._active_calls))
 
             queue_empty = await asyncio.to_thread(self._queue.is_empty, tenant_id, campaign_id)
             if queue_empty and not self._active_calls:
-                _log.info(
-                    "dialer queue exhausted tenant=%s campaign=%s", tenant_id, campaign_id
-                )
+                _log.info("dialer queue exhausted tenant=%s campaign=%s", tenant_id, campaign_id)
                 break
 
             await asyncio.sleep(self._poll_interval_s)
@@ -181,7 +184,10 @@ class DialerEngine:
         if self._dnd.is_on_dnd(phone):
             _log.info(
                 "call blocked by DND registry lead_id=%s phone=%s tenant=%s campaign=%s",
-                lead_id, phone, tenant_id, campaign_id,
+                lead_id,
+                phone,
+                tenant_id,
+                campaign_id,
             )
             _m.record_call_blocked_dnd(tenant_id, campaign_id)
             await self._mark_done(tenant_id, lead_id)
@@ -209,7 +215,10 @@ class DialerEngine:
         )
         await asyncio.to_thread(
             self._lead_repo.update_queue_status,
-            tenant_id, lead_id, _queue_status("QUEUED"), call_sid,
+            tenant_id,
+            lead_id,
+            _queue_status("QUEUED"),
+            call_sid,
         )
         _m.record_call_placed(tenant_id, campaign_id)
         _log.info("call placed call_sid=%s lead_id=%s phone=%s", call_sid, lead_id, phone)
@@ -217,7 +226,9 @@ class DialerEngine:
     async def _mark_done(self, tenant_id: str, lead_id: str, *, failed: bool = False) -> None:
         await asyncio.to_thread(
             self._lead_repo.update_queue_status,
-            tenant_id, lead_id, _queue_status("DONE"),
+            tenant_id,
+            lead_id,
+            _queue_status("DONE"),
         )
 
     def on_call_ended(self, call_sid: str) -> None:
@@ -231,4 +242,5 @@ class DialerEngine:
 
 def _queue_status(name: str) -> Any:
     from src.libs.contracts.models.pipeline import LeadQueueStatus
+
     return LeadQueueStatus(name)

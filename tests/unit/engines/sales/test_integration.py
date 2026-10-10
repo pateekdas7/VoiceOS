@@ -120,6 +120,7 @@ def run_10_turns():
 # Actual test
 # ---------------------------------------------------------------------------
 
+
 class TestTenTurnConversation:
     """Run the 10-turn conversation and verify invariants."""
 
@@ -132,7 +133,7 @@ class TestTenTurnConversation:
         for i, (state, question) in enumerate(zip(self.states, self.questions, strict=False)):
             if question is not None and question.value in previous_confirmed:
                 raise AssertionError(
-                    f"Turn {i+1}: field {question.value} was asked again after being confirmed. "
+                    f"Turn {i + 1}: field {question.value} was asked again after being confirmed. "
                     f"Previously confirmed: {previous_confirmed}"
                 )
             previous_confirmed = set(state.confirmed_fields)
@@ -151,6 +152,7 @@ class TestTenTurnConversation:
     def test_turn3_purpose_investment(self):
         """Turn 3: purpose extracted as INVESTMENT."""
         from src.engines.sales.schema import PropertyPurpose
+
         state = self.states[2]
         assert state.purpose == PropertyPurpose.INVESTMENT
 
@@ -167,18 +169,21 @@ class TestTenTurnConversation:
     def test_turn6_timeline_extracted(self):
         """Turn 6: '2 mahine' → MONTHS_1_2."""
         from src.engines.sales.schema import Timeline
+
         state = self.states[5]
         assert state.timeline == Timeline.MONTHS_1_2
 
     def test_turn7_decision_maker_self(self):
         """Turn 7: 'main akela decide' → DecisionMaker.SELF."""
         from src.engines.sales.schema import DecisionMaker
+
         state = self.states[6]
         assert state.decision_maker == DecisionMaker.SELF
 
     def test_turn8_financing_home_loan(self):
         """Turn 8: 'home loan se' → HOME_LOAN."""
         from src.engines.sales.schema import FinancingStatus
+
         state = self.states[7]
         assert state.financing_status == FinancingStatus.HOME_LOAN
 
@@ -209,6 +214,5 @@ class TestTenTurnConversation:
         state_t8 = self.states[7]
         for f in DOMAIN.required_fields:
             assert f.value in state_t8.confirmed_fields, (
-                f"Required field {f.value} not confirmed by turn 8. "
-                f"confirmed={state_t8.confirmed_fields}"
+                f"Required field {f.value} not confirmed by turn 8. confirmed={state_t8.confirmed_fields}"
             )

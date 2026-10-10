@@ -13,6 +13,7 @@ Architecture:
     5. Repeat until Claude calls finalize_diagnosis or MAX_TURNS reached
     6. System X archives the full conversation as part of the incident record
 """
+
 from __future__ import annotations
 
 import json
@@ -30,7 +31,7 @@ _log = logging.getLogger("system_x.diagnostic_session")
 
 _ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 _MODEL = "claude-opus-4-7"
-_MAX_TURNS = 8          # safety limit on back-and-forth turns
+_MAX_TURNS = 8  # safety limit on back-and-forth turns
 _SESSION_TIMEOUT_S = 120.0
 
 _SYSTEM_PROMPT = """\
@@ -105,8 +106,14 @@ _FINALIZE_TOOL: dict[str, Any] = {
                 "description": "What could go wrong during recovery",
             },
         },
-        "required": ["root_cause", "confidence", "recovery_plan", "recommended_actions",
-                     "estimated_recovery_time_s", "risk_assessment"],
+        "required": [
+            "root_cause",
+            "confidence",
+            "recovery_plan",
+            "recommended_actions",
+            "estimated_recovery_time_s",
+            "risk_assessment",
+        ],
     },
 }
 
@@ -130,9 +137,7 @@ class DiagnosticSession:
 
         Raises RuntimeError if no diagnosis was produced within MAX_TURNS.
         """
-        messages: list[dict] = [
-            {"role": "user", "content": json.dumps(incident_package, indent=2, default=str)}
-        ]
+        messages: list[dict] = [{"role": "user", "content": json.dumps(incident_package, indent=2, default=str)}]
         turns: list[DiagnosticTurn] = []
         finalized: dict | None = None
         model_used = _MODEL
@@ -161,29 +166,35 @@ class DiagnosticSession:
 
                     if tool_name == "finalize_diagnosis":
                         finalized = tool_input
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": tool_id,
-                            "content": json.dumps({"status": "diagnosis_recorded"}),
-                        })
+                        tool_results.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tool_id,
+                                "content": json.dumps({"status": "diagnosis_recorded"}),
+                            }
+                        )
                     else:
                         result = await self._evidence.execute(tool_name, tool_input)
                         evidence_fetched.append(tool_name)
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": tool_id,
-                            "content": json.dumps(result, default=str),
-                        })
+                        tool_results.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tool_id,
+                                "content": json.dumps(result, default=str),
+                            }
+                        )
 
                 # Summarize this turn for the audit record
                 text_blocks = [b.get("text", "") for b in content_blocks if b.get("type") == "text"]
-                turns.append(DiagnosticTurn(
-                    turn=turn_n,
-                    role="assistant",
-                    tools_called=tuple(tools_called),
-                    evidence_fetched=tuple(evidence_fetched),
-                    content_summary=(text_blocks[0][:300] if text_blocks else "(tool calls only)"),
-                ))
+                turns.append(
+                    DiagnosticTurn(
+                        turn=turn_n,
+                        role="assistant",
+                        tools_called=tuple(tools_called),
+                        evidence_fetched=tuple(evidence_fetched),
+                        content_summary=(text_blocks[0][:300] if text_blocks else "(tool calls only)"),
+                    )
+                )
 
                 if finalized is not None:
                     _log.info("conversation=%s diagnosis finalized after %d turns", self._conversation_id, turn_n + 1)
@@ -240,8 +251,9 @@ class DiagnosticSession:
     def _extract_json_from_text(self, text_blocks: list[str]) -> dict | None:
         """Last-resort: attempt to parse finalize_diagnosis fields from raw text."""
         import re
+
         for text in text_blocks:
-            match = re.search(r'\{.*\}', text, re.DOTALL)
+            match = re.search(r"\{.*\}", text, re.DOTALL)
             if match:
                 try:
                     return json.loads(match.group())

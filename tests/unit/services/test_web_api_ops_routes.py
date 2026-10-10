@@ -210,7 +210,9 @@ class _FakeEscalationRepository:
 
     def resolve(self, tenant_id: str, escalation_id: str, resolved_at: Any, resolution_notes: str) -> None:
         e = self.store[escalation_id]
-        self.store[escalation_id] = e.model_copy(update={"resolved_at": resolved_at, "resolution_notes": resolution_notes})
+        self.store[escalation_id] = e.model_copy(
+            update={"resolved_at": resolved_at, "resolution_notes": resolution_notes}
+        )
 
 
 class _FakeCampaignAudienceRepository:
@@ -297,7 +299,9 @@ class _FakeAlertRepository:
         return self.store.get(alert_id)
 
     def find_by_fingerprint_open(self, fingerprint: str) -> AlertRecord | None:
-        return next((a for a in self.store.values() if a.fingerprint == fingerprint and a.status != AlertStatus.RESOLVED), None)
+        return next(
+            (a for a in self.store.values() if a.fingerprint == fingerprint and a.status != AlertStatus.RESOLVED), None
+        )
 
     def update_status(self, alert_id: str, alert: AlertRecord) -> AlertRecord:
         self.store[alert_id] = alert
@@ -359,12 +363,16 @@ def _platform_token(codec: WebSessionCodec, role: str = "PLATFORM_ADMIN") -> str
     from src.services.platform_admin.roles import PLATFORM_ROLE_PERMISSIONS, PlatformRole
 
     permissions = tuple(PLATFORM_ROLE_PERMISSIONS[PlatformRole(role)])
-    return codec.encode(actor_kind="platform", subject="pu-1", role=role, permissions=permissions, email="a@voiceos.ai", tenant_id=None)
+    return codec.encode(
+        actor_kind="platform", subject="pu-1", role=role, permissions=permissions, email="a@voiceos.ai", tenant_id=None
+    )
 
 
 def _tenant_token(codec: WebSessionCodec, role: str = "ADMIN") -> str:
     permissions = tuple(ROLE_PERMISSIONS.get(AuthzRole(role), frozenset()))
-    return codec.encode(actor_kind="tenant", subject="u-1", role=role, permissions=permissions, email="u@tenant.com", tenant_id=TENANT_A)
+    return codec.encode(
+        actor_kind="tenant", subject="u-1", role=role, permissions=permissions, email="u@tenant.com", tenant_id=TENANT_A
+    )
 
 
 @pytest.fixture
@@ -474,22 +482,34 @@ class TestUsersRoles:
     def test_support_role_cannot_write(self, app_client: TestClient, session_codec: WebSessionCodec) -> None:
         cookies = {"voiceos_session": _platform_token(session_codec, role="PLATFORM_SUPPORT")}
         response = app_client.post(
-            "/admin/platform-users", json={"email": "x@x.com", "name": "X", "platform_role": "PLATFORM_SUPPORT"}, cookies=cookies
+            "/admin/platform-users",
+            json={"email": "x@x.com", "name": "X", "platform_role": "PLATFORM_SUPPORT"},
+            cookies=cookies,
         )
         assert response.status_code == 403
 
 
 class TestAdminAuditLogs:
-    def test_lists_tenant_events(self, app_client: TestClient, session_codec: WebSessionCodec, deps: dict[str, Any]) -> None:
+    def test_lists_tenant_events(
+        self, app_client: TestClient, session_codec: WebSessionCodec, deps: dict[str, Any]
+    ) -> None:
         from src.libs.audit.event import AuditEvent
 
         deps["admin_audit_repo"].events[TENANT_A] = [
             AuditEvent(
-                audit_id="a1", tenant_id=TENANT_A, actor_id="u1", action="admin_portal.suspend",
-                resource_type="AdminAPI", resource_id="r1", outcome="SUCCESS", recorded_at=datetime.now(UTC),
+                audit_id="a1",
+                tenant_id=TENANT_A,
+                actor_id="u1",
+                action="admin_portal.suspend",
+                resource_type="AdminAPI",
+                resource_id="r1",
+                outcome="SUCCESS",
+                recorded_at=datetime.now(UTC),
             )
         ]
-        response = app_client.get(f"/admin/clients/{TENANT_A}/audit-logs", cookies={"voiceos_session": _platform_token(session_codec)})
+        response = app_client.get(
+            f"/admin/clients/{TENANT_A}/audit-logs", cookies={"voiceos_session": _platform_token(session_codec)}
+        )
         assert response.status_code == 200
         assert len(response.json()) == 1
 
@@ -509,15 +529,24 @@ class TestCRM:
 
 
 class TestCollections:
-    def test_list_and_resolve(self, app_client: TestClient, session_codec: WebSessionCodec, deps: dict[str, Any]) -> None:
+    def test_list_and_resolve(
+        self, app_client: TestClient, session_codec: WebSessionCodec, deps: dict[str, Any]
+    ) -> None:
         deps["escalation_repo"].store["e-1"] = EscalationRecord(
-            escalation_id="e-1", tenant_id=TenantId(TENANT_A), call_id=CallId("call-1"), customer_id=CustomerId("cust-1"),
-            reason="ABUSE_DETECTED", escalated_to="LEGAL", escalated_at=datetime.now(UTC),
+            escalation_id="e-1",
+            tenant_id=TenantId(TENANT_A),
+            call_id=CallId("call-1"),
+            customer_id=CustomerId("cust-1"),
+            reason="ABUSE_DETECTED",
+            escalated_to="LEGAL",
+            escalated_at=datetime.now(UTC),
         )
         cookies = {"voiceos_session": _tenant_token(session_codec)}
         listed = app_client.get("/collections/escalations", cookies=cookies)
         assert len(listed.json()) == 1
-        resolved = app_client.post("/collections/escalations/e-1/resolve", json={"resolution_notes": "handled"}, cookies=cookies)
+        resolved = app_client.post(
+            "/collections/escalations/e-1/resolve", json={"resolution_notes": "handled"}, cookies=cookies
+        )
         assert resolved.status_code == 200
 
 
@@ -540,7 +569,9 @@ class TestPlatformSettings:
     def test_set_and_list_flag(self, app_client: TestClient, session_codec: WebSessionCodec) -> None:
         cookies = {"voiceos_session": _platform_token(session_codec)}
         response = app_client.post(
-            "/admin/feature-flags/ops_intelligence_reasoning", json={"scope": "GLOBAL", "state": "ENABLED"}, cookies=cookies
+            "/admin/feature-flags/ops_intelligence_reasoning",
+            json={"scope": "GLOBAL", "state": "ENABLED"},
+            cookies=cookies,
         )
         assert response.status_code == 200
         listed = app_client.get("/admin/feature-flags", cookies=cookies)
@@ -557,10 +588,19 @@ class TestInfrastructure:
 
 
 class TestAlertsCenter:
-    def test_acknowledge_flow(self, app_client: TestClient, session_codec: WebSessionCodec, deps: dict[str, Any]) -> None:
+    def test_acknowledge_flow(
+        self, app_client: TestClient, session_codec: WebSessionCodec, deps: dict[str, Any]
+    ) -> None:
         alert = AlertRecord(
-            alert_id="al-1", tenant_id=None, source=AlertSource.ALERTMANAGER, fingerprint="fp-1",
-            severity=Severity.WARNING, status=AlertStatus.FIRING, fired_at=datetime.now(UTC), labels={}, annotations={},
+            alert_id="al-1",
+            tenant_id=None,
+            source=AlertSource.ALERTMANAGER,
+            fingerprint="fp-1",
+            severity=Severity.WARNING,
+            status=AlertStatus.FIRING,
+            fired_at=datetime.now(UTC),
+            labels={},
+            annotations={},
         )
         deps["alert_repo"].store["al-1"] = alert
         cookies = {"voiceos_session": _platform_token(session_codec)}
@@ -570,10 +610,19 @@ class TestAlertsCenter:
         assert acked.status_code == 200
         assert acked.json()["status"] == "acknowledged"
 
-    def test_support_cannot_acknowledge(self, app_client: TestClient, session_codec: WebSessionCodec, deps: dict[str, Any]) -> None:
+    def test_support_cannot_acknowledge(
+        self, app_client: TestClient, session_codec: WebSessionCodec, deps: dict[str, Any]
+    ) -> None:
         deps["alert_repo"].store["al-1"] = AlertRecord(
-            alert_id="al-1", tenant_id=None, source=AlertSource.ALERTMANAGER, fingerprint="fp-1",
-            severity=Severity.WARNING, status=AlertStatus.FIRING, fired_at=datetime.now(UTC), labels={}, annotations={},
+            alert_id="al-1",
+            tenant_id=None,
+            source=AlertSource.ALERTMANAGER,
+            fingerprint="fp-1",
+            severity=Severity.WARNING,
+            status=AlertStatus.FIRING,
+            fired_at=datetime.now(UTC),
+            labels={},
+            annotations={},
         )
         cookies = {"voiceos_session": _platform_token(session_codec, role="PLATFORM_SUPPORT")}
         response = app_client.post("/admin/alerts/al-1/acknowledge", cookies=cookies)
@@ -589,7 +638,11 @@ class TestAIInsights:
 
     def test_enabled_returns_persisted_insights(self, app_client: TestClient, session_codec: WebSessionCodec) -> None:
         cookies = {"voiceos_session": _platform_token(session_codec)}
-        app_client.post("/admin/feature-flags/ops_intelligence_reasoning", json={"scope": "GLOBAL", "state": "ENABLED"}, cookies=cookies)
+        app_client.post(
+            "/admin/feature-flags/ops_intelligence_reasoning",
+            json={"scope": "GLOBAL", "state": "ENABLED"},
+            cookies=cookies,
+        )
         response = app_client.get("/admin/ai-insights", cookies=cookies)
         assert response.json()["reasoning_enabled"] is True
 
@@ -602,10 +655,19 @@ class TestCapacityPlanning:
 
 
 class TestIncidentTimeline:
-    def test_merges_alerts_and_insights(self, app_client: TestClient, session_codec: WebSessionCodec, deps: dict[str, Any]) -> None:
+    def test_merges_alerts_and_insights(
+        self, app_client: TestClient, session_codec: WebSessionCodec, deps: dict[str, Any]
+    ) -> None:
         deps["alert_repo"].store["al-1"] = AlertRecord(
-            alert_id="al-1", tenant_id=None, source=AlertSource.ALERTMANAGER, fingerprint="fp-1",
-            severity=Severity.CRITICAL, status=AlertStatus.FIRING, fired_at=datetime.now(UTC), labels={}, annotations={},
+            alert_id="al-1",
+            tenant_id=None,
+            source=AlertSource.ALERTMANAGER,
+            fingerprint="fp-1",
+            severity=Severity.CRITICAL,
+            status=AlertStatus.FIRING,
+            fired_at=datetime.now(UTC),
+            labels={},
+            annotations={},
         )
         cookies = {"voiceos_session": _platform_token(session_codec)}
         response = app_client.get("/admin/incident-timeline", cookies=cookies)

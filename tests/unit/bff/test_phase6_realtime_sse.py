@@ -31,6 +31,7 @@ from src.services.web_api.api import _build_realtime_analytics_routes
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_analytics_service(snapshot: dict[str, Any] | None = None) -> AnalyticsService:
     """Build a minimal AnalyticsService with a fixed snapshot."""
     svc = MagicMock(spec=AnalyticsService)
@@ -52,17 +53,20 @@ def _make_app_with_auth(session_data: dict | None = None, forbidden: bool = Fals
     routes = _build_realtime_analytics_routes(analytics)
 
     # Patch auth helpers at the module level for the test
-    with patch("src.services.web_api.api.require_tenant_permission") as mock_auth, \
-         patch("src.services.web_api.api._require_tenant_id") as mock_tid:
-
+    with (
+        patch("src.services.web_api.api.require_tenant_permission") as mock_auth,
+        patch("src.services.web_api.api._require_tenant_id") as mock_tid,
+    ):
         if session_data is not None and not forbidden:
             mock_auth.return_value = session_data
             mock_tid.return_value = "t-1"
         elif forbidden:
             from src.services.web_api.api import ForbiddenError
+
             mock_auth.side_effect = ForbiddenError("forbidden")
         else:
             from src.services.web_api.api import SessionRequiredError
+
             mock_auth.side_effect = SessionRequiredError("unauthenticated")
 
         app = Starlette(routes=routes)
@@ -73,6 +77,7 @@ def _make_app_with_auth(session_data: dict | None = None, forbidden: bool = Fals
 # Tests
 # ---------------------------------------------------------------------------
 
+
 class TestRealtimeSSEAuth:
     def test_unauthenticated_returns_401(self) -> None:
         analytics = _make_analytics_service()
@@ -80,6 +85,7 @@ class TestRealtimeSSEAuth:
 
         with patch("src.services.web_api.api.require_tenant_permission") as mock_auth:
             from src.services.web_api.api import SessionRequiredError
+
             mock_auth.side_effect = SessionRequiredError("not signed in")
             app = Starlette(routes=routes)
             client = TestClient(app, raise_server_exceptions=False)
@@ -95,6 +101,7 @@ class TestRealtimeSSEAuth:
 
         with patch("src.services.web_api.api.require_tenant_permission") as mock_auth:
             from src.services.web_api.api import ForbiddenError
+
             mock_auth.side_effect = ForbiddenError("insufficient permissions")
             app = Starlette(routes=routes)
             client = TestClient(app, raise_server_exceptions=False)
@@ -110,9 +117,11 @@ class TestRealtimeSSEResponseFormat:
         analytics = _make_analytics_service()
         routes = _build_realtime_analytics_routes(analytics)
 
-        with patch("src.services.web_api.api.require_tenant_permission") as mock_auth, \
-             patch("src.services.web_api.api._require_tenant_id") as mock_tid, \
-             patch("src.services.web_api.api.Request.is_disconnected", new_callable=AsyncMock, return_value=True):
+        with (
+            patch("src.services.web_api.api.require_tenant_permission") as mock_auth,
+            patch("src.services.web_api.api._require_tenant_id") as mock_tid,
+            patch("src.services.web_api.api.Request.is_disconnected", new_callable=AsyncMock, return_value=True),
+        ):
             mock_auth.return_value = {"tenant_id": "t-1"}
             mock_tid.return_value = "t-1"
             app = Starlette(routes=routes)
@@ -126,9 +135,11 @@ class TestRealtimeSSEResponseFormat:
         analytics = _make_analytics_service()
         routes = _build_realtime_analytics_routes(analytics)
 
-        with patch("src.services.web_api.api.require_tenant_permission") as mock_auth, \
-             patch("src.services.web_api.api._require_tenant_id") as mock_tid, \
-             patch("src.services.web_api.api.Request.is_disconnected", new_callable=AsyncMock, return_value=True):
+        with (
+            patch("src.services.web_api.api.require_tenant_permission") as mock_auth,
+            patch("src.services.web_api.api._require_tenant_id") as mock_tid,
+            patch("src.services.web_api.api.Request.is_disconnected", new_callable=AsyncMock, return_value=True),
+        ):
             mock_auth.return_value = {"tenant_id": "t-1"}
             mock_tid.return_value = "t-1"
             app = Starlette(routes=routes)
@@ -143,12 +154,12 @@ class TestRealtimeSSEInterval:
     @pytest.mark.parametrize(
         "input_val,expected",
         [
-            ("0.5", 1.0),     # below minimum → clamp to 1
-            ("1", 1.0),       # at minimum
-            ("5", 5.0),       # normal
-            ("60", 60.0),     # at maximum
-            ("120", 60.0),    # above maximum → clamp to 60
-            ("abc", 5.0),     # invalid → default
+            ("0.5", 1.0),  # below minimum → clamp to 1
+            ("1", 1.0),  # at minimum
+            ("5", 5.0),  # normal
+            ("60", 60.0),  # at maximum
+            ("120", 60.0),  # above maximum → clamp to 60
+            ("abc", 5.0),  # invalid → default
         ],
     )
     def test_interval_clamping(self, input_val: str, expected: float) -> None:

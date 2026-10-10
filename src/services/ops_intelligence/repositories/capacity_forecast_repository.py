@@ -10,7 +10,16 @@ from src.services.ops_intelligence.models import ConfidenceLevel
 from src.services.ops_intelligence.reasoning.capacity_planner import CapacityForecast
 
 _TABLE = "capacity_forecasts"
-_COLUMNS = ("forecast_id", "tenant_id", "resource", "horizon_days", "forecast_data", "headroom_pct", "confidence", "generated_at")
+_COLUMNS = (
+    "forecast_id",
+    "tenant_id",
+    "resource",
+    "horizon_days",
+    "forecast_data",
+    "headroom_pct",
+    "confidence",
+    "generated_at",
+)
 
 
 class PostgresCapacityForecastRepository(BaseRepository):

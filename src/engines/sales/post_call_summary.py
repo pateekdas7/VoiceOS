@@ -106,16 +106,10 @@ def generate_post_call_summary(
         "property_types": sales_state.property_type or None,
         "purpose": sales_state.purpose.value if sales_state.purpose else None,
         "timeline": sales_state.timeline.value if sales_state.timeline else None,
-        "decision_maker": (
-            sales_state.decision_maker.value if sales_state.decision_maker else None
-        ),
-        "financing_status": (
-            sales_state.financing_status.value if sales_state.financing_status else None
-        ),
+        "decision_maker": (sales_state.decision_maker.value if sales_state.decision_maker else None),
+        "financing_status": (sales_state.financing_status.value if sales_state.financing_status else None),
         "preferred_localities": sales_state.preferred_locality or None,
-        "site_visit_interest": (
-            sales_state.site_visit_interest.value if sales_state.site_visit_interest else None
-        ),
+        "site_visit_interest": (sales_state.site_visit_interest.value if sales_state.site_visit_interest else None),
     }
 
     conversation: dict = {
@@ -129,13 +123,9 @@ def generate_post_call_summary(
 
     sales: dict = {
         "current_stage": sales_state.current_objective.value,
-        "last_action": (
-            sales_state.last_sales_action.value if sales_state.last_sales_action else None
-        ),
+        "last_action": (sales_state.last_sales_action.value if sales_state.last_sales_action else None),
         "next_action": sales_state.next_action.value,
-        "next_question": (
-            sales_state.next_question.value if sales_state.next_question else None
-        ),
+        "next_question": (sales_state.next_question.value if sales_state.next_question else None),
     }
 
     outcome = _outcome_from_stage(sales_state.lead_stage)

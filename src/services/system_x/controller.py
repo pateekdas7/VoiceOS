@@ -19,6 +19,7 @@ Full execution flow (Req-1 through Req-11):
 Claude is advisory only. The Policy Engine, Validator, and Guardrails make
 every operational decision. No Claude output is ever executed directly.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -92,13 +93,15 @@ class SystemXController:
         incident_id, is_new = self._correlator.correlate(alert)
 
         if not is_new:
-            self._audit_repo.append(AuditEntry(
-                entry_id=str(uuid.uuid4()),
-                incident_id=incident_id,
-                recorded_at=datetime.now(UTC),
-                actor="system_x",
-                action=f"correlate_alert:{alert.alert_name}:{alert.fingerprint}",
-            ))
+            self._audit_repo.append(
+                AuditEntry(
+                    entry_id=str(uuid.uuid4()),
+                    incident_id=incident_id,
+                    recorded_at=datetime.now(UTC),
+                    actor="system_x",
+                    action=f"correlate_alert:{alert.alert_name}:{alert.fingerprint}",
+                )
+            )
             return
 
         if incident_id in self._in_flight:
@@ -156,14 +159,16 @@ class SystemXController:
             alert_fingerprints=tuple(fingerprints),
         )
         self._incident_repo.create(incident)
-        self._audit_repo.append(AuditEntry(
-            entry_id=str(uuid.uuid4()),
-            incident_id=incident_id,
-            recorded_at=now,
-            actor="system_x",
-            action="incident_created",
-            result=f"severity={severity} services={','.join(affected_services)}",
-        ))
+        self._audit_repo.append(
+            AuditEntry(
+                entry_id=str(uuid.uuid4()),
+                incident_id=incident_id,
+                recorded_at=now,
+                actor="system_x",
+                action="incident_created",
+                result=f"severity={severity} services={','.join(affected_services)}",
+            )
+        )
         _log.info("incident=%s created severity=%s", incident_id, severity)
 
         # ── Phase 2: Notify incident start ────────────────────────────────
@@ -171,7 +176,8 @@ class SystemXController:
             sent_ids = await self._notifier.notify_incident_start(incident)
             if sent_ids:
                 self._incident_repo.update_status(
-                    incident_id, IncidentStatus.DETECTING,
+                    incident_id,
+                    IncidentStatus.DETECTING,
                     notifications_sent=list(sent_ids),
                 )
         except Exception as exc:
@@ -186,34 +192,39 @@ class SystemXController:
             analysis, turns = await self._claude_client.analyze_incident(package)
 
             self._incident_repo.update_status(
-                incident_id, IncidentStatus.ANALYZING,
+                incident_id,
+                IncidentStatus.ANALYZING,
                 claude_analysis=analysis,
             )
-            self._audit_repo.append(AuditEntry(
-                entry_id=str(uuid.uuid4()),
-                incident_id=incident_id,
-                recorded_at=datetime.now(UTC),
-                actor="system_x:claude",
-                action="diagnostic_session_complete",
-                result=(
-                    f"conversation={analysis.conversation_id} "
-                    f"turns={analysis.turn_count} "
-                    f"confidence={analysis.confidence} "
-                    f"steps={len(analysis.recovery_plan)}"
-                ),
-                metadata={
-                    "evidence_keys": list(analysis.evidence_keys),
-                    "turns": [
-                        {
-                            "turn": t.turn,
-                            "tools_called": list(t.tools_called),
-                            "summary": t.content_summary,
-                        }
-                        for t in turns
-                    ],
-                },
-            ))
-            _log.info("incident=%s analysis complete confidence=%s turns=%d", incident_id, analysis.confidence, len(turns))
+            self._audit_repo.append(
+                AuditEntry(
+                    entry_id=str(uuid.uuid4()),
+                    incident_id=incident_id,
+                    recorded_at=datetime.now(UTC),
+                    actor="system_x:claude",
+                    action="diagnostic_session_complete",
+                    result=(
+                        f"conversation={analysis.conversation_id} "
+                        f"turns={analysis.turn_count} "
+                        f"confidence={analysis.confidence} "
+                        f"steps={len(analysis.recovery_plan)}"
+                    ),
+                    metadata={
+                        "evidence_keys": list(analysis.evidence_keys),
+                        "turns": [
+                            {
+                                "turn": t.turn,
+                                "tools_called": list(t.tools_called),
+                                "summary": t.content_summary,
+                            }
+                            for t in turns
+                        ],
+                    },
+                )
+            )
+            _log.info(
+                "incident=%s analysis complete confidence=%s turns=%d", incident_id, analysis.confidence, len(turns)
+            )
 
             # Notify analysis complete
             try:
@@ -224,24 +235,28 @@ class SystemXController:
         except ValueError as exc:
             # Validation failure — Claude response was rejected
             _log.error("incident=%s Claude validation failed: %s", incident_id, exc)
-            self._audit_repo.append(AuditEntry(
-                entry_id=str(uuid.uuid4()),
-                incident_id=incident_id,
-                recorded_at=datetime.now(UTC),
-                actor="system_x",
-                action="analysis_validation_failed",
-                result=str(exc),
-            ))
+            self._audit_repo.append(
+                AuditEntry(
+                    entry_id=str(uuid.uuid4()),
+                    incident_id=incident_id,
+                    recorded_at=datetime.now(UTC),
+                    actor="system_x",
+                    action="analysis_validation_failed",
+                    result=str(exc),
+                )
+            )
         except Exception as exc:
             _log.error("incident=%s Claude diagnostic session failed: %s", incident_id, exc)
-            self._audit_repo.append(AuditEntry(
-                entry_id=str(uuid.uuid4()),
-                incident_id=incident_id,
-                recorded_at=datetime.now(UTC),
-                actor="system_x",
-                action="diagnostic_session_failed",
-                result=str(exc),
-            ))
+            self._audit_repo.append(
+                AuditEntry(
+                    entry_id=str(uuid.uuid4()),
+                    incident_id=incident_id,
+                    recorded_at=datetime.now(UTC),
+                    actor="system_x",
+                    action="diagnostic_session_failed",
+                    result=str(exc),
+                )
+            )
 
         # ── Phase 4: Recovery Policy Engine ───────────────────────────────
         actions = []
@@ -249,19 +264,21 @@ class SystemXController:
 
         if analysis is not None:
             policy = self._policy.evaluate(incident, analysis)
-            self._audit_repo.append(AuditEntry(
-                entry_id=str(uuid.uuid4()),
-                incident_id=incident_id,
-                recorded_at=datetime.now(UTC),
-                actor="system_x.policy",
-                action="policy_decision",
-                result=f"allowed={policy.allowed} level={policy.policy_level} dry_run={policy.dry_run}",
-                metadata={
-                    "requires_human": policy.requires_human_approval,
-                    "approved_actions": [str(a) for a in policy.approved_actions],
-                    "reason": policy.reason,
-                },
-            ))
+            self._audit_repo.append(
+                AuditEntry(
+                    entry_id=str(uuid.uuid4()),
+                    incident_id=incident_id,
+                    recorded_at=datetime.now(UTC),
+                    actor="system_x.policy",
+                    action="policy_decision",
+                    result=f"allowed={policy.allowed} level={policy.policy_level} dry_run={policy.dry_run}",
+                    metadata={
+                        "requires_human": policy.requires_human_approval,
+                        "approved_actions": [str(a) for a in policy.approved_actions],
+                        "reason": policy.reason,
+                    },
+                )
+            )
 
             if not policy.allowed:
                 _log.warning("incident=%s recovery blocked by policy: %s", incident_id, policy.reason)
@@ -275,14 +292,16 @@ class SystemXController:
                 guard_ok, guard_reason = self._guardrails.check_can_recover(
                     incident_id, affected_services, fingerprints
                 )
-                self._audit_repo.append(AuditEntry(
-                    entry_id=str(uuid.uuid4()),
-                    incident_id=incident_id,
-                    recorded_at=datetime.now(UTC),
-                    actor="system_x.guardrails",
-                    action="guardrails_check",
-                    result=f"allowed={guard_ok} reason={guard_reason}",
-                ))
+                self._audit_repo.append(
+                    AuditEntry(
+                        entry_id=str(uuid.uuid4()),
+                        incident_id=incident_id,
+                        recorded_at=datetime.now(UTC),
+                        actor="system_x.guardrails",
+                        action="guardrails_check",
+                        result=f"allowed={guard_ok} reason={guard_reason}",
+                    )
+                )
 
                 if not guard_ok:
                     _log.warning("incident=%s guardrails blocked: %s", incident_id, guard_reason)
@@ -299,14 +318,16 @@ class SystemXController:
                         # In this implementation, AWAITING_APPROVAL is a terminal state
                         # that an operator resolves via the admin UI. The lifecycle ends here
                         # for high-risk incidents — the operator approves manually.
-                        self._audit_repo.append(AuditEntry(
-                            entry_id=str(uuid.uuid4()),
-                            incident_id=incident_id,
-                            recorded_at=datetime.now(UTC),
-                            actor="system_x",
-                            action="human_approval_required",
-                            result="lifecycle paused — operator must approve via admin UI",
-                        ))
+                        self._audit_repo.append(
+                            AuditEntry(
+                                entry_id=str(uuid.uuid4()),
+                                incident_id=incident_id,
+                                recorded_at=datetime.now(UTC),
+                                actor="system_x",
+                                action="human_approval_required",
+                                result="lifecycle paused — operator must approve via admin UI",
+                            )
+                        )
                         return
 
                     # ── Phase 7: Recovery execution ─────────────────────
@@ -319,14 +340,16 @@ class SystemXController:
                         )
                     except Exception as exc:
                         _log.error("incident=%s recovery execution failed: %s", incident_id, exc)
-                        self._audit_repo.append(AuditEntry(
-                            entry_id=str(uuid.uuid4()),
-                            incident_id=incident_id,
-                            recorded_at=datetime.now(UTC),
-                            actor="system_x",
-                            action="recovery_execution_failed",
-                            result=str(exc),
-                        ))
+                        self._audit_repo.append(
+                            AuditEntry(
+                                entry_id=str(uuid.uuid4()),
+                                incident_id=incident_id,
+                                recorded_at=datetime.now(UTC),
+                                actor="system_x",
+                                action="recovery_execution_failed",
+                                result=str(exc),
+                            )
+                        )
 
                     recovery_summary = self._recovery_engine.build_recovery_summary(actions)
 
@@ -341,15 +364,17 @@ class SystemXController:
         except Exception as exc:
             _log.error("incident=%s health verification failed: %s", incident_id, exc)
 
-        self._audit_repo.append(AuditEntry(
-            entry_id=str(uuid.uuid4()),
-            incident_id=incident_id,
-            recorded_at=datetime.now(UTC),
-            actor="system_x",
-            action="health_verification",
-            verification_outcome="healthy" if all_ok else "degraded",
-            metadata=health_snapshot,
-        ))
+        self._audit_repo.append(
+            AuditEntry(
+                entry_id=str(uuid.uuid4()),
+                incident_id=incident_id,
+                recorded_at=datetime.now(UTC),
+                actor="system_x",
+                action="health_verification",
+                verification_outcome="healthy" if all_ok else "degraded",
+                metadata=health_snapshot,
+            )
+        )
 
         # ── Phase 9: Rollback if health worsened ─────────────────────────
         if not all_ok and actions and analysis is not None:
@@ -374,14 +399,16 @@ class SystemXController:
             except Exception:
                 all_ok = False
 
-            self._audit_repo.append(AuditEntry(
-                entry_id=str(uuid.uuid4()),
-                incident_id=incident_id,
-                recorded_at=datetime.now(UTC),
-                actor="system_x",
-                action="post_rollback_verification",
-                verification_outcome="healthy" if all_ok else "still_degraded",
-            ))
+            self._audit_repo.append(
+                AuditEntry(
+                    entry_id=str(uuid.uuid4()),
+                    incident_id=incident_id,
+                    recorded_at=datetime.now(UTC),
+                    actor="system_x",
+                    action="post_rollback_verification",
+                    verification_outcome="healthy" if all_ok else "still_degraded",
+                )
+            )
 
         # ── Phase 10: Resolve ─────────────────────────────────────────────
         resolved_at = datetime.now(UTC)
@@ -398,14 +425,16 @@ class SystemXController:
             health_after=health_snapshot,
             total_downtime_s=downtime_s,
         )
-        self._audit_repo.append(AuditEntry(
-            entry_id=str(uuid.uuid4()),
-            incident_id=incident_id,
-            recorded_at=resolved_at,
-            actor="system_x",
-            action="incident_closed",
-            result=str(final_status),
-        ))
+        self._audit_repo.append(
+            AuditEntry(
+                entry_id=str(uuid.uuid4()),
+                incident_id=incident_id,
+                recorded_at=resolved_at,
+                actor="system_x",
+                action="incident_closed",
+                result=str(final_status),
+            )
+        )
         _log.info("incident=%s status=%s downtime=%ds", incident_id, final_status, downtime_s)
 
         # ── Phase 11: Resolution notification ────────────────────────────

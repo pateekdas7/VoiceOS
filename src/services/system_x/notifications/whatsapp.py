@@ -1,4 +1,5 @@
 """WhatsAppNotifier — sends incident notifications via Twilio WhatsApp API."""
+
 from __future__ import annotations
 
 import logging

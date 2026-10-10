@@ -123,7 +123,9 @@ class vLLMAdapter:  # noqa: N801
             raise RuntimeError(f"GPU Scheduler rejected VRAM for {self._model_name} ({self._vram_mb} MB)")
 
         try:
-            async for chunk in self._stream_vllm(prompt, max_tokens, llm_ttft_ms, llm_completion_latency_ms, cancel_event):
+            async for chunk in self._stream_vllm(
+                prompt, max_tokens, llm_ttft_ms, llm_completion_latency_ms, cancel_event
+            ):
                 yield chunk
             llm_requests_total.labels(status="success").inc()
         except Exception:

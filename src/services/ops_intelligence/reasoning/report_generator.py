@@ -184,19 +184,27 @@ class ReportGenerator:
     # Platform-wide health/performance reports (Sec 6.1 duplication fix)
     # ------------------------------------------------------------------
 
-    async def generate_daily_health(self, *, period_start: datetime, period_end: datetime, date_range: object) -> Report:
+    async def generate_daily_health(
+        self, *, period_start: datetime, period_end: datetime, date_range: object
+    ) -> Report:
         return await self._generate_scorecard_report(ReportType.DAILY_HEALTH, period_start, period_end, date_range)
 
-    async def generate_weekly_health(self, *, period_start: datetime, period_end: datetime, date_range: object) -> Report:
+    async def generate_weekly_health(
+        self, *, period_start: datetime, period_end: datetime, date_range: object
+    ) -> Report:
         return await self._generate_scorecard_report(ReportType.WEEKLY_HEALTH, period_start, period_end, date_range)
 
-    async def generate_monthly_health(self, *, period_start: datetime, period_end: datetime, date_range: object) -> Report:
+    async def generate_monthly_health(
+        self, *, period_start: datetime, period_end: datetime, date_range: object
+    ) -> Report:
         return await self._generate_scorecard_report(ReportType.MONTHLY_HEALTH, period_start, period_end, date_range)
 
     async def generate_performance_report(
         self, *, period_start: datetime, period_end: datetime, date_range: object
     ) -> Report:
-        return await self._generate_scorecard_report(ReportType.PERFORMANCE_REPORT, period_start, period_end, date_range)
+        return await self._generate_scorecard_report(
+            ReportType.PERFORMANCE_REPORT, period_start, period_end, date_range
+        )
 
     async def _generate_scorecard_report(
         self, report_type: ReportType, period_start: datetime, period_end: datetime, date_range: object
@@ -241,8 +249,10 @@ class ReportGenerator:
                 candidate_affected_components=("infrastructure",),
             )
         )
-        severity = Severity.CRITICAL if technical.availability < 0.99 else (
-            Severity.WARNING if technical.slo_attainment < 0.99 else Severity.INFO
+        severity = (
+            Severity.CRITICAL
+            if technical.availability < 0.99
+            else (Severity.WARNING if technical.slo_attainment < 0.99 else Severity.INFO)
         )
         return self._persist(
             report_type=report_type,
@@ -267,12 +277,14 @@ class ReportGenerator:
     async def generate_incident_report(
         self, insights: tuple[Insight, ...], *, tenant_id: str | None, period_start: datetime, period_end: datetime
     ) -> Report:
-        return await self._generate_from_insights(ReportType.INCIDENT_REPORT, insights, tenant_id, period_start, period_end)
+        return await self._generate_from_insights(
+            ReportType.INCIDENT_REPORT, insights, tenant_id, period_start, period_end
+        )
 
-    async def generate_rca(
-        self, insight: Insight, *, period_start: datetime, period_end: datetime
-    ) -> Report:
-        return await self._generate_from_insights(ReportType.RCA, (insight,), insight.tenant_id, period_start, period_end)
+    async def generate_rca(self, insight: Insight, *, period_start: datetime, period_end: datetime) -> Report:
+        return await self._generate_from_insights(
+            ReportType.RCA, (insight,), insight.tenant_id, period_start, period_end
+        )
 
     async def _generate_from_insights(
         self,
@@ -343,7 +355,9 @@ class ReportGenerator:
             )
         )
         min_headroom = min((getattr(f, "headroom_pct", 100.0) for f in forecasts), default=100.0)
-        severity = Severity.CRITICAL if min_headroom < 10 else (Severity.WARNING if min_headroom < 25 else Severity.INFO)
+        severity = (
+            Severity.CRITICAL if min_headroom < 10 else (Severity.WARNING if min_headroom < 25 else Severity.INFO)
+        )
         return self._persist(
             report_type=ReportType.CAPACITY_REPORT,
             scope=ScopeLevel.PLATFORM,
@@ -404,7 +418,13 @@ def _summary_category() -> InsightCategory:
 
 
 def _placeholder_fact(at: datetime) -> VerifiedFact:
-    return VerifiedFact(claim="No specific evidence available for this period", source="event_bus", query="n/a", value="0", observed_at=at)
+    return VerifiedFact(
+        claim="No specific evidence available for this period",
+        source="event_bus",
+        query="n/a",
+        value="0",
+        observed_at=at,
+    )
 
 
 def _max_severity(severities: Iterable[Severity], *, default: Severity) -> Severity:

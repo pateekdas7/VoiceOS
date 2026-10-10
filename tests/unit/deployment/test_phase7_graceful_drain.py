@@ -25,20 +25,24 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 # _DrainGate tests
 # ---------------------------------------------------------------------------
 
+
 class TestDrainGate:
     def test_draining_starts_false(self) -> None:
         from deployment.cpu.app import _DrainGate
+
         gate = _DrainGate()
         assert gate.draining is False
 
     def test_set_draining_flips_to_true(self) -> None:
         from deployment.cpu.app import _DrainGate
+
         gate = _DrainGate()
         gate.set_draining()
         assert gate.draining is True
 
     def test_set_draining_is_idempotent(self) -> None:
         from deployment.cpu.app import _DrainGate
+
         gate = _DrainGate()
         gate.set_draining()
         gate.set_draining()
@@ -48,6 +52,7 @@ class TestDrainGate:
 # ---------------------------------------------------------------------------
 # Drain logic simulation tests (mirror serve()'s lifespan shutdown body)
 # ---------------------------------------------------------------------------
+
 
 class TestDrainLogic:
     """Simulate the lifespan shutdown loop in isolation."""
@@ -99,9 +104,7 @@ class TestDrainLogic:
     @pytest.mark.asyncio
     async def test_drain_times_out_when_calls_persist(self) -> None:
         # drain_max_seconds=0.05 → very short; sessions never clear
-        outcome, _polls = await self._simulate_drain(
-            [3] * 100, drain_max_seconds=0.05
-        )
+        outcome, _polls = await self._simulate_drain([3] * 100, drain_max_seconds=0.05)
         assert outcome == "timeout"
 
 
@@ -113,6 +116,7 @@ try:
     from src.services.media_gateway.twilio_ws_entrypoint import (  # type: ignore
         create_twilio_media_stream_app as _create_app,
     )
+
     _WS_IMPORTABLE = True
 except Exception:
     _WS_IMPORTABLE = False
@@ -127,14 +131,14 @@ class TestCreateAppDrainGateParam:
     @_skip_ws
     def test_accepts_drain_gate_kwarg(self) -> None:
         import inspect
+
         sig = inspect.signature(_create_app)
-        assert "drain_gate" in sig.parameters, (
-            "create_twilio_media_stream_app must accept drain_gate kwarg"
-        )
+        assert "drain_gate" in sig.parameters, "create_twilio_media_stream_app must accept drain_gate kwarg"
 
     @_skip_ws
     def test_drain_gate_defaults_to_none(self) -> None:
         import inspect
+
         sig = inspect.signature(_create_app)
         param = sig.parameters["drain_gate"]
         assert param.default is None

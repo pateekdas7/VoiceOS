@@ -175,15 +175,16 @@ def _load_vault_secret_or_env(vault_path: str, env_name: str) -> str:
     vault_token = os.environ.get("VAULT_TOKEN")
     if vault_addr and vault_token:
         import logging
+
         try:
             from src.libs.secrets.manager import SecretsManager
             from src.libs.secrets.providers.vault_provider import HVACVaultClient, VaultProvider
+
             sm = SecretsManager(VaultProvider(HVACVaultClient(vault_addr, vault_token)))
             return sm.get_secret(vault_path)
         except Exception as exc:
             logging.getLogger(__name__).warning(
-                "Vault secret fetch failed for %s (%s) — falling back to env var %s",
-                vault_path, exc, env_name
+                "Vault secret fetch failed for %s (%s) — falling back to env var %s", vault_path, exc, env_name
             )
     return _require_env(env_name)
 
@@ -221,7 +222,9 @@ def _load_or_generate_keypair() -> tuple[rsa.RSAPrivateKey, rsa.RSAPublicKey]:
     return private_key, private_key.public_key()
 
 
-def _build_ops_intelligence(conn: object, feature_flag_service: FeatureFlagService) -> tuple[
+def _build_ops_intelligence(
+    conn: object, feature_flag_service: FeatureFlagService
+) -> tuple[
     OpsIntelligenceService,
     PostgresAlertRepository,
     AlertLifecycleService,
@@ -250,7 +253,14 @@ def _build_ops_intelligence(conn: object, feature_flag_service: FeatureFlagServi
     ops_intelligence = OpsIntelligenceService(
         feature_flag_service, evidence_bundler, insight_service, report_generator, capacity_planner
     )
-    return ops_intelligence, alert_repository, alert_lifecycle, insight_repository, report_repository, capacity_repository
+    return (
+        ops_intelligence,
+        alert_repository,
+        alert_lifecycle,
+        insight_repository,
+        report_repository,
+        capacity_repository,
+    )
 
 
 def create_app() -> Starlette:
@@ -260,9 +270,7 @@ def create_app() -> Starlette:
     dsn = _require_env("POSTGRES_DSN")
     google_client_id = _require_env("GOOGLE_CLIENT_ID")
     # Phase 12b: load sensitive credentials from Vault when available
-    google_client_secret = _load_vault_secret_or_env(
-        "voiceos/web-api/google-client-secret", "GOOGLE_CLIENT_SECRET"
-    )
+    google_client_secret = _load_vault_secret_or_env("voiceos/web-api/google-client-secret", "GOOGLE_CLIENT_SECRET")
     frontend_base_url = _require_env("FRONTEND_BASE_URL")
     bff_public_url = _require_env("BFF_PUBLIC_URL")
 

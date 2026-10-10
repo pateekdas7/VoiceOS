@@ -139,8 +139,6 @@ def require_tenant_permission(request: Request, permission: str) -> WebSession:
     return session
 
 
-
-
 # ─── W10: Internal service auth middleware ─────────────────────────────────
 class InternalAuthMiddleware:
     """Validates X-Internal-Token on routes prefixed with /internal/.
@@ -169,6 +167,7 @@ class InternalAuthMiddleware:
         supplied = headers.get(b"x-internal-token", b"").decode()
         if supplied != self._token:
             from starlette.responses import Response
+
             await Response(status_code=401, content=b"Unauthorized")(scope, receive, send)
             return
         await self._app(scope, receive, send)

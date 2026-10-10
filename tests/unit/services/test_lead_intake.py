@@ -97,6 +97,7 @@ class _FakePipelineRepository:
 # normalize_phone
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestNormalizePhone:
     def test_ten_digit_mobile(self) -> None:
         assert normalize_phone("9876543210") == "+919876543210"
@@ -130,6 +131,7 @@ class TestNormalizePhone:
 # score_lead
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestScoreLead:
     def test_zero_dpd_zero_outstanding(self) -> None:
         score = score_lead({"dpd": "0", "outstanding": "0"}, has_name=False, has_email=False)
@@ -149,7 +151,11 @@ class TestScoreLead:
 
     def test_dpd_tiers(self) -> None:
         tiers = [
-            ("0", 0), ("15", 10), ("45", 20), ("75", 30), ("100", 40),
+            ("0", 0),
+            ("15", 10),
+            ("45", 20),
+            ("75", 30),
+            ("100", 40),
         ]
         for dpd, expected_dpd_component in tiers:
             s = score_lead({"dpd": dpd}, has_name=False, has_email=False)
@@ -163,6 +169,7 @@ class TestScoreLead:
 # ─────────────────────────────────────────────────────────────────────────────
 # detect_language
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestDetectLanguage:
     def test_explicit_hindi(self) -> None:
@@ -190,6 +197,7 @@ class TestDetectLanguage:
 # ─────────────────────────────────────────────────────────────────────────────
 # LeadDistributionEngine
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestLeadDistributionEngine:
     def _engine(self) -> LeadDistributionEngine:
@@ -254,6 +262,7 @@ class TestLeadDistributionEngine:
 # suggest_column_mapping
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestSuggestColumnMapping:
     def test_phone_aliases(self) -> None:
         for col in ["Mobile No", "phone", "contact", "mob"]:
@@ -280,6 +289,7 @@ class TestSuggestColumnMapping:
 # LeadIntakeService
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestLeadIntakeService:
     def _service(
         self, existing_phones: set[str] | None = None
@@ -299,9 +309,12 @@ class TestLeadIntakeService:
     def test_valid_import_counts(self) -> None:
         svc, lead_repo, _import_repo = self._service()
         result = svc.ingest(
-            TENANT, CAMPAIGN, "test.csv",
+            TENANT,
+            CAMPAIGN,
+            "test.csv",
             self._rows(["9876543210", "9876543211", "9876543212"]),
-            self._mapping(), [],
+            self._mapping(),
+            [],
             uploaded_by="user-1",
         )
         assert result.total == 3
@@ -313,9 +326,12 @@ class TestLeadIntakeService:
     def test_invalid_phones_rejected(self) -> None:
         svc, lead_repo, _import_repo = self._service()
         result = svc.ingest(
-            TENANT, CAMPAIGN, "test.csv",
+            TENANT,
+            CAMPAIGN,
+            "test.csv",
             self._rows(["9876543210", "12345", "abcdef"]),
-            self._mapping(), [],
+            self._mapping(),
+            [],
             uploaded_by="user-1",
         )
         assert result.total == 3
@@ -326,9 +342,12 @@ class TestLeadIntakeService:
     def test_within_batch_duplicates(self) -> None:
         svc, lead_repo, _import_repo = self._service()
         result = svc.ingest(
-            TENANT, CAMPAIGN, "test.csv",
+            TENANT,
+            CAMPAIGN,
+            "test.csv",
             self._rows(["9876543210", "9876543210"]),  # same phone twice
-            self._mapping(), [],
+            self._mapping(),
+            [],
             uploaded_by="user-1",
         )
         assert result.total == 2
@@ -343,9 +362,12 @@ class TestLeadIntakeService:
             existing_phones={"+919876543210"}  # already in campaign
         )
         result = svc.ingest(
-            TENANT, CAMPAIGN, "test.csv",
+            TENANT,
+            CAMPAIGN,
+            "test.csv",
             self._rows(["9876543210"]),
-            self._mapping(), [],
+            self._mapping(),
+            [],
             uploaded_by="user-1",
         )
         assert result.duplicates == 1
@@ -354,9 +376,12 @@ class TestLeadIntakeService:
     def test_import_record_created_and_completed(self) -> None:
         svc, _lead_repo, import_repo = self._service()
         svc.ingest(
-            TENANT, CAMPAIGN, "batch.csv",
+            TENANT,
+            CAMPAIGN,
+            "batch.csv",
             self._rows(["9876543210"]),
-            self._mapping(), [],
+            self._mapping(),
+            [],
             uploaded_by="user-1",
         )
         assert len(import_repo.records) == 1
@@ -370,9 +395,12 @@ class TestLeadIntakeService:
         svc, lead_repo, _import_repo = self._service()
         p1, p2 = PipelineId("p-001"), PipelineId("p-002")
         result = svc.ingest(
-            TENANT, CAMPAIGN, "batch.csv",
+            TENANT,
+            CAMPAIGN,
+            "batch.csv",
             self._rows(["9876543210", "9876543211", "9876543212", "9876543213"]),
-            self._mapping(), [p1, p2],
+            self._mapping(),
+            [p1, p2],
             uploaded_by="user-1",
         )
         assert result.valid == 4
@@ -386,9 +414,12 @@ class TestLeadIntakeService:
     def test_phone_normalized_to_e164(self) -> None:
         svc, lead_repo, _import_repo = self._service()
         svc.ingest(
-            TENANT, CAMPAIGN, "batch.csv",
+            TENANT,
+            CAMPAIGN,
+            "batch.csv",
             [{"phone": "9876543210", "name": "Test"}],
-            self._mapping(), [],
+            self._mapping(),
+            [],
             uploaded_by="user-1",
         )
         assert lead_repo.saved[0].phone == "+919876543210"
@@ -397,11 +428,15 @@ class TestLeadIntakeService:
     def test_result_import_id_set(self) -> None:
         svc, _lead_repo, _import_repo = self._service()
         result = svc.ingest(
-            TENANT, CAMPAIGN, "batch.csv",
+            TENANT,
+            CAMPAIGN,
+            "batch.csv",
             self._rows(["9876543210"]),
-            self._mapping(), [],
+            self._mapping(),
+            [],
             uploaded_by="user-1",
         )
         assert result.import_id  # non-empty UUID string
         import uuid as _uuid
+
         _uuid.UUID(result.import_id)  # must be a valid UUID — raises if not

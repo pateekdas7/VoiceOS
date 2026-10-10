@@ -4,6 +4,7 @@ Runs as a periodic job (daily). Matches event_type against glob patterns in
 event_retention_policies (most-specific wins) and hard-deletes expired rows
 from raw_events partitions.
 """
+
 from __future__ import annotations
 
 import fnmatch
@@ -35,8 +36,7 @@ class RetentionEnforcer:
     async def run(self) -> dict[str, int]:
         policies = await self._load_policies()
         event_types: list[str] = [
-            r["event_type"]
-            for r in await self._pool.fetch("SELECT DISTINCT event_type FROM raw_events")
+            r["event_type"] for r in await self._pool.fetch("SELECT DISTINCT event_type FROM raw_events")
         ]
 
         totals: dict[str, int] = {}
@@ -47,13 +47,13 @@ class RetentionEnforcer:
             cutoff = now - timedelta(days=days)
             result = await self._pool.execute(
                 "DELETE FROM raw_events WHERE event_type=$1 AND occurred_at < $2",
-                et, cutoff,
+                et,
+                cutoff,
             )
             deleted = int(result.split()[-1]) if result else 0
             if deleted:
                 totals[et] = deleted
                 _log.info("Retention: deleted=%d event_type=%s cutoff=%s", deleted, et, cutoff.date())
 
-        _log.info("Retention run complete. types_pruned=%d total_deleted=%d",
-                  len(totals), sum(totals.values()))
+        _log.info("Retention run complete. types_pruned=%d total_deleted=%d", len(totals), sum(totals.values()))
         return totals

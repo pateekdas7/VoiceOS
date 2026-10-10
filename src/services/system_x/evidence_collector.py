@@ -10,6 +10,7 @@ Claude during a diagnostic session flows through this collector, which:
 This is the only code path allowed to touch Prometheus, Loki, Redis, or
 service health endpoints during an investigation.
 """
+
 from __future__ import annotations
 
 import logging
@@ -21,11 +22,25 @@ import httpx
 _log = logging.getLogger("system_x.evidence_collector")
 
 # Keys whose values must never appear in evidence sent to Claude
-_SECRET_KEYS = frozenset({
-    "password", "passwd", "secret", "token", "key", "api_key", "apikey",
-    "auth", "credential", "credentials", "access_key", "private_key",
-    "client_secret", "app_password", "dsn",
-})
+_SECRET_KEYS = frozenset(
+    {
+        "password",
+        "passwd",
+        "secret",
+        "token",
+        "key",
+        "api_key",
+        "apikey",
+        "auth",
+        "credential",
+        "credentials",
+        "access_key",
+        "private_key",
+        "client_secret",
+        "app_password",
+        "dsn",
+    }
+)
 
 # Patterns that indicate a raw credential value (e.g. jwt, bearer, postgres://...)
 _SECRET_VALUE_PATTERNS = [
@@ -134,6 +149,7 @@ class EvidenceCollector:
         loki_query = f'{{app="{service}"}} |= "{level}"'
         try:
             import time
+
             end_ns = int(time.time() * 1e9)
             start_ns = end_ns - 300 * int(1e9)  # last 5 minutes
             async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
@@ -211,6 +227,7 @@ class EvidenceCollector:
 
     async def _query_redis_info(self, inp: dict) -> dict:
         import os
+
         redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
         section = inp.get("section", "stats")  # memory, stats, clients, replication
         safe_sections = {"memory", "stats", "clients", "replication", "server"}
@@ -218,6 +235,7 @@ class EvidenceCollector:
             return {"error": f"section '{section}' not allowed", "allowed": list(safe_sections)}
         try:
             import redis as redis_lib
+
             client = redis_lib.Redis.from_url(redis_url, decode_responses=True)
             info = client.info(section=section)
             client.close()

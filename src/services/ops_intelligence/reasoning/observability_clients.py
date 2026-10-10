@@ -99,7 +99,13 @@ class PrometheusQueryAdapter:
 class LokiQueryAdapter:
     """``LogQueryPort`` backed by Loki's ``/loki/api/v1/query_range``."""
 
-    def __init__(self, base_url: str = DEFAULT_LOKI_BASE_URL, *, timeout: float = 10.0, lookback: timedelta = DEFAULT_LOG_LOOKBACK) -> None:
+    def __init__(
+        self,
+        base_url: str = DEFAULT_LOKI_BASE_URL,
+        *,
+        timeout: float = 10.0,
+        lookback: timedelta = DEFAULT_LOG_LOOKBACK,
+    ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
         self._lookback = lookback
@@ -136,7 +142,13 @@ class JaegerQueryAdapter:
     ``evidence_bundler._correlate_traces`` already produces.
     """
 
-    def __init__(self, base_url: str = DEFAULT_JAEGER_BASE_URL, *, timeout: float = 10.0, lookback: timedelta = DEFAULT_TRACE_LOOKBACK) -> None:
+    def __init__(
+        self,
+        base_url: str = DEFAULT_JAEGER_BASE_URL,
+        *,
+        timeout: float = 10.0,
+        lookback: timedelta = DEFAULT_TRACE_LOOKBACK,
+    ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
         self._lookback = lookback

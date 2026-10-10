@@ -228,8 +228,15 @@ class CampaignLeadRepository(BaseRepository):
         )
         row = cur.fetchone()
         if row is None:
-            return {"total": "0", "valid": "0", "rejected": "0",
-                    "duplicates": "0", "assigned": "0", "queued": "0", "avg_score": None}
+            return {
+                "total": "0",
+                "valid": "0",
+                "rejected": "0",
+                "duplicates": "0",
+                "assigned": "0",
+                "queued": "0",
+                "avg_score": None,
+            }
         total, valid, rejected, duplicates, assigned, queued, avg_score = row
         return {
             "total": str(total or 0),
@@ -335,10 +342,24 @@ class CampaignLeadRepository(BaseRepository):
 
     def _hydrate(self, row: tuple[Any, ...]) -> CampaignLead:
         (
-            lead_id, tenant_id, campaign_id, pipeline_id, import_id,
-            phone, phone_raw, name, email, language, score, status,
-            queue_status, is_duplicate, is_blacklisted, rejection_reason,
-            metadata, created_at,
+            lead_id,
+            tenant_id,
+            campaign_id,
+            pipeline_id,
+            import_id,
+            phone,
+            phone_raw,
+            name,
+            email,
+            language,
+            score,
+            status,
+            queue_status,
+            is_duplicate,
+            is_blacklisted,
+            rejection_reason,
+            metadata,
+            created_at,
         ) = row
         raw_metadata = metadata if isinstance(metadata, dict) else (json.loads(metadata) if metadata else {})
         return CampaignLead(

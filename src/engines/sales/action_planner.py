@@ -148,7 +148,8 @@ class SalesActionPlanner:
         if (
             state.qualification_status == QualificationStatus.FULLY_QUALIFIED
             and state.lead_intent == LeadIntent.HIGH
-            and state.site_visit_interest not in (
+            and state.site_visit_interest
+            not in (
                 SiteVisitInterest.CONFIRMED,
                 SiteVisitInterest.NOT_INTERESTED,
             )

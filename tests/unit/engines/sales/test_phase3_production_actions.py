@@ -7,6 +7,7 @@ Covers:
 - RelationshipContextBuilder prompt block
 - PostCallSummaryRepository save/get + tenant isolation
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -58,42 +59,30 @@ class TestPipelineTransitionEngine:
         assert result.to_stage == LeadStage.ENGAGED
 
     def test_same_stage_returns_none(self):
-        result = PipelineTransitionEngine.evaluate(
-            LeadStage.ENGAGED, LeadStage.ENGAGED, reason="no change"
-        )
+        result = PipelineTransitionEngine.evaluate(LeadStage.ENGAGED, LeadStage.ENGAGED, reason="no change")
         assert result is None
 
     def test_terminal_converted_raises(self):
         with pytest.raises(InvalidTransitionError) as exc_info:
-            PipelineTransitionEngine.evaluate(
-                LeadStage.CONVERTED, LeadStage.ENGAGED, reason="illegal"
-            )
+            PipelineTransitionEngine.evaluate(LeadStage.CONVERTED, LeadStage.ENGAGED, reason="illegal")
         assert "CONVERTED" in str(exc_info.value)
         assert "ENGAGED" in str(exc_info.value)
 
     def test_terminal_disqualified_raises(self):
         with pytest.raises(InvalidTransitionError):
-            PipelineTransitionEngine.evaluate(
-                LeadStage.DISQUALIFIED, LeadStage.NEW, reason="illegal"
-            )
+            PipelineTransitionEngine.evaluate(LeadStage.DISQUALIFIED, LeadStage.NEW, reason="illegal")
 
     def test_backward_transition_qualified_to_new_raises(self):
         with pytest.raises(InvalidTransitionError):
-            PipelineTransitionEngine.evaluate(
-                LeadStage.QUALIFIED, LeadStage.NEW, reason="illegal backward"
-            )
+            PipelineTransitionEngine.evaluate(LeadStage.QUALIFIED, LeadStage.NEW, reason="illegal backward")
 
     def test_nurturing_to_engaged_allowed(self):
-        result = PipelineTransitionEngine.evaluate(
-            LeadStage.NURTURING, LeadStage.ENGAGED, reason="re-engaged"
-        )
+        result = PipelineTransitionEngine.evaluate(LeadStage.NURTURING, LeadStage.ENGAGED, reason="re-engaged")
         assert result is not None
         assert result.to_stage == LeadStage.ENGAGED
 
     def test_nurturing_to_qualifying_allowed(self):
-        result = PipelineTransitionEngine.evaluate(
-            LeadStage.NURTURING, LeadStage.QUALIFYING, reason="warmed up"
-        )
+        result = PipelineTransitionEngine.evaluate(LeadStage.NURTURING, LeadStage.QUALIFYING, reason="warmed up")
         assert result is not None
 
     def test_site_visit_to_converted_allowed(self):
@@ -110,17 +99,13 @@ class TestPipelineTransitionEngine:
 
     def test_error_carries_from_and_to_stages(self):
         with pytest.raises(InvalidTransitionError) as exc_info:
-            PipelineTransitionEngine.evaluate(
-                LeadStage.NEW, LeadStage.CONVERTED, reason="skip"
-            )
+            PipelineTransitionEngine.evaluate(LeadStage.NEW, LeadStage.CONVERTED, reason="skip")
         err = exc_info.value
         assert err.from_stage == LeadStage.NEW
         assert err.to_stage == LeadStage.CONVERTED
 
     def test_default_trigger_is_salesstateupdater(self):
-        result = PipelineTransitionEngine.evaluate(
-            LeadStage.NEW, LeadStage.ENGAGED, reason="greeted"
-        )
+        result = PipelineTransitionEngine.evaluate(LeadStage.NEW, LeadStage.ENGAGED, reason="greeted")
         assert result is not None
         assert result.trigger == "SalesStateUpdater"
 
@@ -259,9 +244,7 @@ class TestGeneratePostCallSummary:
         assert summary["outcome"] == "qualified"
 
     def test_escalated_flag_propagates(self):
-        summary = generate_post_call_summary(
-            self._full_state(), call_id="c1", customer_id="cust1", escalated=True
-        )
+        summary = generate_post_call_summary(self._full_state(), call_id="c1", customer_id="cust1", escalated=True)
         assert summary["conversation"]["escalated"] is True
 
     def test_new_lead_minimal_state(self):

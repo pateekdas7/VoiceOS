@@ -119,11 +119,15 @@ class TestDialerQueue:
 
     def test_pop_returns_highest_score_first(self) -> None:
         q, _ = self._queue()
-        q.push_leads(TENANT, CAMPAIGN, [
-            {"lead_id": "l-low", "phone": "+919876543210", "score": 20},
-            {"lead_id": "l-high", "phone": "+919876543211", "score": 80},
-            {"lead_id": "l-mid", "phone": "+919876543212", "score": 50},
-        ])
+        q.push_leads(
+            TENANT,
+            CAMPAIGN,
+            [
+                {"lead_id": "l-low", "phone": "+919876543210", "score": 20},
+                {"lead_id": "l-high", "phone": "+919876543211", "score": 80},
+                {"lead_id": "l-mid", "phone": "+919876543212", "score": 50},
+            ],
+        )
         first = q.pop_next(TENANT, CAMPAIGN)
         assert first is not None
         assert first["lead_id"] == "l-high"
@@ -402,9 +406,13 @@ class TestDialerEngineDND:
 
         dnd = CsvPhoneDNDList(["+919876543210"])
         engine, q, repo, _ = _make_engine(twilio=mock_twilio, dnd=dnd)
-        q.push_leads(TENANT, CAMPAIGN, [
-            {"lead_id": "l-blocked", "phone": "+919876543210", "score": 90},
-        ])
+        q.push_leads(
+            TENANT,
+            CAMPAIGN,
+            [
+                {"lead_id": "l-blocked", "phone": "+919876543210", "score": 90},
+            ],
+        )
 
         await engine.run(TENANT, CAMPAIGN, daily_start_hour=0, daily_end_hour=23)
 
@@ -420,9 +428,13 @@ class TestDialerEngineDND:
         mock_twilio = AsyncMock(spec=TwilioOutboundCallService)
         dnd = CsvPhoneDNDList(["+919876543210"])
         engine, q, _, _ = _make_engine(twilio=mock_twilio, dnd=dnd)
-        q.push_leads(TENANT, CAMPAIGN, [
-            {"lead_id": "l-fmt", "phone": "+91 98765 43210", "score": 50},
-        ])
+        q.push_leads(
+            TENANT,
+            CAMPAIGN,
+            [
+                {"lead_id": "l-fmt", "phone": "+91 98765 43210", "score": 50},
+            ],
+        )
 
         await engine.run(TENANT, CAMPAIGN, daily_start_hour=0, daily_end_hour=23)
 
@@ -438,9 +450,13 @@ class TestDialerEngineDND:
 
         dnd = CsvPhoneDNDList(["+919999999999"])  # different number
         engine, q, _repo, _ = _make_engine(twilio=mock_twilio, dnd=dnd)
-        q.push_leads(TENANT, CAMPAIGN, [
-            {"lead_id": "l-ok", "phone": "+919876543210", "score": 50},
-        ])
+        q.push_leads(
+            TENANT,
+            CAMPAIGN,
+            [
+                {"lead_id": "l-ok", "phone": "+919876543210", "score": 50},
+            ],
+        )
 
         original_place = engine._place
 
@@ -462,9 +478,13 @@ class TestDialerEngineDND:
         mock_twilio.place_call = AsyncMock(return_value="CA_default")
 
         engine, q, _, _ = _make_engine(twilio=mock_twilio)  # dnd=None → NullPhoneDND
-        q.push_leads(TENANT, CAMPAIGN, [
-            {"lead_id": "l-default", "phone": "+919876543210", "score": 50},
-        ])
+        q.push_leads(
+            TENANT,
+            CAMPAIGN,
+            [
+                {"lead_id": "l-default", "phone": "+919876543210", "score": 50},
+            ],
+        )
 
         original_place = engine._place
 
@@ -484,20 +504,20 @@ class TestDialerEngineDND:
         upstream audience selector isn't pre-filtering DND correctly."""
         from src.services.dialer import metrics as _m
 
-        before = _m.CALLS_BLOCKED_DND.labels(
-            tenant_id=TENANT, campaign_id=CAMPAIGN
-        )._value.get()
+        before = _m.CALLS_BLOCKED_DND.labels(tenant_id=TENANT, campaign_id=CAMPAIGN)._value.get()
 
         mock_twilio = AsyncMock(spec=TwilioOutboundCallService)
         dnd = CsvPhoneDNDList(["+919876543210"])
         engine, q, _, _ = _make_engine(twilio=mock_twilio, dnd=dnd)
-        q.push_leads(TENANT, CAMPAIGN, [
-            {"lead_id": "l-metric", "phone": "+919876543210", "score": 50},
-        ])
+        q.push_leads(
+            TENANT,
+            CAMPAIGN,
+            [
+                {"lead_id": "l-metric", "phone": "+919876543210", "score": 50},
+            ],
+        )
 
         await engine.run(TENANT, CAMPAIGN, daily_start_hour=0, daily_end_hour=23)
 
-        after = _m.CALLS_BLOCKED_DND.labels(
-            tenant_id=TENANT, campaign_id=CAMPAIGN
-        )._value.get()
+        after = _m.CALLS_BLOCKED_DND.labels(tenant_id=TENANT, campaign_id=CAMPAIGN)._value.get()
         assert after - before == 1

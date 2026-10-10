@@ -246,6 +246,7 @@ def _resolve_tareekh(text: str, reference_date: date) -> date | None:
             year += 1
     return None
 
+
 # ---------------------------------------------------------------------------
 # Compiled regex patterns
 # ---------------------------------------------------------------------------

@@ -230,9 +230,7 @@ def test_explicit_streaming_env_also_returns_none() -> None:
 
 def test_buffered_streaming_env_returns_gate_with_env_threshold() -> None:
     p = PlaybackScheduler()
-    gate = build_gate_from_env(
-        p, env={"VOICEOS_TTS_MODE": "buffered_streaming", "VOICEOS_TTS_BUFFER_MS": "600"}
-    )
+    gate = build_gate_from_env(p, env={"VOICEOS_TTS_MODE": "buffered_streaming", "VOICEOS_TTS_BUFFER_MS": "600"})
     assert gate is not None
     assert gate.mode is TTSMode.BUFFERED_STREAMING
     assert gate.threshold_ms == 600
@@ -243,9 +241,7 @@ def test_blocking_env_returns_gate_regardless_of_buffer_ms() -> None:
     is still parsed via the same threshold_ms_from_env — verify that
     invalid buffer_ms in blocking mode still falls back safely."""
     p = PlaybackScheduler()
-    gate = build_gate_from_env(
-        p, env={"VOICEOS_TTS_MODE": "blocking", "VOICEOS_TTS_BUFFER_MS": "not-a-number"}
-    )
+    gate = build_gate_from_env(p, env={"VOICEOS_TTS_MODE": "blocking", "VOICEOS_TTS_BUFFER_MS": "not-a-number"})
     assert gate is not None
     assert gate.mode is TTSMode.BLOCKING
     assert gate.threshold_ms == 400  # default fallback
@@ -398,7 +394,12 @@ async def test_streaming_mode_generation_race_drops_stale() -> None:
     # Enqueue a dummy clause so flush() advances generation (Option-1 guard
     # skips bump on empty queue — barge-in in real calls always has audio).
     from src.libs.contracts.streaming import AudioClause
-    await p.enqueue(AudioClause(audio_data=b"\x00"*8, sample_rate=8000, text="dummy", clause_index=0, is_final=False, generation=0))
+
+    await p.enqueue(
+        AudioClause(
+            audio_data=b"\x00" * 8, sample_rate=8000, text="dummy", clause_index=0, is_final=False, generation=0
+        )
+    )
     await p.flush()
     p.clear_barge_in()
     release.set()
@@ -432,7 +433,10 @@ async def test_buffered_streaming_mode_generation_race_drops_stale() -> None:
     await asyncio.sleep(0.05)
 
     from src.libs.contracts.streaming import AudioClause as _AC
-    await p.enqueue(_AC(audio_data=b"\x00"*8, sample_rate=8000, text="dummy", clause_index=0, is_final=False, generation=0))
+
+    await p.enqueue(
+        _AC(audio_data=b"\x00" * 8, sample_rate=8000, text="dummy", clause_index=0, is_final=False, generation=0)
+    )
     await p.flush()
     p.clear_barge_in()
     release.set()
@@ -465,7 +469,10 @@ async def test_blocking_mode_generation_race_drops_stale() -> None:
     await asyncio.sleep(0.05)
 
     from src.libs.contracts.streaming import AudioClause as _AC2
-    await p.enqueue(_AC2(audio_data=b"\x00"*8, sample_rate=8000, text="dummy", clause_index=0, is_final=False, generation=0))
+
+    await p.enqueue(
+        _AC2(audio_data=b"\x00" * 8, sample_rate=8000, text="dummy", clause_index=0, is_final=False, generation=0)
+    )
     await p.flush()
     p.clear_barge_in()
     release.set()
@@ -482,6 +489,7 @@ async def test_blocking_mode_generation_race_drops_stale() -> None:
 async def test_unset_and_explicit_streaming_produce_identical_outcome() -> None:
     """Configuration parity: whether VOICEOS_TTS_MODE is unset or is
     the literal 'streaming', the pipeline path is identical."""
+
     async def _run_once(env: dict[str, str]) -> tuple[int, int]:
         p = PlaybackScheduler()
         adapter = _SizedRecordingTTSAdapter(ms_per_clause=50)
@@ -575,7 +583,10 @@ async def test_production_send_clause_drops_pre_stale_clause() -> None:
     to _send_clause: not a single frame reaches the adapter."""
     p = PlaybackScheduler()
     from src.libs.contracts.streaming import AudioClause as _AC
-    await p.enqueue(_AC(audio_data=b"\x00"*8, sample_rate=8000, text="d", clause_index=0, is_final=False, generation=0))
+
+    await p.enqueue(
+        _AC(audio_data=b"\x00" * 8, sample_rate=8000, text="d", clause_index=0, is_final=False, generation=0)
+    )
     await p.flush()  # scheduler now at gen 1
     p.clear_barge_in()
     adapter = _CapturingWebSocketAdapter()
@@ -617,7 +628,10 @@ async def test_production_send_clause_aborts_on_mid_clause_flush() -> None:
 
     # Pre-populate so the mid-clause flush() advances the generation.
     from src.libs.contracts.streaming import AudioClause as _AC2
-    await p.enqueue(_AC2(audio_data=b"\x00"*8, sample_rate=8000, text="d", clause_index=0, is_final=False, generation=0))
+
+    await p.enqueue(
+        _AC2(audio_data=b"\x00" * 8, sample_rate=8000, text="d", clause_index=0, is_final=False, generation=0)
+    )
 
     # 400 ms → 20 total frames if uninterrupted.
     clause = AudioClause(

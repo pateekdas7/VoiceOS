@@ -34,7 +34,7 @@ def _adapter_call_slice(src: str, ctor_name: str) -> str:
         elif c == ")":
             depth -= 1
             if depth == 0:
-                return src[start:i + 1]
+                return src[start : i + 1]
         i += 1
     raise AssertionError(f"unbalanced parens after {ctor_name}( at {start}")
 

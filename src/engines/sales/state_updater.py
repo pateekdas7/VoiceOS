@@ -368,7 +368,7 @@ class SalesStateUpdater:
             existing_max = state.budget_max
             new_min = b_min if b_min is not None else state.budget_min
             new_max = b_max if b_max is not None else state.budget_max
-            changed = (existing_min != new_min or existing_max != new_max)
+            changed = existing_min != new_min or existing_max != new_max
             state.budget_min = new_min
             state.budget_max = new_max
 
@@ -465,13 +465,13 @@ class SalesStateUpdater:
             if parsed.tzinfo is None:
                 try:
                     from zoneinfo import ZoneInfo
+
                     parsed = parsed.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
                 except Exception:
                     # zoneinfo unavailable in older envs — use UTC+5:30 offset.
                     from datetime import timedelta
-                    parsed = parsed.replace(
-                        tzinfo=timezone(timedelta(hours=5, minutes=30))
-                    )
+
+                    parsed = parsed.replace(tzinfo=timezone(timedelta(hours=5, minutes=30)))
             state.requested_callback_time = parsed
         except (ValueError, TypeError):
             # Malformed date string — do not update; keep previous value.
@@ -542,9 +542,7 @@ class SalesStateUpdater:
     def _update_field_tracking(self, state: SalesState) -> None:
         """Update unanswered_required_fields from confirmed set."""
         state.unanswered_required_fields = [
-            f.value
-            for f in self._domain.required_fields
-            if f.value not in state.confirmed_fields
+            f.value for f in self._domain.required_fields if f.value not in state.confirmed_fields
         ]
 
     def _update_qualification_score(self, state: SalesState) -> None:
@@ -555,9 +553,7 @@ class SalesStateUpdater:
 
         # Progress = fraction of required fields confirmed
         required_count = len(self._domain.required_fields)
-        confirmed_required = sum(
-            1 for f in self._domain.required_fields if f.value in state.confirmed_fields
-        )
+        confirmed_required = sum(1 for f in self._domain.required_fields if f.value in state.confirmed_fields)
         state.qualification_progress = confirmed_required / required_count if required_count else 0.0
 
     def _update_lead_temperature(self, state: SalesState) -> None:

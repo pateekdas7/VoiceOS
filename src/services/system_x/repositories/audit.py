@@ -1,4 +1,5 @@
 """SystemXAuditRepository — append-only audit trail persistence."""
+
 from __future__ import annotations
 
 import json
@@ -41,9 +42,14 @@ class SystemXAuditRepository:
                         rollback_status, verification_outcome, metadata)
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (
-                    entry.entry_id, entry.incident_id, entry.recorded_at,
-                    entry.actor, entry.action, entry.result,
-                    entry.rollback_status, entry.verification_outcome,
+                    entry.entry_id,
+                    entry.incident_id,
+                    entry.recorded_at,
+                    entry.actor,
+                    entry.action,
+                    entry.result,
+                    entry.rollback_status,
+                    entry.verification_outcome,
                     json.dumps(entry.metadata),
                 ),
             )

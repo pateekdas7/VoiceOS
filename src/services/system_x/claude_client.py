@@ -7,6 +7,7 @@ System X fetches data, Claude continues until it issues finalize_diagnosis.
 Validation runs before the ClaudeAnalysis is returned to the controller —
 this is the last firewall before the Policy Engine sees the result.
 """
+
 from __future__ import annotations
 
 import logging
@@ -30,9 +31,7 @@ class SystemXClaudeClient:
         self._evidence = evidence_collector
         self._validator = validator or ClaudeResponseValidator()
 
-    async def analyze_incident(
-        self, package: dict
-    ) -> tuple[ClaudeAnalysis, list[DiagnosticTurn]]:
+    async def analyze_incident(self, package: dict) -> tuple[ClaudeAnalysis, list[DiagnosticTurn]]:
         """Run a full diagnostic session. Returns (ClaudeAnalysis, turn_history).
 
         Raises ValueError if validation fails after the session completes.
@@ -57,7 +56,8 @@ class SystemXClaudeClient:
         if not result.valid:
             _log.error(
                 "Claude analysis validation failed: %s — %s",
-                result.outcome, result.message,
+                result.outcome,
+                result.message,
             )
             raise ValueError(f"Claude response validation failed [{result.outcome}]: {result.message}")
 

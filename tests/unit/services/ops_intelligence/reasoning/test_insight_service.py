@@ -71,7 +71,9 @@ def _evidence(category: InsightCategory = InsightCategory.REGRESSION) -> Evidenc
     )
 
 
-def _narration(confidence: ConfidenceLevel = ConfidenceLevel.MEDIUM, claim: str = "thermal throttling") -> NarrationResult:
+def _narration(
+    confidence: ConfidenceLevel = ConfidenceLevel.MEDIUM, claim: str = "thermal throttling"
+) -> NarrationResult:
     return NarrationResult(
         hypotheses=(Hypothesis(claim=claim, reasoning="matches known pattern", confidence=confidence),),
         recommendation="check GPU temp",
@@ -100,7 +102,11 @@ class TestGenerate:
         repo = _FakeInsightRepository()
         service = InsightService(repo, _FakeReasoningAdapter(_narration()))
         empty_evidence = EvidenceBundle(
-            category=InsightCategory.REGRESSION, severity=Severity.WARNING, verified_facts=(), affected_components=(), tenant_id=None
+            category=InsightCategory.REGRESSION,
+            severity=Severity.WARNING,
+            verified_facts=(),
+            affected_components=(),
+            tenant_id=None,
         )
         result = await service.generate(empty_evidence)
         assert result is None
@@ -135,7 +141,9 @@ def _evidence_for_tenant(tenant_id: str | None) -> EvidenceBundle:
     return EvidenceBundle(
         category=InsightCategory.REGRESSION,
         severity=Severity.WARNING,
-        verified_facts=(VerifiedFact(claim="latency up", source="prometheus", query="q1", value="900", observed_at=NOW),),
+        verified_facts=(
+            VerifiedFact(claim="latency up", source="prometheus", query="q1", value="900", observed_at=NOW),
+        ),
         affected_components=("tts",),
         tenant_id=tenant_id,
     )
@@ -234,8 +242,12 @@ class TestRecurringPatternDetection:
     @pytest.mark.asyncio
     async def test_different_root_cause_creates_a_different_signature(self) -> None:
         patterns = _FakePatternRepository()
-        service_a = InsightService(_FakeInsightRepository(), _FakeReasoningAdapter(_narration(claim="cause A")), patterns)
-        service_b = InsightService(_FakeInsightRepository(), _FakeReasoningAdapter(_narration(claim="cause B")), patterns)
+        service_a = InsightService(
+            _FakeInsightRepository(), _FakeReasoningAdapter(_narration(claim="cause A")), patterns
+        )
+        service_b = InsightService(
+            _FakeInsightRepository(), _FakeReasoningAdapter(_narration(claim="cause B")), patterns
+        )
 
         await service_a.generate(_evidence())
         await service_b.generate(_evidence())

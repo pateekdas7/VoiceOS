@@ -138,8 +138,7 @@ class SalesProductionActionDispatcher:
             preferred_time = datetime.fromisoformat(raw_time)
         except (ValueError, TypeError):
             logger.warning(
-                "SalesProductionActionDispatcher: could not parse "
-                "requested_callback_time=%r for call %s — skipping",
+                "SalesProductionActionDispatcher: could not parse requested_callback_time=%r for call %s — skipping",
                 raw_time,
                 call_id,
             )
@@ -148,8 +147,7 @@ class SalesProductionActionDispatcher:
         # Dedup: schedule at most once per call_id.
         if call_id in self._scheduled_call_ids:
             logger.debug(
-                "SalesProductionActionDispatcher: callback already scheduled "
-                "for call %s — skipping duplicate",
+                "SalesProductionActionDispatcher: callback already scheduled for call %s — skipping duplicate",
                 call_id,
             )
             return SalesAction.SCHEDULE_FOLLOWUP  # already done; signal as if done

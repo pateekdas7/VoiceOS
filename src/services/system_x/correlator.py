@@ -1,4 +1,5 @@
 """IncidentCorrelator — groups alerts into incidents within a time window."""
+
 from __future__ import annotations
 
 import uuid
@@ -32,11 +33,7 @@ class IncidentCorrelator:
         """
         now = datetime.now(UTC)
         # prune stale open incidents
-        self._open = {
-            k: v
-            for k, v in self._open.items()
-            if now - v.opened_at < _MAX_INCIDENT_AGE
-        }
+        self._open = {k: v for k, v in self._open.items() if now - v.opened_at < _MAX_INCIDENT_AGE}
 
         # look for existing incident with matching service
         alert_services = set(self._classifier.classify_services([alert]))

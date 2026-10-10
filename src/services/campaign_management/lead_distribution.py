@@ -68,9 +68,7 @@ _STATE_LANGUAGE: dict[str, LeadLanguage] = {
     "pb": LeadLanguage.PUNJABI,
 }
 
-_EXPLICIT_LANG_MAP: dict[str, LeadLanguage] = {
-    lang.value.lower(): lang for lang in LeadLanguage
-}
+_EXPLICIT_LANG_MAP: dict[str, LeadLanguage] = {lang.value.lower(): lang for lang in LeadLanguage}
 _EXPLICIT_LANG_MAP.update({"hi": LeadLanguage.HINDI, "en": LeadLanguage.ENGLISH})
 
 
@@ -88,6 +86,7 @@ def detect_language(metadata: dict[str, str]) -> LeadLanguage:
 # ─────────────────────────────────────────────────────────────────────────────
 # Lead scoring
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def score_lead(metadata: dict[str, str], *, has_name: bool, has_email: bool) -> int:
     """Compute a 0-100 priority score for a lead.
@@ -147,6 +146,7 @@ def score_lead(metadata: dict[str, str], *, has_name: bool, has_email: bool) -> 
 # Distribution engine
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class LeadDistributionEngine:
     """Assigns leads to pipelines using score-ordered round-robin.
 
@@ -181,10 +181,12 @@ class LeadDistributionEngine:
         result = list(leads)
         for slot, (original_idx, lead) in enumerate(eligible):
             assigned_pipeline = pipeline_ids[slot % len(pipeline_ids)]
-            result[original_idx] = lead.model_copy(update={
-                "pipeline_id": assigned_pipeline,
-                "status": LeadStatus.ASSIGNED,
-            })
+            result[original_idx] = lead.model_copy(
+                update={
+                    "pipeline_id": assigned_pipeline,
+                    "status": LeadStatus.ASSIGNED,
+                }
+            )
 
         return result
 
@@ -202,7 +204,4 @@ class LeadDistributionEngine:
         """
         if not pipeline_ids or not unassigned_lead_ids:
             return []
-        return [
-            (lead_id, pipeline_ids[i % len(pipeline_ids)])
-            for i, lead_id in enumerate(unassigned_lead_ids)
-        ]
+        return [(lead_id, pipeline_ids[i % len(pipeline_ids)]) for i, lead_id in enumerate(unassigned_lead_ids)]

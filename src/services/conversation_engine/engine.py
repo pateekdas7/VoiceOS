@@ -467,7 +467,9 @@ class ConversationEngine:
 
         return context
 
-    def end_call(self, call_id: str, outcome: str = "completed", *, customer_id: str = "", sentiment: str = "neutral") -> None:
+    def end_call(
+        self, call_id: str, outcome: str = "completed", *, customer_id: str = "", sentiment: str = "neutral"
+    ) -> None:
         """Release the cached CustomerContext (and campaign linkage) for a finished call.
 
         ``outcome`` is the SLO-level label: "completed" for a normally
@@ -485,6 +487,7 @@ class ConversationEngine:
         if self._relationship_memory_store is not None and customer_id:
             try:
                 from src.engines.memory.relationship.schema import CallSummary
+
                 summary = CallSummary(
                     call_id=call_id,
                     sentiment=sentiment,
@@ -500,6 +503,7 @@ class ConversationEngine:
             try:
                 from src.engines.sales.post_call_summary import generate_post_call_summary
                 from src.engines.sales.schema import SalesState
+
                 _wm_data: dict | None = None
                 if self._working_memory_store is not None:
                     try:
@@ -660,7 +664,12 @@ class ConversationEngine:
 
         if self._tracer is None:
             return await self._handle_turn_impl(
-                turn, playback, context, intent_history, identity_verified, silence_duration_ms,
+                turn,
+                playback,
+                context,
+                intent_history,
+                identity_verified,
+                silence_duration_ms,
                 cancel_event=cancel_event,
             )
 
@@ -670,8 +679,14 @@ class ConversationEngine:
         ) as span:
             trace_id = format(span.get_span_context().trace_id, "032x")
             clauses = await self._handle_turn_impl(
-                turn, playback, context, intent_history, identity_verified, silence_duration_ms,
-                trace_id=trace_id, cancel_event=cancel_event,
+                turn,
+                playback,
+                context,
+                intent_history,
+                identity_verified,
+                silence_duration_ms,
+                trace_id=trace_id,
+                cancel_event=cancel_event,
             )
         return clauses
 
@@ -690,7 +705,13 @@ class ConversationEngine:
         _t0 = time.monotonic()
         try:
             result = await self.__handle_turn_body(
-                turn, playback, context, intent_history, identity_verified, silence_duration_ms, trace_id,
+                turn,
+                playback,
+                context,
+                intent_history,
+                identity_verified,
+                silence_duration_ms,
+                trace_id,
                 cancel_event=cancel_event,
             )
         except Exception as exc:
@@ -776,6 +797,7 @@ class ConversationEngine:
                     PipelineTransitionEngine,
                 )
                 from src.engines.sales.schema import LeadStage
+
                 _prev_stage_val = _prev_sales_state.get("lead_stage")
                 _new_stage_val = _new_sales_state.get("lead_stage")
                 if _prev_stage_val and _new_stage_val and _prev_stage_val != _new_stage_val:
@@ -789,12 +811,11 @@ class ConversationEngine:
                     except InvalidTransitionError as _ite:
                         logger.error(
                             "ConversationEngine: invalid pipeline transition for call %s: %s",
-                            turn.call_id, _ite,
+                            turn.call_id,
+                            _ite,
                         )
             except Exception:
-                logger.warning(
-                    "PipelineTransitionEngine check failed for call %s — continuing", turn.call_id
-                )
+                logger.warning("PipelineTransitionEngine check failed for call %s — continuing", turn.call_id)
 
         # Detect a COUNTER negotiation move (agent proposed a counter-offer but
         # did not finalize commitment) and advance the per-call concession counter
@@ -813,13 +834,12 @@ class ConversationEngine:
         if _rm is not None:
             try:
                 from src.engines.sales.relationship_context import RelationshipContextBuilder
+
                 _ctx_block = RelationshipContextBuilder.build_block(_rm)
                 if _ctx_block:
                     prompt_text = f"{prompt_text}\n\n{_ctx_block}"
             except Exception:
-                logger.warning(
-                    "RelationshipContextBuilder failed for call %s — continuing", turn.call_id
-                )
+                logger.warning("RelationshipContextBuilder failed for call %s — continuing", turn.call_id)
 
         # Step 4 — RI-4: commit DecisionEnvelope before any external act.
         # Sprint-015: publishing is the authoritative effect this turn
@@ -860,6 +880,7 @@ class ConversationEngine:
         if self._sales_action_dispatcher is not None and response_plan.sales_state:
             try:
                 from src.engines.sales.schema import SalesAction
+
                 _dispatched = self._sales_action_dispatcher.dispatch(
                     response_plan.sales_state,
                     context,
@@ -869,7 +890,7 @@ class ConversationEngine:
                 if _dispatched is not None:
                     try:
                         _da = SalesAction(_dispatched) if isinstance(_dispatched, str) else _dispatched
-                        _handoff_requested = (_da == SalesAction.HUMAN_HANDOFF)
+                        _handoff_requested = _da == SalesAction.HUMAN_HANDOFF
                     except (ValueError, TypeError):
                         pass
             except Exception:
@@ -898,6 +919,7 @@ class ConversationEngine:
         if self._working_memory_store is not None:
             try:
                 from src.engines.memory.working.schema import WorkingMemoryDelta
+
                 _existing_wm = self._working_memory_store.get(turn.call_id)
                 _primary_intent = response_plan.intents[0].label if response_plan.intents else None
                 _strategy_label = response_plan.strategy.action.value if response_plan.strategy else None
@@ -942,7 +964,10 @@ class ConversationEngine:
                 # Play first clause as soon as threshold_ms of audio is buffered,
                 # stream remaining clauses concurrently (buffered_streaming mode).
                 clauses = await self._run_llm_streaming_path(
-                    prompt_text, response_plan, playback, customer_name,
+                    prompt_text,
+                    response_plan,
+                    playback,
+                    customer_name,
                     tts_mode="full_response",
                     cancel_event=cancel_event,
                 )
@@ -952,14 +977,21 @@ class ConversationEngine:
                 full_output_text = dialogue_output.reply_text
                 # buffered_streaming: ClauseSplitter segments the reply; first
                 # clause releases after threshold_ms is buffered, rest stream behind.
-                all_clauses.extend(await self.speak_scripted_text(
-                    full_output_text, playback, response_plan,
-                    tts_mode="full_response",
-                ))
+                all_clauses.extend(
+                    await self.speak_scripted_text(
+                        full_output_text,
+                        playback,
+                        response_plan,
+                        tts_mode="full_response",
+                    )
+                )
         else:
             # buffered_streaming: legacy no-dialogue-response path.
             clauses = await self._run_llm_streaming_path(
-                prompt_text, response_plan, playback, customer_name,
+                prompt_text,
+                response_plan,
+                playback,
+                customer_name,
                 tts_mode="full_response",
                 cancel_event=cancel_event,
             )
@@ -1130,8 +1162,8 @@ class ConversationEngine:
                 mode_enum = TTSMode(tts_mode)
             except ValueError:
                 logger.warning(
-                    "_run_llm_streaming_path: unknown tts_mode=%r — "
-                    "falling back to env default", tts_mode,
+                    "_run_llm_streaming_path: unknown tts_mode=%r — falling back to env default",
+                    tts_mode,
                 )
                 mode_enum = None
             if mode_enum is not None and mode_enum != TTSMode.STREAMING:

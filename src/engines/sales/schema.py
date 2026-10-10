@@ -256,9 +256,7 @@ class SalesState:
             "site_visit_interest": self.site_visit_interest.value if self.site_visit_interest else None,
             "competitor_consideration": self.competitor_consideration,
             "requested_callback_time": (
-                self.requested_callback_time.isoformat()
-                if self.requested_callback_time is not None
-                else None
+                self.requested_callback_time.isoformat() if self.requested_callback_time is not None else None
             ),
             "objections": self.objections,
             "objection_count": self.objection_count,
@@ -278,9 +276,7 @@ class SalesState:
         s.lead_stage = LeadStage(data.get("lead_stage", LeadStage.NEW))
         s.lead_intent = LeadIntent(data.get("lead_intent", LeadIntent.UNKNOWN))
         s.lead_temperature = LeadTemperature(data.get("lead_temperature", LeadTemperature.COLD))
-        s.qualification_status = QualificationStatus(
-            data.get("qualification_status", QualificationStatus.UNSTARTED)
-        )
+        s.qualification_status = QualificationStatus(data.get("qualification_status", QualificationStatus.UNSTARTED))
         s.qualification_score = data.get("qualification_score", 0)
         s.qualification_progress = data.get("qualification_progress", 0.0)
         s.current_objective = SalesObjective(data.get("current_objective", SalesObjective.DISCOVER))

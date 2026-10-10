@@ -195,7 +195,9 @@ class TestRepeatRequest:
 
 
 class TestConversationBuckets:
-    def _in_conversation(self, name: str = "Sunita Sharma") -> tuple[DialogueResponseEngine, ConversationSessionState, CustomerContext]:
+    def _in_conversation(
+        self, name: str = "Sunita Sharma"
+    ) -> tuple[DialogueResponseEngine, ConversationSessionState, CustomerContext]:
         engine = DialogueResponseEngine()
         session = _session()
         session.set_dialogue_state_name("CONVERSATION")
@@ -330,7 +332,9 @@ class TestLLMFallback:
     consecutive unclassified turns, not merely "dialogue_response is
     unwired at construction time"."""
 
-    def _in_conversation(self, name: str = "Sunita Sharma") -> tuple[DialogueResponseEngine, ConversationSessionState, CustomerContext]:
+    def _in_conversation(
+        self, name: str = "Sunita Sharma"
+    ) -> tuple[DialogueResponseEngine, ConversationSessionState, CustomerContext]:
         return TestConversationBuckets()._in_conversation(name=name)
 
     def test_single_unclassified_turn_does_not_trigger_fallback(self) -> None:
@@ -491,8 +495,9 @@ class TestFixDNoRecordBranch:
         # Amount should render — this is the authoritative fact path.
         assert "2,500" in out.reply_text or "detail" in out.reply_text.lower()
         # If detail (clarify) rendered, the key read is broken.
-        assert "detail" not in out.reply_text.lower(), \
+        assert "detail" not in out.reply_text.lower(), (
             f"clarify template rendered despite facts having outstanding_balance_minor: {out.reply_text!r}"
+        )
 
     def test_authoritative_zero_balance_still_renders_normally(self) -> None:
         # Fix D preserves: 0 is legitimate when the customer actually owes 0.
@@ -503,8 +508,9 @@ class TestFixDNoRecordBranch:
         out = engine.generate_reply(session, plan, context, user_text="hmm", lender_name=_LENDER)
 
         # Amount rendered (as "0"), not the clarify template.
-        assert "detail" not in out.reply_text.lower(), \
+        assert "detail" not in out.reply_text.lower(), (
             f"clarify template must not fire for authoritative zero: {out.reply_text!r}"
+        )
 
     def test_no_context_no_facts_never_fabricates_zero_rupees(self) -> None:
         # Fix D-3 lock-in: the previous behavior rendered '₹0 outstanding'

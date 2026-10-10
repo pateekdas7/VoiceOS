@@ -1,4 +1,5 @@
 """NotificationEngine — orchestrates Gmail + WhatsApp notifications for System X."""
+
 from __future__ import annotations
 
 import logging
@@ -72,7 +73,9 @@ class NotificationEngine:
                 sent_ids.append(nid)
 
         if self._whatsapp and self._admin_whatsapp:
-            nid = await self._send_whatsapp(incident.incident_id, "recovery_progress", self._admin_whatsapp, whatsapp_body)
+            nid = await self._send_whatsapp(
+                incident.incident_id, "recovery_progress", self._admin_whatsapp, whatsapp_body
+            )
             if nid:
                 sent_ids.append(nid)
 
@@ -158,7 +161,6 @@ class NotificationEngine:
             self._repo.update_sent(nid, datetime.now(UTC), error=str(exc))
             return None
 
-
     async def notify_approval_required(self, incident: IncidentRecord, reason: str) -> list[str]:
         """Send human-approval-required notifications. Returns list of notification_ids sent."""
         sent_ids: list[str] = []
@@ -172,7 +174,9 @@ class NotificationEngine:
                 sent_ids.append(nid)
 
         if self._whatsapp and self._admin_whatsapp:
-            nid = await self._send_whatsapp(incident.incident_id, "approval_required", self._admin_whatsapp, whatsapp_body)
+            nid = await self._send_whatsapp(
+                incident.incident_id, "approval_required", self._admin_whatsapp, whatsapp_body
+            )
             if nid:
                 sent_ids.append(nid)
 

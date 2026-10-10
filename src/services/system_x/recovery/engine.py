@@ -12,6 +12,7 @@ Service isolation order (least to most destructive):
     4. FAILOVER to standby
     5. NOTIFY_ONCALL / MANUAL_INTERVENTION
 """
+
 from __future__ import annotations
 
 import logging
@@ -116,16 +117,20 @@ class RecoveryEngine:
             if action_type not in policy.approved_actions:
                 _log.info(
                     "incident=%s skipping %s (not in approved actions per policy %s)",
-                    incident_id, action_type, policy.policy_level,
+                    incident_id,
+                    action_type,
+                    policy.policy_level,
                 )
-                self._audit_repo.append(AuditEntry(
-                    entry_id=str(uuid.uuid4()),
-                    incident_id=incident_id,
-                    recorded_at=datetime.now(UTC),
-                    actor="system_x.policy",
-                    action=f"skip_action:{action_type}:{target_service}",
-                    result=f"blocked by policy {policy.policy_level}",
-                ))
+                self._audit_repo.append(
+                    AuditEntry(
+                        entry_id=str(uuid.uuid4()),
+                        incident_id=incident_id,
+                        recorded_at=datetime.now(UTC),
+                        actor="system_x.policy",
+                        action=f"skip_action:{action_type}:{target_service}",
+                        result=f"blocked by policy {policy.policy_level}",
+                    )
+                )
                 continue
 
             action_id = str(uuid.uuid4())
@@ -144,14 +149,16 @@ class RecoveryEngine:
                     result=f"[DRY RUN] would execute {action_type} on {target_service}",
                 )
                 self._incident_repo.create_recovery_action(action)
-                self._audit_repo.append(AuditEntry(
-                    entry_id=str(uuid.uuid4()),
-                    incident_id=incident_id,
-                    recorded_at=now,
-                    actor="system_x.dry_run",
-                    action=f"simulated_action:{action_type}:{target_service}",
-                    result="DRY_RUN",
-                ))
+                self._audit_repo.append(
+                    AuditEntry(
+                        entry_id=str(uuid.uuid4()),
+                        incident_id=incident_id,
+                        recorded_at=now,
+                        actor="system_x.dry_run",
+                        action=f"simulated_action:{action_type}:{target_service}",
+                        result="DRY_RUN",
+                    )
+                )
                 completed.append(action)
                 _log.info("incident=%s DRY_RUN %s on %s", incident_id, action_type, target_service)
                 continue
@@ -166,14 +173,16 @@ class RecoveryEngine:
                 started_at=now,
             )
             self._incident_repo.create_recovery_action(action)
-            self._audit_repo.append(AuditEntry(
-                entry_id=str(uuid.uuid4()),
-                incident_id=incident_id,
-                recorded_at=now,
-                actor="system_x",
-                action=f"start_action:{action_type}:{target_service}",
-                metadata={"policy_level": str(policy.policy_level)},
-            ))
+            self._audit_repo.append(
+                AuditEntry(
+                    entry_id=str(uuid.uuid4()),
+                    incident_id=incident_id,
+                    recorded_at=now,
+                    actor="system_x",
+                    action=f"start_action:{action_type}:{target_service}",
+                    metadata={"policy_level": str(policy.policy_level)},
+                )
+            )
 
             success, result_msg = await execute_action(str(action_type), target_service)
             finished_at = datetime.now(UTC)
@@ -186,14 +195,16 @@ class RecoveryEngine:
                 result=result_msg if success else None,
                 error=result_msg if not success else None,
             )
-            self._audit_repo.append(AuditEntry(
-                entry_id=str(uuid.uuid4()),
-                incident_id=incident_id,
-                recorded_at=finished_at,
-                actor="system_x",
-                action=f"complete_action:{action_type}:{target_service}",
-                result="success" if success else "failed",
-            ))
+            self._audit_repo.append(
+                AuditEntry(
+                    entry_id=str(uuid.uuid4()),
+                    incident_id=incident_id,
+                    recorded_at=finished_at,
+                    actor="system_x",
+                    action=f"complete_action:{action_type}:{target_service}",
+                    result="success" if success else "failed",
+                )
+            )
 
             completed_action = RecoveryAction(
                 action_id=action_id,
@@ -207,7 +218,9 @@ class RecoveryEngine:
                 error=result_msg if not success else None,
             )
             completed.append(completed_action)
-            _log.info("incident=%s action=%s service=%s status=%s", incident_id, action_type, target_service, final_status)
+            _log.info(
+                "incident=%s action=%s service=%s status=%s", incident_id, action_type, target_service, final_status
+            )
 
             if not success:
                 _log.warning("incident=%s recovery halted — action %s failed", incident_id, action_type)
@@ -230,15 +243,17 @@ class RecoveryEngine:
         rolled_back: list[RecoveryAction] = []
         now = datetime.now(UTC)
 
-        self._audit_repo.append(AuditEntry(
-            entry_id=str(uuid.uuid4()),
-            incident_id=incident_id,
-            recorded_at=now,
-            actor="system_x",
-            action="rollback_initiated",
-            rollback_status="in_progress",
-            result=reason,
-        ))
+        self._audit_repo.append(
+            AuditEntry(
+                entry_id=str(uuid.uuid4()),
+                incident_id=incident_id,
+                recorded_at=now,
+                actor="system_x",
+                action="rollback_initiated",
+                rollback_status="in_progress",
+                result=reason,
+            )
+        )
 
         for action in reversed(completed_actions):
             if action.status != RecoveryActionStatus.COMPLETED:
@@ -250,37 +265,43 @@ class RecoveryEngine:
                 rolled_back=True,
                 error=f"Rolled back: {reason}",
             )
-            self._audit_repo.append(AuditEntry(
-                entry_id=str(uuid.uuid4()),
-                incident_id=incident_id,
-                recorded_at=now,
-                actor="system_x",
-                action=f"rollback_action:{action.action_type}:{action.target_service}",
-                rollback_status="completed",
-                result=reason,
-            ))
-            rolled_back.append(RecoveryAction(
-                action_id=action.action_id,
-                incident_id=incident_id,
-                action_type=action.action_type,
-                target_service=action.target_service,
-                status=RecoveryActionStatus.ROLLED_BACK,
-                started_at=action.started_at,
-                completed_at=action.completed_at,
-                rolled_back=True,
-                error=f"Rolled back: {reason}",
-            ))
+            self._audit_repo.append(
+                AuditEntry(
+                    entry_id=str(uuid.uuid4()),
+                    incident_id=incident_id,
+                    recorded_at=now,
+                    actor="system_x",
+                    action=f"rollback_action:{action.action_type}:{action.target_service}",
+                    rollback_status="completed",
+                    result=reason,
+                )
+            )
+            rolled_back.append(
+                RecoveryAction(
+                    action_id=action.action_id,
+                    incident_id=incident_id,
+                    action_type=action.action_type,
+                    target_service=action.target_service,
+                    status=RecoveryActionStatus.ROLLED_BACK,
+                    started_at=action.started_at,
+                    completed_at=action.completed_at,
+                    rolled_back=True,
+                    error=f"Rolled back: {reason}",
+                )
+            )
             _log.info("incident=%s rolled back %s on %s", incident_id, action.action_type, action.target_service)
 
-        self._audit_repo.append(AuditEntry(
-            entry_id=str(uuid.uuid4()),
-            incident_id=incident_id,
-            recorded_at=datetime.now(UTC),
-            actor="system_x",
-            action="rollback_complete",
-            rollback_status="completed",
-            result=f"rolled back {len(rolled_back)} actions",
-        ))
+        self._audit_repo.append(
+            AuditEntry(
+                entry_id=str(uuid.uuid4()),
+                incident_id=incident_id,
+                recorded_at=datetime.now(UTC),
+                actor="system_x",
+                action="rollback_complete",
+                rollback_status="completed",
+                result=f"rolled back {len(rolled_back)} actions",
+            )
+        )
 
         return rolled_back
 

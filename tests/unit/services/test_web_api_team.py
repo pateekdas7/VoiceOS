@@ -152,7 +152,11 @@ def app_client(session_codec: WebSessionCodec, user_repo: _FakeUserRepository) -
 def _tenant_token(codec: WebSessionCodec, role: str, tenant_id: str = TENANT_A, subject: str = "actor-1") -> str:
     permissions = tuple(ROLE_PERMISSIONS.get(AuthzRole(role), frozenset()))
     return codec.encode(
-        actor_kind="tenant", subject=subject, role=role, permissions=permissions, email="actor@tenant.com",
+        actor_kind="tenant",
+        subject=subject,
+        role=role,
+        permissions=permissions,
+        email="actor@tenant.com",
         tenant_id=tenant_id,
     )
 
@@ -161,10 +165,18 @@ class TestListTeam:
     def test_requires_auth(self, app_client: TestClient) -> None:
         assert app_client.get("/team").status_code == 401
 
-    def test_scoped_to_own_tenant(self, app_client: TestClient, session_codec: WebSessionCodec, user_repo: _FakeUserRepository) -> None:
+    def test_scoped_to_own_tenant(
+        self, app_client: TestClient, session_codec: WebSessionCodec, user_repo: _FakeUserRepository
+    ) -> None:
         now = datetime.now(UTC)
-        user_repo.users.append(User(user_id="u-a", tenant_id=TenantId(TENANT_A), email="a@x.com", name="A", created_at=now, updated_at=now))
-        user_repo.users.append(User(user_id="u-b", tenant_id=TenantId("tenant-b"), email="b@x.com", name="B", created_at=now, updated_at=now))
+        user_repo.users.append(
+            User(user_id="u-a", tenant_id=TenantId(TENANT_A), email="a@x.com", name="A", created_at=now, updated_at=now)
+        )
+        user_repo.users.append(
+            User(
+                user_id="u-b", tenant_id=TenantId("tenant-b"), email="b@x.com", name="B", created_at=now, updated_at=now
+            )
+        )
 
         response = app_client.get("/team", cookies={"voiceos_session": _tenant_token(session_codec, "MANAGER")})
         assert response.status_code == 200
@@ -192,7 +204,9 @@ class TestInviteTeamMember:
     def test_admin_can_invite_with_valid_role(
         self, app_client: TestClient, session_codec: WebSessionCodec, user_repo: _FakeUserRepository
     ) -> None:
-        roles_response = app_client.get("/team/roles", cookies={"voiceos_session": _tenant_token(session_codec, "ADMIN")})
+        roles_response = app_client.get(
+            "/team/roles", cookies={"voiceos_session": _tenant_token(session_codec, "ADMIN")}
+        )
         manager_role = next(r for r in roles_response.json() if r["name"] == "MANAGER")
 
         response = app_client.post(
@@ -227,7 +241,14 @@ class TestDeactivateTeamMember:
     ) -> None:
         now = datetime.now(UTC)
         user_repo.users.append(
-            User(user_id="u-target", tenant_id=TenantId(TENANT_A), email="target@x.com", name="Target", created_at=now, updated_at=now)
+            User(
+                user_id="u-target",
+                tenant_id=TenantId(TENANT_A),
+                email="target@x.com",
+                name="Target",
+                created_at=now,
+                updated_at=now,
+            )
         )
         response = app_client.delete(
             "/team/u-target", cookies={"voiceos_session": _tenant_token(session_codec, "SUPERVISOR")}
@@ -242,14 +263,14 @@ class TestDeactivateTeamMember:
         assert response.status_code == 404
 
     def test_agent_cannot_deactivate(self, app_client: TestClient, session_codec: WebSessionCodec) -> None:
-        response = app_client.delete(
-            "/team/u-1", cookies={"voiceos_session": _tenant_token(session_codec, "AGENT")}
-        )
+        response = app_client.delete("/team/u-1", cookies={"voiceos_session": _tenant_token(session_codec, "AGENT")})
         assert response.status_code == 403
 
 
 class TestCrossActorSeparation:
-    def test_platform_actor_cannot_access_team_routes(self, app_client: TestClient, session_codec: WebSessionCodec) -> None:
+    def test_platform_actor_cannot_access_team_routes(
+        self, app_client: TestClient, session_codec: WebSessionCodec
+    ) -> None:
         token = session_codec.encode(
             actor_kind="platform", subject="pu-1", role="PLATFORM_ADMIN", email="a@voiceos.ai", tenant_id=None
         )

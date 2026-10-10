@@ -55,39 +55,51 @@ class PipelineTransitionEngine:
     # Terminal states map to empty frozensets.
     _ALLOWED: dict[LeadStage, frozenset[LeadStage]] = {  # noqa: RUF012
         LeadStage.NEW: frozenset({LeadStage.ENGAGED, LeadStage.DISQUALIFIED}),
-        LeadStage.ENGAGED: frozenset({
-            LeadStage.QUALIFYING,
-            LeadStage.NURTURING,
-            LeadStage.DISQUALIFIED,
-        }),
-        LeadStage.QUALIFYING: frozenset({
-            LeadStage.QUALIFIED,
-            LeadStage.NURTURING,
-            LeadStage.DISQUALIFIED,
-        }),
-        LeadStage.QUALIFIED: frozenset({
-            LeadStage.SITE_VISIT_SCHEDULED,
-            LeadStage.NEGOTIATING,
-            LeadStage.NURTURING,
-            LeadStage.DISQUALIFIED,
-        }),
-        LeadStage.SITE_VISIT_SCHEDULED: frozenset({
-            LeadStage.NEGOTIATING,
-            LeadStage.NURTURING,
-            LeadStage.CONVERTED,
-            LeadStage.DISQUALIFIED,
-        }),
-        LeadStage.NEGOTIATING: frozenset({
-            LeadStage.CONVERTED,
-            LeadStage.NURTURING,
-            LeadStage.DISQUALIFIED,
-        }),
-        LeadStage.NURTURING: frozenset({
-            LeadStage.QUALIFYING,
-            LeadStage.ENGAGED,
-            LeadStage.DISQUALIFIED,
-        }),
-        LeadStage.CONVERTED: frozenset(),   # terminal
+        LeadStage.ENGAGED: frozenset(
+            {
+                LeadStage.QUALIFYING,
+                LeadStage.NURTURING,
+                LeadStage.DISQUALIFIED,
+            }
+        ),
+        LeadStage.QUALIFYING: frozenset(
+            {
+                LeadStage.QUALIFIED,
+                LeadStage.NURTURING,
+                LeadStage.DISQUALIFIED,
+            }
+        ),
+        LeadStage.QUALIFIED: frozenset(
+            {
+                LeadStage.SITE_VISIT_SCHEDULED,
+                LeadStage.NEGOTIATING,
+                LeadStage.NURTURING,
+                LeadStage.DISQUALIFIED,
+            }
+        ),
+        LeadStage.SITE_VISIT_SCHEDULED: frozenset(
+            {
+                LeadStage.NEGOTIATING,
+                LeadStage.NURTURING,
+                LeadStage.CONVERTED,
+                LeadStage.DISQUALIFIED,
+            }
+        ),
+        LeadStage.NEGOTIATING: frozenset(
+            {
+                LeadStage.CONVERTED,
+                LeadStage.NURTURING,
+                LeadStage.DISQUALIFIED,
+            }
+        ),
+        LeadStage.NURTURING: frozenset(
+            {
+                LeadStage.QUALIFYING,
+                LeadStage.ENGAGED,
+                LeadStage.DISQUALIFIED,
+            }
+        ),
+        LeadStage.CONVERTED: frozenset(),  # terminal
         LeadStage.DISQUALIFIED: frozenset(),  # terminal
     }
 

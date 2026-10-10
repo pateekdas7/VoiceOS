@@ -75,6 +75,7 @@ def _update(
 # Budget extraction and update
 # ---------------------------------------------------------------------------
 
+
 def test_budget_extraction_lakh():
     """'80 lakh' extracts to budget_min=8000000 and budget_max=8000000."""
     state = _update(None, "Budget around 80 lakh hai.")
@@ -109,6 +110,7 @@ def test_budget_range_extraction():
 # Location expansion
 # ---------------------------------------------------------------------------
 
+
 def test_location_extraction():
     """'Noida Extension' extracted to location list."""
     state = _update(None, "Main Noida Extension mein 3 BHK dekh raha hoon.")
@@ -130,6 +132,7 @@ def test_location_expansion_adds_new():
 # Property type extraction
 # ---------------------------------------------------------------------------
 
+
 def test_property_type_extraction():
     """'3 BHK' extracted correctly."""
     state = _update(None, "3BHK chahiye.")
@@ -141,6 +144,7 @@ def test_property_type_extraction():
 # ---------------------------------------------------------------------------
 # Purpose extraction
 # ---------------------------------------------------------------------------
+
 
 def test_purpose_investment():
     """'investment ke liye' → PropertyPurpose.INVESTMENT."""
@@ -158,6 +162,7 @@ def test_purpose_self_use():
 # ---------------------------------------------------------------------------
 # Timeline extraction
 # ---------------------------------------------------------------------------
+
 
 def test_timeline_immediate():
     """'abhi' → Timeline.IMMEDIATE."""
@@ -181,6 +186,7 @@ def test_timeline_exploring():
 # Qualification score
 # ---------------------------------------------------------------------------
 
+
 def test_score_increases_with_fields():
     """Score increases as more fields are confirmed."""
     state1 = _update(None, "Main Noida Extension mein dekhna chahta hoon.")
@@ -202,6 +208,7 @@ def test_score_decreases_with_objections():
     state_no_obj.objection_count = 0
     # Re-update score
     from src.engines.sales.state_updater import _compute_qualification_score
+
     score_no_obj, _ = _compute_qualification_score(state_no_obj, DOMAIN)
 
     state_with_obj = _update(None, "Noida mein 3BHK, 80 lakh.")
@@ -215,6 +222,7 @@ def test_score_decreases_with_objections():
 # ---------------------------------------------------------------------------
 # Objection tracking
 # ---------------------------------------------------------------------------
+
 
 def test_dispute_intent_adds_objection():
     """DISPUTE intent adds PRICE_OBJECTION to objections list."""
@@ -240,9 +248,11 @@ def test_objection_not_duplicated():
 # Decision maker extraction
 # ---------------------------------------------------------------------------
 
+
 def test_decision_maker_self():
     """'main akela decide' → DecisionMaker.SELF."""
     from src.engines.sales.schema import DecisionMaker
+
     state = _update(None, "Main akela decide kar sakta hoon.")
     assert state.decision_maker == DecisionMaker.SELF
     assert QuestionField.DECISION_MAKER.value in state.confirmed_fields
@@ -251,6 +261,7 @@ def test_decision_maker_self():
 # ---------------------------------------------------------------------------
 # Financing extraction
 # ---------------------------------------------------------------------------
+
 
 def test_financing_home_loan():
     """'home loan se' → FinancingStatus.HOME_LOAN."""
@@ -262,6 +273,7 @@ def test_financing_home_loan():
 # ---------------------------------------------------------------------------
 # Field tracking
 # ---------------------------------------------------------------------------
+
 
 def test_unanswered_required_fields_decreases():
     """unanswered_required_fields decreases as fields get confirmed."""
@@ -282,7 +294,9 @@ def test_qualification_progress_increases():
     state1 = _update(None, "Noida mein 3BHK.")
     assert state1.qualification_progress > 0.0
 
-    state2 = _update(state1, "Budget 80 lakh, investment ke liye, agle do mahine mein, main khud decide karta hoon, home loan se.")
+    state2 = _update(
+        state1, "Budget 80 lakh, investment ke liye, agle do mahine mein, main khud decide karta hoon, home loan se."
+    )
     assert state2.qualification_progress <= 1.0
     assert state2.qualification_progress > state1.qualification_progress
 
@@ -290,6 +304,7 @@ def test_qualification_progress_increases():
 # ---------------------------------------------------------------------------
 # Lead intent
 # ---------------------------------------------------------------------------
+
 
 def test_promise_to_pay_gives_high_intent():
     """PROMISE_TO_PAY intent → HIGH lead intent."""

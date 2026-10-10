@@ -18,6 +18,7 @@ Optional:
     SYSTEM_X_DRY_RUN        — "true" to enable dry-run mode globally
     SYSTEM_X_POLICY_LEVEL   — Override policy level: LOW|MEDIUM|HIGH|CRITICAL
 """
+
 from __future__ import annotations
 
 import os
@@ -84,9 +85,7 @@ class SystemXService:
         claude_client = SystemXClaudeClient(anthropic_key, evidence_collector, validator)
         recovery_engine = RecoveryEngine(self._incident_repo, self._audit_repo)
         health_verifier = HealthVerifier(gpu_host, prometheus_url)
-        notification_engine = NotificationEngine(
-            self._notification_repo, gmail, whatsapp, admin_email, admin_whatsapp
-        )
+        notification_engine = NotificationEngine(self._notification_repo, gmail, whatsapp, admin_email, admin_whatsapp)
         policy_engine = RecoveryPolicyEngine(dry_run=dry_run)
         guardrails = RecoveryGuardrails()
 

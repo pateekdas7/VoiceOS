@@ -61,11 +61,15 @@ class _FakeBillingService:
             raise ValueError(f"no subscription for {tid}")
         self.invoiced.append(tid)
         # Return a minimal fake invoice
-        return type("Invoice", (), {
-            "invoice_id": f"inv-{tid}",
-            "total_minor": 10000,
-            "currency": "INR",
-        })()
+        return type(
+            "Invoice",
+            (),
+            {
+                "invoice_id": f"inv-{tid}",
+                "total_minor": 10000,
+                "currency": "INR",
+            },
+        )()
 
 
 class TestInvoicingJobLogic:

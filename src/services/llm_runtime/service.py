@@ -71,9 +71,7 @@ class LLMService:
             TokenChunk objects from the adapter.
         """
         tokens = max_tokens or self._config.default_max_tokens
-        return await self._adapter.generate_stream(
-            prompt, response_plan, tokens, cancel_event=cancel_event
-        )
+        return await self._adapter.generate_stream(prompt, response_plan, tokens, cancel_event=cancel_event)
 
     @property
     def adapter(self) -> LLMAdapter:

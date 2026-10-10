@@ -1,4 +1,5 @@
 """IncidentPackageBuilder — assembles a redacted context bundle for Claude analysis."""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -6,9 +7,7 @@ from datetime import UTC, datetime
 from .models import IncidentSeverity, IngestAlert
 
 # Never include these keys in the package
-_REDACTED_KEYS = frozenset(
-    {"password", "secret", "token", "key", "dsn", "credential", "auth", "api_key"}
-)
+_REDACTED_KEYS = frozenset({"password", "secret", "token", "key", "dsn", "credential", "auth", "api_key"})
 
 
 def _redact(d: dict) -> dict:

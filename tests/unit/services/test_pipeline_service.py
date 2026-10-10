@@ -27,6 +27,7 @@ NOW = datetime.now(UTC)
 # Test double
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class _FakePipelineRepository:
     def __init__(self) -> None:
         self._store: dict[str, Pipeline] = {}
@@ -42,10 +43,7 @@ class _FakePipelineRepository:
         return p
 
     def find_by_campaign(self, tenant_id: TenantId, campaign_id: CampaignId) -> tuple[Pipeline, ...]:
-        return tuple(
-            p for p in self._store.values()
-            if p.tenant_id == tenant_id and p.campaign_id == campaign_id
-        )
+        return tuple(p for p in self._store.values() if p.tenant_id == tenant_id and p.campaign_id == campaign_id)
 
     def update_status(self, tenant_id: TenantId, pipeline_id: PipelineId, status: PipelineStatus) -> None:
         p = self._store.get(pipeline_id)
@@ -65,6 +63,7 @@ def _svc(repo: _FakePipelineRepository | None = None) -> PipelineService:
 # ─────────────────────────────────────────────────────────────────────────────
 # CRUD
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestPipelineServiceCreate:
     def test_creates_in_draft(self) -> None:
@@ -110,6 +109,7 @@ class TestPipelineServiceCreate:
 # ─────────────────────────────────────────────────────────────────────────────
 # Lifecycle transitions
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestPipelineLifecycle:
     def _setup(self) -> tuple[PipelineService, Pipeline]:

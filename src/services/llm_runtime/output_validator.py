@@ -28,11 +28,29 @@ logger = logging.getLogger(__name__)
 
 _MIN_OUTPUT_TOKENS = 3
 
-_SHORT_SAFE_ACK: frozenset[str] = frozenset({
-    "हाँ", "हां", "जी", "जी हाँ", "जी हां", "नहीं", "ना",
-    "ठीक", "ठीक है", "अच्छा", "बिल्कुल", "सही",
-    "ok", "okay", "sure", "yes", "no", "right", "correct",
-})
+_SHORT_SAFE_ACK: frozenset[str] = frozenset(
+    {
+        "हाँ",
+        "हां",
+        "जी",
+        "जी हाँ",
+        "जी हां",
+        "नहीं",
+        "ना",
+        "ठीक",
+        "ठीक है",
+        "अच्छा",
+        "बिल्कुल",
+        "सही",
+        "ok",
+        "okay",
+        "sure",
+        "yes",
+        "no",
+        "right",
+        "correct",
+    }
+)
 """Deterministic conversational acknowledgements exempt from the 3-word
 minimum. Every entry is a full-utterance reply a real caller/agent would
 say on its own; arbitrary short LLM output (partial words, hallucinated

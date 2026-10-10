@@ -294,6 +294,7 @@ def test_gate_default_bytes_per_sample_is_two() -> None:
     """Phase E correction: PCM16LE = 2 bytes/sample matches the actual
     wire format ratcheted through AudioOutput.convert."""
     from src.services.tts.startup_buffer_gate import _DEFAULT_BYTES_PER_SAMPLE
+
     assert _DEFAULT_BYTES_PER_SAMPLE == 2
 
 
@@ -309,9 +310,7 @@ async def test_gate_snapshots_generation_at_construction_when_omitted() -> None:
 
 def test_gate_accepts_explicit_generation() -> None:
     p = PlaybackScheduler()
-    g = StartupBufferGate(
-        playback=p, mode=TTSMode.BUFFERED_STREAMING, threshold_ms=400, generation=42
-    )
+    g = StartupBufferGate(playback=p, mode=TTSMode.BUFFERED_STREAMING, threshold_ms=400, generation=42)
     assert g.scope_generation == 42
 
 

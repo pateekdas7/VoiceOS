@@ -361,7 +361,7 @@ async def test_mode_and_buffer_sweep_metrics(mode, threshold_ms) -> None:
     "producer_speed,synth_delay_s,clause_ms",
     [
         ("faster_than_realtime", 0.005, 100),  # produces 100 ms audio in 5 ms
-        ("exactly_realtime", 0.100, 100),      # produces 100 ms audio in 100 ms
+        ("exactly_realtime", 0.100, 100),  # produces 100 ms audio in 100 ms
         ("slower_than_realtime", 0.200, 100),  # produces 100 ms audio in 200 ms
     ],
 )
@@ -428,16 +428,24 @@ async def test_bargein_case1_before_first_tts_audio() -> None:
     pipeline = TrueStreamingPipeline()
     gate = _gate_for(TTSMode.BUFFERED_STREAMING, p, 400)
 
-    task = asyncio.create_task(pipeline.run(
-        token_stream=_token_stream(["hello. "]),
-        response_plan=_response_plan(), tts_service=_tts(adapter),
-        validator=_PermissiveValidator(), playback=p, gate=gate,
-    ))
+    task = asyncio.create_task(
+        pipeline.run(
+            token_stream=_token_stream(["hello. "]),
+            response_plan=_response_plan(),
+            tts_service=_tts(adapter),
+            validator=_PermissiveValidator(),
+            playback=p,
+            gate=gate,
+        )
+    )
     for _ in range(20):
         await asyncio.sleep(0)
     # Barge-in before any audio was produced.
     from src.libs.contracts.streaming import AudioClause as _ACg
-    await p.enqueue(_ACg(audio_data=b"\x00"*8, sample_rate=8000, text="d", clause_index=0, is_final=False, generation=0))
+
+    await p.enqueue(
+        _ACg(audio_data=b"\x00" * 8, sample_rate=8000, text="d", clause_index=0, is_final=False, generation=0)
+    )
     await p.flush()
     p.clear_barge_in()
     release.set()
@@ -465,7 +473,10 @@ async def test_bargein_case2_while_buffering() -> None:
         await gate.enqueue(c)
     assert gate.buffered_clauses == 3
     from src.libs.contracts.streaming import AudioClause as _ACg2
-    await p.enqueue(_ACg2(audio_data=b"\x00"*8, sample_rate=8000, text="d", clause_index=0, is_final=False, generation=0))
+
+    await p.enqueue(
+        _ACg2(audio_data=b"\x00" * 8, sample_rate=8000, text="d", clause_index=0, is_final=False, generation=0)
+    )
     await p.flush()
     p.clear_barge_in()
     await gate.flush_final()
@@ -483,8 +494,11 @@ async def test_bargein_case3_exactly_at_buffer_release() -> None:
     for i in range(2):
         c = AudioClause(
             audio_data=b"\x00" * (100 * _BYTES_PER_MS),
-            sample_rate=_TEST_SR, text=f"c{i}", clause_index=i,
-            is_final=False, generation=0,
+            sample_rate=_TEST_SR,
+            text=f"c{i}",
+            clause_index=i,
+            is_final=False,
+            generation=0,
         )
         await gate.enqueue(c)
     # Now barge-in JUST BEFORE the final enqueue would trip the release.
@@ -492,7 +506,11 @@ async def test_bargein_case3_exactly_at_buffer_release() -> None:
     p.clear_barge_in()
     c_final = AudioClause(
         audio_data=b"\x00" * (100 * _BYTES_PER_MS),
-        sample_rate=_TEST_SR, text="cX", clause_index=2, is_final=True, generation=0,
+        sample_rate=_TEST_SR,
+        text="cX",
+        clause_index=2,
+        is_final=True,
+        generation=0,
     )
     await gate.enqueue(c_final)
     # Because the 3rd enqueue happens after the flush, gate's stale check
@@ -528,6 +546,7 @@ async def test_bargein_case5_between_twilio_frames() -> None:
     """Reproduces the last-mile mid-clause abort (already covered
     exhaustively in Phase E/F but restated here for the Phase G matrix)."""
     from src.services.media_gateway.twilio_ws_entrypoint import CallOrchestrator
+
     p = PlaybackScheduler()
 
     class _FlushAt3:
@@ -550,11 +569,18 @@ async def test_bargein_case5_between_twilio_frames() -> None:
     o._send_ulaw_carry = b""
     clause = AudioClause(
         audio_data=b"\x00" * (24000 * 2 * 200 // 1000),  # 200 ms PCM16LE @ 24 kHz
-        sample_rate=24000, text="x", clause_index=0, is_final=True, generation=0,
+        sample_rate=24000,
+        text="x",
+        clause_index=0,
+        is_final=True,
+        generation=0,
     )
     # Pre-populate scheduler so mid-clause flush() advances generation.
     from src.libs.contracts.streaming import AudioClause as _ACg5
-    await p.enqueue(_ACg5(audio_data=b"\x00"*8, sample_rate=8000, text="d", clause_index=0, is_final=False, generation=0))
+
+    await p.enqueue(
+        _ACg5(audio_data=b"\x00" * 8, sample_rate=8000, text="d", clause_index=0, is_final=False, generation=0)
+    )
     await o._send_clause(clause)
     assert len(adapter.frames) == 3  # stopped after 3rd; no stale frames after.
 
@@ -587,8 +613,10 @@ async def test_bargein_case6_during_second_sentence_tts() -> None:
                     await release2.wait()
                 yield AudioClause(
                     audio_data=b"\x00" * bytes_,
-                    sample_rate=_TEST_SR, text=text,
-                    clause_index=0, is_final=True,
+                    sample_rate=_TEST_SR,
+                    text=text,
+                    clause_index=0,
+                    is_final=True,
                 )
 
             return _gen()
@@ -596,13 +624,15 @@ async def test_bargein_case6_during_second_sentence_tts() -> None:
     adapter = _AdapterFirstImmediateSecondBlocks()
     pipeline = TrueStreamingPipeline()
 
-    task = asyncio.create_task(pipeline.run(
-        token_stream=_token_stream(["one. ", "two. "]),
-        response_plan=_response_plan(),
-        tts_service=_tts(adapter),
-        validator=_PermissiveValidator(),
-        playback=p,
-    ))
+    task = asyncio.create_task(
+        pipeline.run(
+            token_stream=_token_stream(["one. ", "two. "]),
+            response_plan=_response_plan(),
+            tts_service=_tts(adapter),
+            validator=_PermissiveValidator(),
+            playback=p,
+        )
+    )
     # Let sentence 1 complete + get enqueued, then let sentence 2 START
     # synthesis (blocks on release2).
     for _ in range(30):
@@ -629,16 +659,30 @@ async def test_bargein_case7_rapid_multiple_interruptions() -> None:
     p = PlaybackScheduler()
     starting_gen = p.generation
     from src.libs.contracts.streaming import AudioClause as _ACg7
+
     for i in range(5):
         # Enqueue so flush() has something to drain and advances generation.
-        await p.enqueue(_ACg7(audio_data=b"\x00"*8, sample_rate=8000, text="d", clause_index=0, is_final=False, generation=starting_gen + i))
+        await p.enqueue(
+            _ACg7(
+                audio_data=b"\x00" * 8,
+                sample_rate=8000,
+                text="d",
+                clause_index=0,
+                is_final=False,
+                generation=starting_gen + i,
+            )
+        )
         await p.flush()
         p.clear_barge_in()
     assert p.generation == starting_gen + 5
     # A clause stamped with an ancient generation must still be rejected.
     stale = AudioClause(
-        audio_data=b"\x00" * 8, sample_rate=_TEST_SR,
-        text="ghost", clause_index=0, is_final=True, generation=0,
+        audio_data=b"\x00" * 8,
+        sample_rate=_TEST_SR,
+        text="ghost",
+        clause_index=0,
+        is_final=True,
+        generation=0,
     )
     await p.enqueue(stale)
     assert p.depth == 0
@@ -684,7 +728,11 @@ def test_audio_format_no_duplicate_or_lost_frames_across_short_clause() -> None:
     ao = AudioOutput()
     clause = AudioClause(
         audio_data=b"\x00" * (24000 * 2 * 40 // 1000),  # 40 ms PCM16LE @ 24 kHz
-        sample_rate=24000, text="x", clause_index=0, is_final=True, generation=0,
+        sample_rate=24000,
+        text="x",
+        clause_index=0,
+        is_final=True,
+        generation=0,
     )
     pcm_ulaw = ao.convert(clause, fmt="ulaw")
     frames = [pcm_ulaw[i : i + 160] for i in range(0, len(pcm_ulaw), 160)]
@@ -705,14 +753,14 @@ def test_all_pipeline_call_sites_go_through_conversation_engine() -> None:
     single pipeline instance. Buffered streaming is therefore an
     audio-delivery enhancement inside ConversationEngine, not a bypass."""
     import pathlib
+
     src_root = pathlib.Path("src")
     ce_engine = (src_root / "services/conversation_engine/engine.py").read_text()
     # Assert: exactly one construction site.
     assert "TrueStreamingPipeline(ai_governance_service=" in ce_engine
     # Assert: both spoken paths call self._pipeline.run(...).
     assert ce_engine.count("await self._pipeline.run(") >= 2, (
-        "expected both speak_scripted_text() AND _run_llm_streaming_path() "
-        "to call self._pipeline.run(...)"
+        "expected both speak_scripted_text() AND _run_llm_streaming_path() to call self._pipeline.run(...)"
     )
     # Sanity: no other module constructs its own TrueStreamingPipeline.
     for path in src_root.rglob("*.py"):
@@ -721,9 +769,7 @@ def test_all_pipeline_call_sites_go_through_conversation_engine() -> None:
         if path.name == "streaming_pipeline.py":
             continue
         text = path.read_text()
-        assert "TrueStreamingPipeline(" not in text, (
-            f"unexpected extra pipeline construction in {path}"
-        )
+        assert "TrueStreamingPipeline(" not in text, f"unexpected extra pipeline construction in {path}"
 
 
 # ===========================================================================
@@ -782,10 +828,10 @@ async def test_greeting_scripted_and_live_turn_both_use_same_gate_rules(mode, th
 @pytest.mark.asyncio
 async def test_default_mode_unset_takes_streaming_path_no_gate_branch() -> None:
     """With env fully empty:
-      - build_gate_from_env returns None
-      - pipeline runs the pure pass-through path
-      - PlaybackScheduler.generation still enforced
-      - ConversationEngine remains the caller (see STEP 9 static proof)"""
+    - build_gate_from_env returns None
+    - pipeline runs the pure pass-through path
+    - PlaybackScheduler.generation still enforced
+    - ConversationEngine remains the caller (see STEP 9 static proof)"""
     p = PlaybackScheduler()
     assert build_gate_from_env(p, env={}) is None
 
@@ -807,8 +853,12 @@ async def test_default_mode_unset_takes_streaming_path_no_gate_branch() -> None:
     # Sanity: a stale-gen clause is still rejected on this default path.
     await p.flush()
     stale = AudioClause(
-        audio_data=b"\x00" * 8, sample_rate=_TEST_SR,
-        text="ghost", clause_index=0, is_final=True, generation=0,
+        audio_data=b"\x00" * 8,
+        sample_rate=_TEST_SR,
+        text="ghost",
+        clause_index=0,
+        is_final=True,
+        generation=0,
     )
     await p.enqueue(stale)
     # depth was cleared to 0 by flush(); a stale enqueue must not put it back.

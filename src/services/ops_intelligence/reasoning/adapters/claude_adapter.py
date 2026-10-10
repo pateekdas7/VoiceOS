@@ -55,7 +55,9 @@ class SecretFetchPort(Protocol):
 class HTTPPostPort(Protocol):
     """Injected HTTP client port -- production uses httpx, tests inject a fake."""
 
-    async def post_json(self, url: str, *, headers: dict[str, str], json_body: dict[str, object], timeout: float) -> dict[str, object]: ...
+    async def post_json(
+        self, url: str, *, headers: dict[str, str], json_body: dict[str, object], timeout: float
+    ) -> dict[str, object]: ...
 
 
 class HttpxPostAdapter:
@@ -154,7 +156,9 @@ class ClaudeReasoningAdapter:
             recommendation_raw = parsed.get("recommendation")
             recommendation = str(recommendation_raw) if recommendation_raw else None
         except (KeyError, ValueError) as exc:
-            return _empty_result(self._model, self._prompt_version, reason=f"model response missing/invalid field: {exc}")
+            return _empty_result(
+                self._model, self._prompt_version, reason=f"model response missing/invalid field: {exc}"
+            )
 
         return NarrationResult(
             hypotheses=hypotheses,
@@ -168,9 +172,15 @@ class ClaudeReasoningAdapter:
 
 
 def _render_evidence(request: NarrationRequest) -> str:
-    lines = [f"category: {request.category.value}", f"tenant_id: {request.tenant_id or '(platform-wide)'}", "verified_facts:"]
+    lines = [
+        f"category: {request.category.value}",
+        f"tenant_id: {request.tenant_id or '(platform-wide)'}",
+        "verified_facts:",
+    ]
     for fact in request.verified_facts:
-        lines.append(f"  - [{fact.source}] {fact.claim} (query: {fact.query}) = {fact.value} @ {fact.observed_at.isoformat()}")
+        lines.append(
+            f"  - [{fact.source}] {fact.claim} (query: {fact.query}) = {fact.value} @ {fact.observed_at.isoformat()}"
+        )
     if request.candidate_affected_components:
         lines.append(f"candidate_affected_components: {', '.join(request.candidate_affected_components)}")
     return "\n".join(lines)
@@ -188,4 +198,11 @@ def _empty_result(model: str, prompt_version: str, *, reason: str) -> NarrationR
     )
 
 
-__all__ = ["DEFAULT_MODEL", "DEFAULT_SECRET_PATH", "ClaudeReasoningAdapter", "HTTPPostPort", "HttpxPostAdapter", "SecretFetchPort"]
+__all__ = [
+    "DEFAULT_MODEL",
+    "DEFAULT_SECRET_PATH",
+    "ClaudeReasoningAdapter",
+    "HTTPPostPort",
+    "HttpxPostAdapter",
+    "SecretFetchPort",
+]

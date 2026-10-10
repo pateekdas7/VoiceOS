@@ -1,4 +1,5 @@
 """GmailNotifier — sends incident notifications via SMTP/Gmail."""
+
 from __future__ import annotations
 
 import logging

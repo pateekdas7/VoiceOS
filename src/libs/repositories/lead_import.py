@@ -92,9 +92,17 @@ class LeadImportRepository(BaseRepository):
 
     def _hydrate(self, row: tuple[Any, ...]) -> LeadImport:
         (
-            import_id, tenant_id, campaign_id, filename, status,
-            total_rows, valid_rows, invalid_rows, duplicate_rows,
-            created_at, completed_at,
+            import_id,
+            tenant_id,
+            campaign_id,
+            filename,
+            status,
+            total_rows,
+            valid_rows,
+            invalid_rows,
+            duplicate_rows,
+            created_at,
+            completed_at,
         ) = row
         return LeadImport(
             import_id=str(import_id),

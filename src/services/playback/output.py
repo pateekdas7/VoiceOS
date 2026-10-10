@@ -93,6 +93,7 @@ class AudioOutput:
         # int32 headroom and clip to int16 range to avoid audioop.mul
         # silent overflow wrap that would sound like distortion.
         import numpy as _np
+
         if pcm:
             _s = _np.frombuffer(pcm, dtype=_np.int16).astype(_np.int32)
             _s = _np.clip((_s * 5) // 4, -32768, 32767).astype(_np.int16)

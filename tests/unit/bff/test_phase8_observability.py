@@ -40,7 +40,13 @@ class TestStructuredLogger:
 
         class _Log:
             def _write(self, level: str, event: str, fields: dict | None = None) -> None:
-                line = {"timestamp": "2026-01-01T00:00:00Z", "level": level, "service": "voiceos-bff", "event": event, **(fields or {})}
+                line = {
+                    "timestamp": "2026-01-01T00:00:00Z",
+                    "level": level,
+                    "service": "voiceos-bff",
+                    "event": event,
+                    **(fields or {}),
+                }
                 buf.write(_json.dumps(line) + "\n")
 
             def info(self, event: str, fields: dict | None = None) -> None:
@@ -123,7 +129,16 @@ class TestBffAudit:
             try:
                 await c.query(
                     "INSERT INTO audit_log (tenant_id,actor_id,action,resource_type,resource_id,outcome,ip_address,event_payload) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)",
-                    [tenant_id, actor_id, action, resource_type, str(resource_id), outcome, ip, json.dumps({"trace_id": trace_id, **metadata})],
+                    [
+                        tenant_id,
+                        actor_id,
+                        action,
+                        resource_type,
+                        str(resource_id),
+                        outcome,
+                        ip,
+                        json.dumps({"trace_id": trace_id, **metadata}),
+                    ],
                 )
             except Exception as exc:
                 log.warn("audit.write_failed", {"action": action, "error": str(exc)})
@@ -134,7 +149,14 @@ class TestBffAudit:
         req.ip = "1.2.3.4"
         req.traceId = "trace-abc"
 
-        await bff_audit(client, req=req, action="campaign.create", resource_type="campaign", resource_id="camp-1", metadata={"name": "Test"})
+        await bff_audit(
+            client,
+            req=req,
+            action="campaign.create",
+            resource_type="campaign",
+            resource_id="camp-1",
+            metadata={"name": "Test"},
+        )
         return queries, warnings
 
     @pytest.mark.asyncio
@@ -144,7 +166,7 @@ class TestBffAudit:
         sql, params = queries[0]
         assert "INSERT INTO audit_log" in sql
         assert params[0] == "tenant-1"  # tenant_id
-        assert params[1] == "user-1"    # actor_id
+        assert params[1] == "user-1"  # actor_id
         assert params[2] == "campaign.create"
         assert params[3] == "campaign"
         assert params[4] == "camp-1"
@@ -169,6 +191,7 @@ class TestBffAudit:
 
 try:
     from src.services.media_gateway.twilio_ws_entrypoint import SharedCallDependencies
+
     _DEPS_IMPORTABLE = True
 except Exception:
     _DEPS_IMPORTABLE = False
@@ -180,12 +203,14 @@ class TestOTelWiring:
     @_skip_deps
     def test_shared_deps_has_tracer_field(self) -> None:
         import dataclasses
+
         fields = {f.name for f in dataclasses.fields(SharedCallDependencies)}
         assert "tracer" in fields, "SharedCallDependencies must have a 'tracer' field"
 
     @_skip_deps
     def test_tracer_defaults_to_none(self) -> None:
         import dataclasses
+
         f = next(f for f in dataclasses.fields(SharedCallDependencies) if f.name == "tracer")
         assert f.default is None
 
@@ -213,8 +238,9 @@ class TestOTelWiring:
     def test_nullcontext_does_not_raise(self) -> None:
         """Verify the None-tracer path uses contextlib.nullcontext correctly."""
         import contextlib
+
         tracer = None
-        with (tracer if tracer else contextlib.nullcontext()):
+        with tracer if tracer else contextlib.nullcontext():
             pass  # should not raise
 
 
@@ -225,6 +251,7 @@ class TestOTelWiring:
 
 try:
     import src.libs.observability.metrics as _metrics_mod
+
     _METRICS_IMPORTABLE = True
 except Exception:
     _METRICS_IMPORTABLE = False
@@ -365,11 +392,13 @@ class TestVerifyIndexes:
 
     def test_script_syntax(self) -> None:
         import ast
+
         ast.parse(VERIFY_SCRIPT.read_text())
 
     def test_dry_run_exits_zero(self) -> None:
         """--dry-run should exit 0 without connecting to MongoDB."""
         import subprocess
+
         result = subprocess.run(
             [sys.executable, str(VERIFY_SCRIPT), "--dry-run"],
             capture_output=True,
@@ -379,6 +408,7 @@ class TestVerifyIndexes:
 
     def test_dry_run_output_mentions_collections(self) -> None:
         import subprocess
+
         result = subprocess.run(
             [sys.executable, str(VERIFY_SCRIPT), "--dry-run"],
             capture_output=True,
@@ -390,6 +420,7 @@ class TestVerifyIndexes:
 
     def test_mutually_exclusive_flags(self) -> None:
         import subprocess
+
         result = subprocess.run(
             [sys.executable, str(VERIFY_SCRIPT), "--dry-run", "--fix"],
             capture_output=True,
@@ -399,6 +430,7 @@ class TestVerifyIndexes:
 
     def test_no_uri_exits_nonzero(self) -> None:
         import subprocess
+
         env = {k: v for k, v in os.environ.items() if k not in ("MONGO_URI", "MONGODB_URI")}
         result = subprocess.run(
             [sys.executable, str(VERIFY_SCRIPT)],
@@ -411,6 +443,7 @@ class TestVerifyIndexes:
     def _load_verify_mod(self):
         """Load verify_indexes.py as a module, skipping if the loader is unavailable."""
         import importlib.util
+
         spec = importlib.util.spec_from_file_location("_verify_indexes_mod", str(VERIFY_SCRIPT))
         if spec is None or spec.loader is None:
             pytest.skip("importlib cannot load verify_indexes.py on this platform")
