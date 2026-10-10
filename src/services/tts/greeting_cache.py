@@ -57,7 +57,7 @@ class GreetingCache:
 
     @staticmethod
     def _hash_text(text: str) -> str:
-        return hashlib.sha1(text.encode("utf-8")).hexdigest()
+        return hashlib.sha1(text.encode("utf-8"), usedforsecurity=False).hexdigest()  # nosec B324
 
     def _path_for(self, text: str) -> Path:
         return self._cache_dir / f"greeting_{self._hash_text(text)}.ulaw"

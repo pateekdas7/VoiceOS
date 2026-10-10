@@ -83,6 +83,11 @@ class QualityDashboard:
         Returns:
             List of QualityRecord, ordered by recorded_at ascending.
         """
+        # Normalise naive datetimes (assumed UTC) so comparison with aware recorded_at works.
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=UTC)
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=UTC)
         results = [r for r in self._records if r.tenant_id == tenant_id and start <= r.recorded_at <= end]
         results.sort(key=lambda r: r.recorded_at)
         return results

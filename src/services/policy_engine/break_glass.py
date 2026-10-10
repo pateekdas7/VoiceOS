@@ -31,7 +31,7 @@ class BreakGlassDirective:
     reason: str
     requested_by: str
     approvers: tuple[str, ...] = field(default_factory=tuple)
-    requested_at: datetime = field(default_factory=datetime.utcnow)
+    requested_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 class BreakGlassPolicy:

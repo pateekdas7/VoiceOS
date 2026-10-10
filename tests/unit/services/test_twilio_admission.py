@@ -363,7 +363,7 @@ def test_I_wss_without_prior_voice_rejected() -> None:
         with client.websocket_connect("/twilio/media-stream") as ws:
             ws.send_json({"event": "connected"})
             # Fabricated token that was never issued.
-            ws.send_json(_wss_start("CAnoprior", token="thisTokenWasNeverIssued_AAAAAAAAAAAAAAAAAAAAAAAA"))
+            ws.send_json(_wss_start("CAnoprior", token="thisTokenWasNeverIssued_AAAAAAAAAAAAAAAAAAAAAAAA"))  # pragma: allowlist secret
             ws.receive_json()
 
 

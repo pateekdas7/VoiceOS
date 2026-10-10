@@ -23,5 +23,13 @@
   "devDependencies": {
     "jest": "^30.5.1",
     "supertest": "^7.2.2"
+  },
+  "overrides": {
+    "form-data": "^4.0.1",
+    "qs": "^6.13.0",
+    "tough-cookie": "^4.1.3",
+    "uuid": "^9.0.1",
+    "proxy-addr": "^2.0.7",
+    "sprintf-js": "^1.1.3"
   }
 }
