@@ -1,3 +1,4 @@
+from typing import Any
 """
 CRM Sync Service — orchestrates bidirectional sync between VoiceOS and LeadSquared.
 
@@ -361,7 +362,7 @@ class CRMSyncService:
         self,
         tenant_id: str,
         campaign_id: str | None,
-        filters: list[dict],
+        filters: list[dict[str, Any]],
         max_leads: int = 10_000,
     ) -> dict[str, int]:
         """
@@ -431,7 +432,7 @@ class CRMSyncService:
         self,
         tenant_id: str,
         campaign_id: str | None,
-        ls_lead,
+        ls_lead: Any,
     ) -> str:
         """
         Upsert a Customer record from a LS lead, then upsert a Lead record.

@@ -53,13 +53,13 @@ class LeadSquaredConnector:
     def _auth(self) -> dict[str, str]:
         return {"accessKey": self._creds.access_key, "secretKey": self._creds.secret_key}
 
-    async def _get(self, path: str, params: dict | None = None) -> Any:
+    async def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         p = {**(params or {}), **self._auth()}
         resp = await self._client.get(path, params=p)
         self._raise_for_status(resp)
         return resp.json()
 
-    async def _post(self, path: str, body: Any, params: dict | None = None) -> Any:
+    async def _post(self, path: str, body: Any, params: dict[str, Any] | None = None) -> Any:
         p = {**(params or {}), **self._auth()}
         resp = await self._client.post(path, json=body, params=p)
         self._raise_for_status(resp)
@@ -169,7 +169,7 @@ class LeadSquaredConnector:
 
     async def fetch_leads_paginated(
         self,
-        filters: list[dict],
+        filters: list[dict[str, Any]],
         start: int = 0,
         rows: int = 200,
         columns: list[str] | None = None,
@@ -204,10 +204,10 @@ class LeadSquaredConnector:
     async def close(self) -> None:
         await self._client.aclose()
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> "LeadSquaredConnector":
         return self
 
-    async def __aexit__(self, *_):
+    async def __aexit__(self, *_: object) -> None:
         await self.close()
 
 

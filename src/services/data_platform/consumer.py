@@ -40,7 +40,7 @@ class ETLConsumer:
             entry_id,
         )
 
-    async def _ingest_batch(self, entries: list) -> int:
+    async def _ingest_batch(self, entries: list[tuple[Any, Any]]) -> int:
         rows = []
         for entry_id, fields in entries:
             raw = fields.get(b"envelope") or fields.get("envelope")
