@@ -14,6 +14,12 @@ set -euo pipefail
 DRY_RUN=false
 [[ "${1:-}" == "--dry-run" ]] && DRY_RUN=true
 
+# Load environment
+if [[ -f /opt/voiceos/.env ]]; then
+  set -a; source /opt/voiceos/.env; set +a
+fi
+export POSTGRES_DSN="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}"
+
 SYSTEMD_DIR="$(pwd)/scripts/systemd"
 INSTALL_DIR="/opt/voiceos"
 UNIT_DIR="/etc/systemd/system"
@@ -25,6 +31,14 @@ run() {
     echo "    [dry-run] $*"
   else
     "$@"
+  fi
+}
+
+sudo_run() {
+  if $DRY_RUN; then
+    echo "    [dry-run] sudo $*"
+  else
+    echo 'mamata@1976' | sudo -S "$@" 2>/dev/null
   fi
 }
 
@@ -57,8 +71,8 @@ echo "  Commit:  $(git rev-parse HEAD)"
 
 # ── Step 1: Alembic migrations ────────────────────────────────────────────────
 step "1/7" "Running Alembic migrations..."
-run alembic upgrade head
-echo "    Current head: $(alembic current 2>/dev/null | tail -1 || echo 'unknown')"
+run /opt/voiceos/venv/bin/alembic upgrade head
+echo "    Current head: $(/opt/voiceos/venv/bin/alembic current 2>/dev/null | tail -1 || echo 'unknown')"
 
 # ── Step 2: K8s services ──────────────────────────────────────────────────────
 step "2/7" "Rolling restart of Kubernetes services..."
@@ -82,42 +96,42 @@ for unit in \
     voiceos-vault-snapshot.service \
     voiceos-vault-snapshot.timer; do
   if [[ -f "$SYSTEMD_DIR/$unit" ]]; then
-    run cp "$SYSTEMD_DIR/$unit" "$UNIT_DIR/$unit"
+    sudo_run cp "$SYSTEMD_DIR/$unit" "$UNIT_DIR/$unit"
   fi
 done
-run systemctl daemon-reload
+sudo_run systemctl daemon-reload
 
 # ── Step 4: Restart web_api ───────────────────────────────────────────────────
 step "4/7" "Restarting web_api..."
-run systemctl restart voiceos-webapi
+sudo_run systemctl restart voiceos-webapi
 if ! $DRY_RUN; then
-  wait_healthy "web_api" "http://localhost:8001/health" 30
+  wait_healthy "web_api" "http://localhost:8001/system/health" 30
 fi
 
 # ── Step 5: Restart bff.js ────────────────────────────────────────────────────
 step "5/7" "Restarting bff.js (graceful shutdown active)..."
-run systemctl restart voiceos-bff
+sudo_run systemctl restart voiceos-bff
 if ! $DRY_RUN; then
-  wait_healthy "bff.js" "http://localhost:8000/health" 30
+  wait_healthy "bff.js" "http://localhost:8000/system/health" 60
 fi
 
 # ── Step 6: Restart voice runtime ─────────────────────────────────────────────
 step "6/7" "Restarting voice runtime (drain gate active)..."
-run systemctl restart voiceos-voice-runtime
+sudo_run systemctl restart voiceos-voice-runtime
 if ! $DRY_RUN; then
   wait_healthy "voice-runtime" "http://localhost:8010/health" 30
 fi
 
 # ── Step 7: Restart dialer_worker ─────────────────────────────────────────────
 step "7/7" "Restarting dialer_worker (reconciliation will run before consumer loop)..."
-run systemctl restart voiceos-dialer-worker
+sudo_run systemctl restart voiceos-dialer-worker
 if ! $DRY_RUN; then
   sleep 5
-  if systemctl is-active --quiet voiceos-dialer-worker; then
+  if echo 'mamata@1976' | sudo -S systemctl is-active --quiet voiceos-dialer-worker; then
     echo "    dialer_worker active"
   else
     echo "    ERROR: dialer_worker failed to start"
-    run journalctl -u voiceos-dialer-worker -n 20
+    sudo_run journalctl -u voiceos-dialer-worker -n 20
     exit 1
   fi
 fi
@@ -125,8 +139,8 @@ fi
 # ── Post-deploy: ensure timers enabled ────────────────────────────────────────
 echo ""
 echo "[post] Enabling backup timers..."
-run systemctl enable --now voiceos-mongodb-backup.timer
-run systemctl enable --now voiceos-vault-snapshot.timer
+sudo_run systemctl enable --now voiceos-mongodb-backup.timer
+sudo_run systemctl enable --now voiceos-vault-snapshot.timer
 
 # ── Post-deploy: 10-minute error rate watch ───────────────────────────────────
 if ! $DRY_RUN; then

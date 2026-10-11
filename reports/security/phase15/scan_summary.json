@@ -1,0 +1,16 @@
+{
+  "scan_date": "2026-10-10",
+  "gitleaks": {
+    "status": "PASS",
+    "findings": 0
+  },
+  "trufflehog": {
+    "status": "SKIP",
+    "reason": "not installed"
+  },
+  "owasp_zap": {
+    "status": "SKIP",
+    "reason": "Docker image not cached - pull required"
+  },
+  "overall": "PARTIAL_PASS"
+}

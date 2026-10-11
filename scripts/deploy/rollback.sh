@@ -68,7 +68,7 @@ echo "    Current Alembic head: $CURRENT_HEAD"
 COMMITS_AHEAD=$(git log "$RESOLVED_SHA"..HEAD --oneline | wc -l | tr -d ' ')
 if [[ "$COMMITS_AHEAD" -gt 0 ]]; then
   # Check if any rolled-back commits contain migration changes
-  MIGRATION_CHANGES=$(git log "$RESOLVED_SHA"..HEAD --name-only -- 'alembic/versions/*.py' | grep -c '\.py' || true)
+  MIGRATION_CHANGES=$(git log "$RESOLVED_SHA"..HEAD --name-only -- 'scripts/db/migrations/alembic/versions/*.py' | grep -c '\.py' || true)
   if [[ "$MIGRATION_CHANGES" -gt 0 ]]; then
     echo "    WARNING: $MIGRATION_CHANGES migration file(s) will be rolled back"
     echo "    Running: alembic downgrade -1"
@@ -102,7 +102,7 @@ if $EXECUTE; then
   echo ""
   echo "[7] Health checks..."
   sleep 5
-  for svc in "bff.js:http://localhost:8000/health" "web_api:http://localhost:8001/health"; do
+  for svc in "bff.js:http://localhost:8000/system/health" "web_api:http://localhost:8001/system/health"; do
     name="${svc%%:*}"
     url="${svc#*:}"
     if curl -sf "$url" > /dev/null 2>&1; then

@@ -85,7 +85,7 @@ fi
 
 # ── 4. No secrets in logs check ───────────────────────────────────────────────
 echo "[opt] Checking logs for potential secret leaks..."
-if python scripts/check_pii_logs.py 2>/dev/null; then
+if ( source /opt/voiceos/venv/bin/activate && python3 scripts/check_pii_logs.py ) 2>/dev/null; then
   check "PII/secret check in logs" "0"
 else
   check "PII/secret check in logs" "1"

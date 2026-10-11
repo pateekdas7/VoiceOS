@@ -45,7 +45,7 @@ echo ""
 # ── 1. Verify tenant exists ───────────────────────────────────────────────────
 echo "[1] Verifying tenant..."
 if ! $DRY_RUN; then
-  result=$(psql "$DB_DSN" -t -c "SELECT name, status FROM tenants WHERE tenant_id='$TENANT_ID'" 2>/dev/null)
+  result=$(psql "$DB_DSN" -t -c "SELECT display_name, status FROM tenants WHERE tenant_id='$TENANT_ID'" 2>/dev/null)
   if [[ -z "$result" ]]; then
     echo "  ERROR: Tenant $TENANT_ID not found in database"
     exit 1
@@ -56,15 +56,15 @@ fi
 # ── 2. Create a test campaign with simulation mode ────────────────────────────
 echo "[2] Creating simulation campaign (10 leads)..."
 psql_query """
-INSERT INTO campaigns (campaign_id, tenant_id, name, product, status, dialing_mode, created_at)
-VALUES (gen_random_uuid(), '$TENANT_ID', 'Production Pilot', 'collections',
-        'DRAFT', 'SIMULATION', NOW())
+INSERT INTO campaigns (campaign_id, tenant_id, name, status, created_at, updated_at, created_by)
+VALUES (gen_random_uuid(), '$TENANT_ID', 'Production Pilot - Simulation',
+        'DRAFT', NOW(), NOW(), 'system')
 ON CONFLICT DO NOTHING;
 """
 
 # ── 3. Verify bff.js and web_api healthy ──────────────────────────────────────
 echo "[3] Health checks..."
-for svc in "bff.js:http://localhost:8000/health" "web_api:http://localhost:8001/health"; do
+for svc in "bff.js:http://localhost:8000/system/health" "web_api:http://localhost:8001/system/health"; do
   name="${svc%%:*}"
   url="${svc#*:}"
   if $DRY_RUN; then
@@ -79,11 +79,10 @@ done
 
 # ── 4. Enable simulation dialing ──────────────────────────────────────────────
 echo "[4] Activating simulation mode for tenant..."
-psql_query """
-UPDATE tenants
-SET metadata = COALESCE(metadata, '{}'::jsonb) || '{"dialing_enabled": true, "mode": "simulation"}'::jsonb
-WHERE tenant_id = '$TENANT_ID';
-"""
+if ! $DRY_RUN; then
+  PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" "$POSTGRES_DB" -c "UPDATE tenants SET feature_flags = array(SELECT DISTINCT unnest(feature_flags || ARRAY['dialing_enabled', 'simulation_mode'])) WHERE tenant_id = '$TENANT_ID';" 2>/dev/null
+  echo "  feature_flags updated"
+fi
 
 # ── 5. Verify dialer_worker is consuming ──────────────────────────────────────
 echo "[5] Verifying dialer_worker active..."
