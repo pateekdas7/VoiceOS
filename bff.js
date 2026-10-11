@@ -2774,9 +2774,12 @@ app.post('/dialer/callback', async (req, res) => {
     const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN;
     if (twilioAuthToken) {
       const signature = req.headers['x-twilio-signature'] || '';
+      const publicBase = process.env.PUBLIC_BFF_URL || '';
       const proto = req.headers['x-forwarded-proto'] || 'https';
       const host  = req.headers['x-forwarded-host'] || req.headers.host;
-      const fullUrl = `${proto}://${host}${req.originalUrl}`;
+      const fullUrl = publicBase
+        ? `${publicBase}${req.originalUrl}`
+        : `${proto}://${host}${req.originalUrl}`;
       if (!twilio.validateRequest(twilioAuthToken, signature, fullUrl, req.body)) {
         log.warn('dialer.callback.invalid_signature', { ip: req.ip });
         return res.sendStatus(403);

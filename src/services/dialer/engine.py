@@ -213,12 +213,9 @@ class DialerEngine:
             _CALL_SID_TTL,
             f"{tenant_id}|{campaign_id}|{lead_id}",
         )
+        _cs = call_sid
         await asyncio.to_thread(
-            self._lead_repo.update_queue_status,
-            tenant_id,
-            lead_id,
-            _queue_status("QUEUED"),
-            call_sid,
+            lambda: self._lead_repo.update_queue_status(tenant_id, lead_id, _queue_status("QUEUED"), call_sid=_cs)
         )
         _m.record_call_placed(tenant_id, campaign_id)
         _log.info("call placed call_sid=%s lead_id=%s phone=%s", call_sid, lead_id, phone)
