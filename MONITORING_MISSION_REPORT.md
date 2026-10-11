@@ -48,6 +48,33 @@ reliable, secure, observable, and tested.
 
 **Overall: 13/14 phases complete, 1 n/a (G1).**
 
+### Phase 11-14 — "Production-grade testified" deployment (2026-10-11, host JentiV16)
+
+**Final result:** `jentiv16_production_testify.sh` → **39 PASS / 0 FAIL** on
+the fresh node after full deploy + three remediation rounds.
+
+| Area                                     | Verdict |
+|------------------------------------------|---------|
+| 4 systemd app services (scheduler/webapi/bff/dialer-worker) | ✅ all active |
+| 6 docker monitoring containers (prom/am/grafana/loki/promtail/jaeger) | ✅ all running |
+| 13 HTTP health endpoints on correct paths | ✅ all 200 |
+| Prometheus alert rules loaded             | ✅ 78 rules (≥ 40) |
+| Prometheus scrapes the scheduler on :9108 | ✅ target health = up |
+| Scheduler-exported metrics                | ✅ 3/3 found |
+| Grafana API + provisioning                | ✅ 16 dashboards loaded |
+| Alertmanager routing                      | ✅ POST + store synthetic alert |
+| Loki push + query_range                   | ✅ 204 push, 200 query |
+| 3 CI gates (drift / runbook / dashboards) | ✅ all pass |
+| pytest monitoring suite                   | ✅ 31 passed |
+| CHANGELOG + 45 runbooks on disk           | ✅ |
+
+**Deploy scripts committed:**
+- `scripts/deploy/jentiv16_full_deploy.sh` — 10-phase apt→git→pip→npm→postgres→compose→systemd→health→tests pipeline.
+- `scripts/deploy/jentiv16_fix_round1.sh` — permissions on 0600 config files, grafana→3001, webapi uvicorn `--factory create_app`, bff/dialer-worker systemd units.
+- `scripts/deploy/jentiv16_fix_round2.sh` — dev-friendly env-free alertmanager.yml, missing env vars (`GOOGLE_CLIENT_ID`, `BFF_PUBLIC_URL`, `FRONTEND_BASE_URL`, `PORT=3000`).
+- `scripts/deploy/jentiv16_fix_round3.sh` — Prometheus scrape jobs for the local scheduler + webapi + bff + stack, Grafana datasource/dashboard provisioning, Redis install, 6th rule file registered.
+- `scripts/deploy/jentiv16_production_testify.sh` — the 12-section acceptance battery that produces the 39/0 scorecard above.
+
 ### Phase 11-12 deployment summary (2026-10-11, host JentiV16)
 
 - Full repo rsync to `/opt/voiceos/app` (41 MB, exit 0)
