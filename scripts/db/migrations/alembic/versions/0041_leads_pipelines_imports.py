@@ -38,7 +38,7 @@ def upgrade() -> None:
     """)
 
     op.execute("""
-        CREATE TABLE pipelines (
+        CREATE TABLE IF NOT EXISTS pipelines (
             pipeline_id      UUID        NOT NULL DEFAULT gen_random_uuid(),
             tenant_id        UUID        NOT NULL,
             campaign_id      UUID        NOT NULL,
@@ -68,13 +68,13 @@ def upgrade() -> None:
     """)
 
     op.execute("""
-        CREATE INDEX idx_pipelines_campaign_id ON pipelines (tenant_id, campaign_id);
-        CREATE INDEX idx_pipelines_status      ON pipelines (tenant_id, status);
-        CREATE INDEX idx_pipelines_tenant_id   ON pipelines (tenant_id);
+        CREATE INDEX IF NOT EXISTS idx_pipelines_campaign_id ON pipelines (tenant_id, campaign_id);
+        CREATE INDEX IF NOT EXISTS idx_pipelines_status      ON pipelines (tenant_id, status);
+        CREATE INDEX IF NOT EXISTS idx_pipelines_tenant_id   ON pipelines (tenant_id);
     """)
 
     op.execute("""
-        CREATE TABLE pipeline_stages (
+        CREATE TABLE IF NOT EXISTS pipeline_stages (
             stage_id    UUID        NOT NULL DEFAULT gen_random_uuid(),
             pipeline_id UUID        NOT NULL,
             tenant_id   UUID        NOT NULL,
@@ -98,13 +98,13 @@ def upgrade() -> None:
     """)
 
     op.execute("""
-        CREATE UNIQUE INDEX uq_pipeline_stage_name ON pipeline_stages (pipeline_id, lower(name));
-        CREATE INDEX idx_pipeline_stages_scope
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_pipeline_stage_name ON pipeline_stages (pipeline_id, lower(name));
+        CREATE INDEX IF NOT EXISTS idx_pipeline_stages_scope
             ON pipeline_stages (tenant_id, campaign_id, pipeline_id, position);
     """)
 
     op.execute("""
-        CREATE TABLE lead_imports (
+        CREATE TABLE IF NOT EXISTS lead_imports (
             import_id          UUID        NOT NULL DEFAULT gen_random_uuid(),
             tenant_id          UUID        NOT NULL,
             campaign_id        UUID        NOT NULL,
@@ -137,12 +137,12 @@ def upgrade() -> None:
     """)
 
     op.execute("""
-        CREATE INDEX idx_lead_imports_campaign_id ON lead_imports (tenant_id, campaign_id);
-        CREATE INDEX idx_lead_imports_tenant_id   ON lead_imports (tenant_id);
+        CREATE INDEX IF NOT EXISTS idx_lead_imports_campaign_id ON lead_imports (tenant_id, campaign_id);
+        CREATE INDEX IF NOT EXISTS idx_lead_imports_tenant_id   ON lead_imports (tenant_id);
     """)
 
     op.execute(r"""
-        CREATE TABLE leads (
+        CREATE TABLE IF NOT EXISTS leads (
             lead_id           UUID        NOT NULL DEFAULT gen_random_uuid(),
             campaign_id       UUID        NOT NULL,
             pipeline_id       UUID,
@@ -192,24 +192,27 @@ def upgrade() -> None:
     """)
 
     op.execute("""
-        CREATE INDEX idx_leads_queue
+        CREATE INDEX IF NOT EXISTS idx_leads_queue
             ON leads (tenant_id, queue_status, status);
-        CREATE INDEX idx_leads_pipeline_stage
+        CREATE INDEX IF NOT EXISTS idx_leads_pipeline_stage
             ON leads (tenant_id, pipeline_id, pipeline_stage_id);
-        CREATE INDEX idx_leads_crm_customer
+        CREATE INDEX IF NOT EXISTS idx_leads_crm_customer
             ON leads (tenant_id, crm_customer_id) WHERE crm_customer_id IS NOT NULL;
-        CREATE INDEX leads_priority_idx
+        CREATE INDEX IF NOT EXISTS leads_priority_idx
             ON leads (priority, created_at) WHERE queue_status = 'PENDING';
     """)
 
     op.execute("""
-        ALTER TABLE pipelines
-            ADD CONSTRAINT pipelines_current_lead_id_fkey
-                FOREIGN KEY (current_lead_id) REFERENCES leads(lead_id) ON DELETE SET NULL
+        DO $$ BEGIN
+            ALTER TABLE pipelines
+                ADD CONSTRAINT pipelines_current_lead_id_fkey
+                    FOREIGN KEY (current_lead_id) REFERENCES leads(lead_id) ON DELETE SET NULL;
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$;
     """)
 
     op.execute("""
-        CREATE TABLE pipeline_distribution_rules (
+        CREATE TABLE IF NOT EXISTS pipeline_distribution_rules (
             rule_id     UUID        NOT NULL DEFAULT gen_random_uuid(),
             tenant_id   UUID        NOT NULL,
             campaign_id UUID        NOT NULL,
@@ -238,11 +241,11 @@ def upgrade() -> None:
     """)
 
     op.execute("""
-        CREATE INDEX idx_pdr_campaign ON pipeline_distribution_rules (tenant_id, campaign_id, is_active);
+        CREATE INDEX IF NOT EXISTS idx_pdr_campaign ON pipeline_distribution_rules (tenant_id, campaign_id, is_active);
     """)
 
     op.execute("""
-        CREATE TABLE lead_enrichment_log (
+        CREATE TABLE IF NOT EXISTS lead_enrichment_log (
             log_id     UUID        NOT NULL DEFAULT gen_random_uuid(),
             lead_id    UUID,
             lead_phone TEXT        NOT NULL DEFAULT '',
@@ -256,13 +259,13 @@ def upgrade() -> None:
     """)
 
     op.execute("""
-        CREATE INDEX idx_enrich_log_lead    ON lead_enrichment_log (lead_id);
-        CREATE INDEX idx_enrich_log_phone   ON lead_enrichment_log (lead_phone);
-        CREATE INDEX idx_enrich_log_created ON lead_enrichment_log (created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_enrich_log_lead    ON lead_enrichment_log (lead_id);
+        CREATE INDEX IF NOT EXISTS idx_enrich_log_phone   ON lead_enrichment_log (lead_phone);
+        CREATE INDEX IF NOT EXISTS idx_enrich_log_created ON lead_enrichment_log (created_at DESC);
     """)
 
     op.execute("""
-        CREATE TABLE lead_execution_events (
+        CREATE TABLE IF NOT EXISTS lead_execution_events (
             event_id    UUID        NOT NULL DEFAULT gen_random_uuid(),
             lead_id     UUID,
             campaign_id UUID        NOT NULL,
@@ -288,16 +291,16 @@ def upgrade() -> None:
     """)
 
     op.execute("""
-        CREATE INDEX idx_lead_events_campaign
+        CREATE INDEX IF NOT EXISTS idx_lead_events_campaign
             ON lead_execution_events (tenant_id, campaign_id, created_at DESC);
-        CREATE INDEX idx_lead_events_lead_id
+        CREATE INDEX IF NOT EXISTS idx_lead_events_lead_id
             ON lead_execution_events (lead_id);
-        CREATE INDEX idx_lead_events_pipeline
+        CREATE INDEX IF NOT EXISTS idx_lead_events_pipeline
             ON lead_execution_events (pipeline_id, created_at DESC);
     """)
 
     op.execute("""
-        CREATE TABLE campaign_qualification_rules (
+        CREATE TABLE IF NOT EXISTS campaign_qualification_rules (
             rule_id     UUID        NOT NULL DEFAULT gen_random_uuid(),
             tenant_id   UUID        NOT NULL,
             campaign_id UUID        NOT NULL,
@@ -319,7 +322,7 @@ def upgrade() -> None:
     """)
 
     op.execute("""
-        CREATE INDEX idx_cqr_campaign ON campaign_qualification_rules (tenant_id, campaign_id);
+        CREATE INDEX IF NOT EXISTS idx_cqr_campaign ON campaign_qualification_rules (tenant_id, campaign_id);
     """)
 
 
