@@ -45,7 +45,6 @@ from starlette.responses import JSONResponse, RedirectResponse, Response, Stream
 from starlette.routing import Route
 
 from src.libs.audit.event import AuditEvent
-from src.libs.observability.metrics import BackgroundHandlerRegistry
 from src.libs.contracts.models.billing import SubscriptionTier
 from src.libs.contracts.models.campaign import AudienceCriteria, RetryPolicy
 from src.libs.contracts.models.customer import Customer, CustomerContact
@@ -54,6 +53,7 @@ from src.libs.contracts.models.tenant import IsolationProfile
 from src.libs.contracts.models.user import OrgScope
 from src.libs.contracts.primitives import CampaignId, CustomerId, TenantId
 from src.libs.health.aggregator import HealthAggregator
+from src.libs.observability.metrics import BackgroundHandlerRegistry
 from src.libs.repositories.admin_audit_view import AdminAuditViewRepository
 from src.libs.repositories.audit import AuditRepository
 from src.libs.repositories.campaign_audience import CampaignAudienceRepository
