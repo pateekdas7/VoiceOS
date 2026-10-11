@@ -22,6 +22,53 @@ global:
 # infra/terraform/variables.tf's service_names comment for the same
 # resolved count discrepancy).
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Background CronJobs (Phase 6 — Background Job Wiring)
+# All three jobs share the same image (voiceos/jobs) and namespace.
+# Each job uses Guaranteed QoS (requests == limits) and Forbid concurrency.
+# ---------------------------------------------------------------------------
+jobs:
+  image:
+    repository: voiceos/jobs
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  namespace: voiceos-platform
+  # Low priority so CronJobs don't preempt serving pods under node pressure.
+  priorityClassName: low-priority
+
+  # 6a: HITL SLA Enforcer — polls every 60 s for breached SLA deadlines.
+  slaEnforcer:
+    enabled: true
+    schedule: "*/1 * * * *"
+    activeDeadlineSeconds: 120
+    backoffLimit: 2
+    resources:
+      cpu: "100m"
+      memory: "128Mi"
+
+  # 6b: Daily Analytics Aggregation — aggregates previous day at 00:30 UTC.
+  dailyAggregation:
+    enabled: true
+    schedule: "30 0 * * *"
+    activeDeadlineSeconds: 600
+    backoffLimit: 1
+    resources:
+      cpu: "250m"
+      memory: "256Mi"
+
+  # 6c: Monthly Invoice Generation — generates invoices on the 1st at 01:00 UTC.
+  monthlyInvoicing:
+    enabled: true
+    schedule: "0 1 1 * *"
+    activeDeadlineSeconds: 1800
+    backoffLimit: 1
+    resources:
+      cpu: "200m"
+      memory: "256Mi"
+
+# ---------------------------------------------------------------------------
+# SaaSOpsService
+# ---------------------------------------------------------------------------
 saasOps:
   enabled: true
   namespace: voiceos-platform

@@ -1,0 +1,16 @@
+[Unit]
+Description=VoiceOS Frontend (Next.js)
+After=network.target voiceos-bff.service voiceos-webapi.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/voiceos/app/frontend
+EnvironmentFile=/opt/voiceos/.env
+ExecStart=/usr/bin/node_modules/.bin/next start --port 3000
+Restart=always
+RestartSec=10
+StandardOutput=append:/opt/voiceos/logs/frontend.log
+StandardError=append:/opt/voiceos/logs/frontend.log
+
+[Install]
+WantedBy=multi-user.target

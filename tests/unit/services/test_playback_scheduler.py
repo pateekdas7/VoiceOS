@@ -54,6 +54,25 @@ class TestPlaybackScheduler:
         assert scheduler.depth == 0
         assert scheduler.barge_in_event.is_set()
 
+    async def test_dequeue_nowait_returns_none_on_empty_queue(self) -> None:
+        scheduler = PlaybackScheduler()
+
+        assert scheduler.dequeue_nowait() is None
+
+    async def test_dequeue_nowait_pops_fifo_without_blocking(self) -> None:
+        scheduler = PlaybackScheduler()
+        await scheduler.enqueue(_make_clause(0))
+        await scheduler.enqueue(_make_clause(1))
+
+        first = scheduler.dequeue_nowait()
+        second = scheduler.dequeue_nowait()
+        third = scheduler.dequeue_nowait()
+
+        assert first is not None and first.clause_index == 0
+        assert second is not None and second.clause_index == 1
+        assert third is None
+        assert scheduler.depth == 0
+
     async def test_get_clauses_non_destructive(self) -> None:
         scheduler = PlaybackScheduler()
         await scheduler.enqueue(_make_clause(0))
@@ -70,6 +89,30 @@ class TestPlaybackScheduler:
         await scheduler.enqueue(_make_clause(1))
         with pytest.raises(InvariantViolationError):
             await scheduler.enqueue(_make_clause(2))
+
+    async def test_set_protected_suppresses_barge_in(self) -> None:
+        """set_protected(gen) then flush() must NOT advance the generation."""
+        scheduler = PlaybackScheduler()
+        gen_before = scheduler.generation
+        await scheduler.enqueue(_make_clause(0))
+        scheduler.set_protected(gen_before)
+        flushed = await scheduler.flush()
+        assert flushed == []
+        assert scheduler.generation == gen_before
+        # Queue was NOT drained -- protection preserves in-flight playback.
+        assert scheduler.depth == 1
+
+    async def test_clear_protection_restores_barge_in(self) -> None:
+        """clear_protection() then flush() advances generation normally."""
+        scheduler = PlaybackScheduler()
+        gen_before = scheduler.generation
+        await scheduler.enqueue(_make_clause(0))
+        scheduler.set_protected(gen_before)
+        scheduler.clear_protection()
+        flushed = await scheduler.flush()
+        assert len(flushed) == 1
+        assert scheduler.generation == gen_before + 1
+        assert scheduler.depth == 0
 
 
 class TestAudioOutput:

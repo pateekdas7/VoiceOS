@@ -20,11 +20,25 @@ class CampaignResultRepositoryPort(Protocol):
     def find_by_campaign(self, tenant_id: TenantId, campaign_id: CampaignId) -> tuple[CampaignResult, ...]: ...
 
 
+class FulfilledPTPRepositoryPort(Protocol):
+    """Port for summing fulfilled PTP amounts scoped to a campaign."""
+
+    def sum_fulfilled_amount(self, tenant_id: TenantId, campaign_id: CampaignId) -> int:
+        """SELECT SUM(promised_amount_minor) FROM promises_to_pay WHERE tenant_id=$1
+        AND campaign_id=$2 AND status='FULFILLED'."""
+        ...
+
+
 class CampaignAnalytics:
     """Per-campaign conversion/contactability/PTP-rate analytics."""
 
-    def __init__(self, repository: CampaignResultRepositoryPort) -> None:
+    def __init__(
+        self,
+        repository: CampaignResultRepositoryPort,
+        ptp_repository: FulfilledPTPRepositoryPort | None = None,
+    ) -> None:
         self._repository = repository
+        self._ptp = ptp_repository
 
     def results_for(self, tenant_id: TenantId, campaign_id: CampaignId) -> tuple[CampaignResult, ...]:
         return self._repository.find_by_campaign(tenant_id, campaign_id)
@@ -50,12 +64,10 @@ class CampaignAnalytics:
         return self.ptp_rate(tenant_id, campaign_id)
 
     def amount_collected_minor(self, tenant_id: TenantId, campaign_id: CampaignId) -> int:
-        """Placeholder for settlement/PTP-amount aggregation (not yet joined to
-        ``campaign_results`` — Sprint-024 scope only wires the outcome/PTP-count
-        signals that ``campaign_results`` itself carries; amount aggregation
-        requires a join to ``promises_to_pay``/``settlements`` left for a
-        follow-up sprint)."""
-        return 0
+        """Sum of promised_amount_minor for FULFILLED promises_to_pay in this campaign."""
+        if self._ptp is None:
+            return 0
+        return self._ptp.sum_fulfilled_amount(tenant_id, campaign_id)
 
 
-__all__ = ["CampaignAnalytics", "CampaignResultRepositoryPort"]
+__all__ = ["CampaignAnalytics", "CampaignResultRepositoryPort", "FulfilledPTPRepositoryPort"]

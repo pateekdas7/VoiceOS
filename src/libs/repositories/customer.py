@@ -190,6 +190,17 @@ class CustomerRepository(BaseRepository):
             return None
         return self._hydrate(row, tenant_id)
 
+    def list_for_tenant(self, tenant_id: TenantId, limit: int = 200) -> tuple[Customer, ...]:
+        """All customers for ``tenant_id``, most recently created first (CRM list view)."""
+        rows = self._tenant_select(
+            _TABLE,
+            _CUSTOMER_COLUMNS,
+            tenant_id,
+            order_by="created_at DESC",
+            limit=limit,
+        )
+        return tuple(self._hydrate(row, tenant_id) for row in rows)
+
     def find_by_phone(self, tenant_id: TenantId, phone: str) -> Customer | None:
         """Find a customer by a contact phone/email value.
 

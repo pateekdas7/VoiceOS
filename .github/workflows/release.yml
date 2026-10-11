@@ -70,6 +70,31 @@ jobs:
           cache-to: type=gha,mode=max
 
   # ---------------------------------------------------------------------------
+  # Step 2.5 — Deploy frontend to Vercel (production on tag push)
+  # ---------------------------------------------------------------------------
+  frontend-deploy:
+    name: Frontend Deploy (Vercel)
+    runs-on: ubuntu-latest
+    needs: ci-gate
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+
+      - name: Deploy to Vercel (production)
+        run: |
+          vercel pull --yes --environment=production \
+            --token=${{ secrets.VERCEL_TOKEN }}
+          vercel build --prod \
+            --token=${{ secrets.VERCEL_TOKEN }}
+          vercel deploy --prebuilt --prod \
+            --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+  # ---------------------------------------------------------------------------
   # Step 3 — Helm chart lint + template + manifest schema validation (Sprint-026)
   # ---------------------------------------------------------------------------
   helm-lint:
@@ -175,7 +200,7 @@ jobs:
   notify:
     name: Release Notification
     runs-on: ubuntu-latest
-    needs: [docker-build-push, helm-lint, terraform-plan]
+    needs: [docker-build-push, frontend-deploy, helm-lint, terraform-plan]
     if: always()
     steps:
       - name: Release summary
@@ -186,4 +211,5 @@ jobs:
           echo "Docker    : ${{ needs.docker-build-push.result }}"
           echo "Helm      : ${{ needs.helm-lint.result }}"
           echo "Terraform : ${{ needs.terraform-plan.result }}"
+          echo "Frontend  : ${{ needs.frontend-deploy.result }}"
           echo "Workflow  : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

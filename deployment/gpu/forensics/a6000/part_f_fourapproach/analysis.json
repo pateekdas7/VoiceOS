@@ -1,0 +1,1803 @@
+{
+ "baseline_state": {
+  "B00": {
+   "text": "Aapke bank se transfer complete ho gaya hai.",
+   "sub": "drift",
+   "seeds_male": 1,
+   "n_seeds": 3,
+   "dominant": "female-kavya",
+   "counts": {
+    "female-kavya": 2,
+    "male-drift": 1
+   },
+   "med_by_seed": {
+    "42": 203.38983050847457,
+    "43": 229.6703296703297,
+    "44": 206.01237842617155
+   },
+   "p05_by_seed": {
+    "42": 156.86274509803923,
+    "43": 149.06832298136646,
+    "44": 80.41570335121546
+   }
+  },
+  "B01": {
+   "text": "Sir kya aap UPI se payment karna prefer karenge?",
+   "sub": "drift",
+   "seeds_male": 2,
+   "n_seeds": 3,
+   "dominant": "male-drift",
+   "counts": {
+    "male-drift": 2,
+    "female-kavya": 1
+   },
+   "med_by_seed": {
+    "42": 150.0,
+    "43": 237.62376237623764,
+    "44": 129.03598785951726
+   },
+   "p05_by_seed": {
+    "42": 94.2658638258453,
+    "43": 174.29387496033004,
+    "44": 89.88764044943821
+   }
+  },
+  "B02": {
+   "text": "Total outstanding 24,568 rupees hai as of aaj.",
+   "sub": "drift",
+   "seeds_male": 3,
+   "n_seeds": 3,
+   "dominant": "male-drift",
+   "counts": {
+    "male-drift": 3
+   },
+   "med_by_seed": {
+    "42": 129.72972972972974,
+    "43": 120.0,
+    "44": 136.36363636363637
+   },
+   "p05_by_seed": {
+    "42": 94.86166007905139,
+    "43": 94.48818897637796,
+    "44": 95.23809523809524
+   }
+  },
+  "B03": {
+   "text": "Principal amount 15,000 rupees baaki hai.",
+   "sub": "drift",
+   "seeds_male": 0,
+   "n_seeds": 3,
+   "dominant": "female-kavya",
+   "counts": {
+    "female-kavya": 3
+   },
+   "med_by_seed": {
+    "42": 252.6315789473684,
+    "43": 230.76923076923077,
+    "44": 226.41509433962264
+   },
+   "p05_by_seed": {
+    "42": 186.04651162790697,
+    "43": 175.57544757033247,
+    "44": 167.77389277389278
+   }
+  },
+  "B04": {
+   "text": "Namaste sir, main Kavya bol rahi hoon Rajat Finance se.",
+   "sub": "stable",
+   "seeds_male": 0,
+   "n_seeds": 3,
+   "dominant": "female-kavya",
+   "counts": {
+    "female-kavya": 3
+   },
+   "med_by_seed": {
+    "42": 200.0,
+    "43": 196.72131147540983,
+    "44": 208.7114337568058
+   },
+   "p05_by_seed": {
+    "42": 163.26530612244898,
+    "43": 169.01408450704224,
+    "44": 157.53353973168214
+   }
+  },
+  "B05": {
+   "text": "Namaste madam, main Kavya bol rahi hoon.",
+   "sub": "stable",
+   "seeds_male": 0,
+   "n_seeds": 3,
+   "dominant": "female-kavya",
+   "counts": {
+    "female-kavya": 3
+   },
+   "med_by_seed": {
+    "42": 186.04651162790697,
+    "43": 186.04651162790697,
+    "44": 186.04651162790697
+   },
+   "p05_by_seed": {
+    "42": 165.51724137931035,
+    "43": 169.3137548696434,
+    "44": 171.42857142857142
+   }
+  },
+  "B06": {
+   "text": "Namaste sir aap kaise hain aaj?",
+   "sub": "stable",
+   "seeds_male": 0,
+   "n_seeds": 3,
+   "dominant": "female-kavya",
+   "counts": {
+    "female-kavya": 3
+   },
+   "med_by_seed": {
+    "42": 255.31914893617022,
+    "43": 203.38983050847457,
+    "44": 296.2962962962963
+   },
+   "p05_by_seed": {
+    "42": 237.62376237623764,
+    "43": 165.6896551724138,
+    "44": 252.6315789473684
+   }
+  },
+  "B07": {
+   "text": "Dhanyavaad sir, aapke response ka intezaar rahega.",
+   "sub": "stable",
+   "seeds_male": 1,
+   "n_seeds": 3,
+   "dominant": "female-kavya",
+   "counts": {
+    "female-kavya": 2,
+    "male-drift": 1
+   },
+   "med_by_seed": {
+    "42": 226.41509433962264,
+    "43": 217.1990171990172,
+    "44": 111.62790697674419
+   },
+   "p05_by_seed": {
+    "42": 161.96250867854664,
+    "43": 162.65857694429124,
+    "44": 92.52153252153252
+   }
+  },
+  "B08": {
+   "text": "Dhanyavaad, aapki payment successful ho gayi hai.",
+   "sub": "stable",
+   "seeds_male": 3,
+   "n_seeds": 3,
+   "dominant": "male-drift",
+   "counts": {
+    "male-drift": 3
+   },
+   "med_by_seed": {
+    "42": 123.71134020618557,
+    "43": 131.86813186813185,
+    "44": 124.6761658031088
+   },
+   "p05_by_seed": {
+    "42": 94.56317960254968,
+    "43": 98.68447682655332,
+    "44": 93.22358575276863
+   }
+  },
+  "B09": {
+   "text": "Sir, aapke account par 12,500 rupees ka outstanding hai.",
+   "sub": "stable",
+   "seeds_male": 0,
+   "n_seeds": 3,
+   "dominant": "female-kavya",
+   "counts": {
+    "female-kavya": 3
+   },
+   "med_by_seed": {
+    "42": 214.28571428571428,
+    "43": 212.38938053097345,
+    "44": 196.72131147540983
+   },
+   "p05_by_seed": {
+    "42": 166.66666666666666,
+    "43": 165.51724137931035,
+    "44": 161.0738255033557
+   }
+  },
+  "B10": {
+   "text": "Aap kaise hain?",
+   "sub": "stable",
+   "seeds_male": 0,
+   "n_seeds": 3,
+   "dominant": "female-kavya",
+   "counts": {
+    "female-kavya": 3
+   },
+   "med_by_seed": {
+    "42": 324.3243243243243,
+    "43": 287.4354561101549,
+    "44": 186.04651162790697
+   },
+   "p05_by_seed": {
+    "42": 261.7738465216352,
+    "43": 176.47058823529412,
+    "44": 160.43835616438355
+   }
+  },
+  "B11": {
+   "text": "Kripa karke wait karein.",
+   "sub": "stable",
+   "seeds_male": 0,
+   "n_seeds": 3,
+   "dominant": "female-kavya",
+   "counts": {
+    "female-kavya": 3
+   },
+   "med_by_seed": {
+    "42": 244.89795918367346,
+    "43": 188.98809523809524,
+    "44": 205.12820512820514
+   },
+   "p05_by_seed": {
+    "42": 180.45112781954887,
+    "43": 158.36528407110492,
+    "44": 164.32764886776627
+   }
+  },
+  "B12": {
+   "text": "Good morning, this is a test message.",
+   "sub": "english",
+   "seeds_male": 3,
+   "n_seeds": 3,
+   "dominant": "male-drift",
+   "counts": {
+    "male-drift": 3
+   },
+   "med_by_seed": {
+    "42": 124.35233160621762,
+    "43": 154.83870967741936,
+    "44": 145.4598883338231
+   },
+   "p05_by_seed": {
+    "42": 114.182540399025,
+    "43": 115.94202898550725,
+    "44": 97.681566553747
+   }
+  },
+  "B13": {
+   "text": "Your account balance is one thousand five hundred rupees.",
+   "sub": "english",
+   "seeds_male": 0,
+   "n_seeds": 3,
+   "dominant": "female-kavya",
+   "counts": {
+    "female-kavya": 3
+   },
+   "med_by_seed": {
+    "42": 242.42424242424244,
+    "43": 252.6315789473684,
+    "44": 214.28571428571428
+   },
+   "p05_by_seed": {
+    "42": 192.30967741935484,
+    "43": 175.7088446889547,
+    "44": 189.42992125984253
+   }
+  },
+  "B14": {
+   "text": "9,876,543 rupees ka total amount pending hai.",
+   "sub": "num_heavy",
+   "seeds_male": 3,
+   "n_seeds": 3,
+   "dominant": "male-drift",
+   "counts": {
+    "male-drift": 3
+   },
+   "med_by_seed": {
+    "42": 129.03225806451613,
+    "43": 129.03225806451613,
+    "44": 126.3157894736842
+   },
+   "p05_by_seed": {
+    "42": 97.20549027352622,
+    "43": 93.75861751999264,
+    "44": 91.8838290778275
+   }
+  },
+  "B15": {
+   "text": "Total outstanding hai as of aaj.",
+   "sub": "min_pair",
+   "seeds_male": 3,
+   "n_seeds": 3,
+   "dominant": "male-drift",
+   "counts": {
+    "male-drift": 3
+   },
+   "med_by_seed": {
+    "42": 171.42857142857142,
+    "43": 108.5972850678733,
+    "44": 111.11111111111111
+   },
+   "p05_by_seed": {
+    "42": 100.50279526036356,
+    "43": 99.5850622406639,
+    "44": 98.36065573770492
+   }
+  },
+  "B16": {
+   "text": "Total outstanding amount check kar rahi hoon.",
+   "sub": "min_pair",
+   "seeds_male": 0,
+   "n_seeds": 3,
+   "dominant": "female-kavya",
+   "counts": {
+    "ambiguous": 1,
+    "female-kavya": 2
+   },
+   "med_by_seed": {
+    "42": 172.66187050359713,
+    "43": 193.5483870967742,
+    "44": 220.1834862385321
+   },
+   "p05_by_seed": {
+    "42": 156.86274509803923,
+    "43": 169.01408450704224,
+    "44": 170.2127659574468
+   }
+  },
+  "B17": {
+   "text": "Aapke bank se successful transaction huwa hai.",
+   "sub": "min_pair",
+   "seeds_male": 0,
+   "n_seeds": 3,
+   "dominant": "female-kavya",
+   "counts": {
+    "female-kavya": 3
+   },
+   "med_by_seed": {
+    "42": 210.52631578947367,
+    "43": 226.41509433962264,
+    "44": 201.68067226890756
+   },
+   "p05_by_seed": {
+    "42": 166.66666666666666,
+    "43": 168.55144855144854,
+    "44": 163.26530612244898
+   }
+  },
+  "B18": {
+   "text": "Bank transfer ho chuka hai sir, dhyaan dijiye.",
+   "sub": "min_pair",
+   "seeds_male": 0,
+   "n_seeds": 3,
+   "dominant": "female-kavya",
+   "counts": {
+    "female-kavya": 3
+   },
+   "med_by_seed": {
+    "42": 200.84033613445376,
+    "43": 250.0,
+    "44": 230.76923076923077
+   },
+   "p05_by_seed": {
+    "42": 162.16216216216216,
+    "43": 166.66666666666666,
+    "44": 158.94039735099338
+   }
+  }
+ },
+ "approach_summaries": {
+  "DEVANAGARI": {
+   "name": "DEVANAGARI",
+   "n_rows": 20,
+   "n_seeds_total": 60,
+   "n_male_seeds": 13,
+   "male_rate": 0.21666666666666667,
+   "improvements_male_to_female": 18,
+   "regressions_female_to_male": 5,
+   "same_female": 29,
+   "same_male": 8,
+   "net_male_change": -7.0,
+   "per_key": {
+    "D00_mixed": {
+     "baseline_key": "B00",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 2,
+      "male-drift": 1
+     },
+     "text": "\u0906\u092a\u0915\u0947 bank \u0938\u0947 transfer complete \u0939\u094b \u0917\u092f\u093e \u0939\u0948\u0964"
+    },
+    "D00_full": {
+     "baseline_key": "B00",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "\u0906\u092a\u0915\u0947 \u092c\u0948\u0902\u0915 \u0938\u0947 \u0939\u0938\u094d\u0924\u093e\u0902\u0924\u0930\u0923 \u092a\u0942\u0930\u094d\u0923 \u0939\u094b \u0917\u092f\u093e \u0939\u0948\u0964"
+    },
+    "D01_mixed": {
+     "baseline_key": "B01",
+     "baseline_dominant": "male-drift",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "\u0938\u0930 \u0915\u094d\u092f\u093e \u0906\u092a UPI \u0938\u0947 payment \u0915\u0930\u0928\u093e prefer \u0915\u0930\u0947\u0902\u0917\u0947?"
+    },
+    "D01_full": {
+     "baseline_key": "B01",
+     "baseline_dominant": "male-drift",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "\u0938\u0930 \u0915\u094d\u092f\u093e \u0906\u092a \u092f\u0942 \u092a\u0940 \u0906\u0908 \u0938\u0947 \u092d\u0941\u0917\u0924\u093e\u0928 \u0915\u0930\u0928\u093e \u092a\u0938\u0902\u0926 \u0915\u0930\u0947\u0902\u0917\u0947?"
+    },
+    "D02_mixed": {
+     "baseline_key": "B02",
+     "baseline_dominant": "male-drift",
+     "variant_dominant": "male-drift",
+     "variant_counts": {
+      "male-drift": 3
+     },
+     "text": "\u0915\u0941\u0932 outstanding 24,568 \u0930\u0941\u092a\u092f\u0947 \u0939\u0948 as of \u0906\u091c\u0964"
+    },
+    "D02_full": {
+     "baseline_key": "B02",
+     "baseline_dominant": "male-drift",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "\u0915\u0941\u0932 \u092c\u0915\u093e\u092f\u093e \u091a\u094c\u092c\u0940\u0938 \u0939\u091c\u093c\u093e\u0930 \u092a\u093e\u0901\u091a \u0938\u094c \u0905\u0921\u093c\u0938\u0920 \u0930\u0941\u092a\u092f\u0947 \u0939\u0948 \u0906\u091c \u0924\u0915\u0964"
+    },
+    "D03_mixed": {
+     "baseline_key": "B03",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "Principal amount 15,000 \u0930\u0941\u092a\u092f\u0947 \u092c\u093e\u0915\u0940 \u0939\u0948\u0964"
+    },
+    "D03_full": {
+     "baseline_key": "B03",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "\u092e\u0942\u0932 \u0930\u093e\u0936\u093f \u092a\u0902\u0926\u094d\u0930\u0939 \u0939\u091c\u093c\u093e\u0930 \u0930\u0941\u092a\u092f\u0947 \u092c\u093e\u0915\u0940 \u0939\u0948\u0964"
+    },
+    "D04_mixed": {
+     "baseline_key": "B04",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "\u0928\u092e\u0938\u094d\u0924\u0947 \u0938\u0930, \u092e\u0948\u0902 Kavya \u092c\u094b\u0932 \u0930\u0939\u0940 \u0939\u0942\u0901 Rajat Finance \u0938\u0947\u0964"
+    },
+    "D04_full": {
+     "baseline_key": "B04",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "\u0928\u092e\u0938\u094d\u0924\u0947 \u0938\u0930, \u092e\u0948\u0902 \u0915\u093e\u0935\u094d\u092f\u093e \u092c\u094b\u0932 \u0930\u0939\u0940 \u0939\u0942\u0901 \u0930\u091c\u0924 \u092b\u093c\u093e\u0907\u0928\u0947\u0902\u0938 \u0938\u0947\u0964"
+    },
+    "D07_mixed": {
+     "baseline_key": "B07",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "male-drift",
+     "variant_counts": {
+      "male-drift": 3
+     },
+     "text": "\u0927\u0928\u094d\u092f\u0935\u093e\u0926 \u0938\u0930, \u0906\u092a\u0915\u0947 response \u0915\u093e \u0907\u0902\u0924\u091c\u093c\u093e\u0930 \u0930\u0939\u0947\u0917\u093e\u0964"
+    },
+    "D07_full": {
+     "baseline_key": "B07",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 2,
+      "male-drift": 1
+     },
+     "text": "\u0927\u0928\u094d\u092f\u0935\u093e\u0926 \u0938\u0930, \u0906\u092a\u0915\u0947 \u0909\u0924\u094d\u0924\u0930 \u0915\u093e \u0907\u0902\u0924\u091c\u093c\u093e\u0930 \u0930\u0939\u0947\u0917\u093e\u0964"
+    },
+    "D08_mixed": {
+     "baseline_key": "B08",
+     "baseline_dominant": "male-drift",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 2,
+      "male-drift": 1
+     },
+     "text": "\u0927\u0928\u094d\u092f\u0935\u093e\u0926, \u0906\u092a\u0915\u0940 payment successful \u0939\u094b \u0917\u092f\u0940 \u0939\u0948\u0964"
+    },
+    "D08_full": {
+     "baseline_key": "B08",
+     "baseline_dominant": "male-drift",
+     "variant_dominant": "male-drift",
+     "variant_counts": {
+      "female-kavya": 1,
+      "male-drift": 2
+     },
+     "text": "\u0927\u0928\u094d\u092f\u0935\u093e\u0926, \u0906\u092a\u0915\u093e \u092d\u0941\u0917\u0924\u093e\u0928 \u0938\u092b\u0932 \u0939\u094b \u0917\u092f\u093e \u0939\u0948\u0964"
+    },
+    "D09_mixed": {
+     "baseline_key": "B09",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "\u0938\u0930, \u0906\u092a\u0915\u0947 account \u092a\u0930 12,500 \u0930\u0941\u092a\u092f\u0947 \u0915\u093e outstanding \u0939\u0948\u0964"
+    },
+    "D09_full": {
+     "baseline_key": "B09",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 2,
+      "male-drift": 1
+     },
+     "text": "\u0938\u0930, \u0906\u092a\u0915\u0947 \u0916\u093e\u0924\u0947 \u092a\u0930 \u092c\u093e\u0930\u0939 \u0939\u091c\u093c\u093e\u0930 \u092a\u093e\u0901\u091a \u0938\u094c \u0930\u0941\u092a\u092f\u0947 \u0915\u093e \u092c\u0915\u093e\u092f\u093e \u0939\u0948\u0964"
+    },
+    "D11_mixed": {
+     "baseline_key": "B11",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "\u0915\u0943\u092a\u092f\u093e wait \u0915\u0930\u0947\u0902\u0964"
+    },
+    "D11_full": {
+     "baseline_key": "B11",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 2,
+      "male-drift": 1
+     },
+     "text": "\u0915\u0943\u092a\u092f\u093e \u092a\u094d\u0930\u0924\u0940\u0915\u094d\u0937\u093e \u0915\u0930\u0947\u0902\u0964"
+    },
+    "D14_mixed": {
+     "baseline_key": "B14",
+     "baseline_dominant": "male-drift",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "9,876,543 \u0930\u0941\u092a\u092f\u0947 \u0915\u093e total amount pending \u0939\u0948\u0964"
+    },
+    "D14_full": {
+     "baseline_key": "B14",
+     "baseline_dominant": "male-drift",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "\u0905\u0920\u093e\u0928\u0935\u0947 \u0932\u093e\u0916 \u091b\u093f\u0939\u0924\u094d\u0924\u0930 \u0939\u091c\u093c\u093e\u0930 \u092a\u093e\u0901\u091a \u0938\u094c \u0924\u0948\u0902\u0924\u093e\u0932\u0940\u0938 \u0930\u0941\u092a\u092f\u0947 \u0915\u0941\u0932 \u092c\u0915\u093e\u092f\u093e \u0939\u0948\u0964"
+    }
+   },
+   "stable_to_male_examples": [
+    [
+     "D00_mixed",
+     43,
+     "\u0906\u092a\u0915\u0947 bank \u0938\u0947 transfer complete \u0939\u094b \u0917\u092f\u093e \u0939\u0948\u0964"
+    ],
+    [
+     "D07_mixed",
+     42,
+     "\u0927\u0928\u094d\u092f\u0935\u093e\u0926 \u0938\u0930, \u0906\u092a\u0915\u0947 response \u0915\u093e \u0907\u0902\u0924\u091c\u093c\u093e\u0930 \u0930\u0939\u0947\u0917\u093e\u0964"
+    ],
+    [
+     "D07_mixed",
+     43,
+     "\u0927\u0928\u094d\u092f\u0935\u093e\u0926 \u0938\u0930, \u0906\u092a\u0915\u0947 response \u0915\u093e \u0907\u0902\u0924\u091c\u093c\u093e\u0930 \u0930\u0939\u0947\u0917\u093e\u0964"
+    ],
+    [
+     "D09_full",
+     44,
+     "\u0938\u0930, \u0906\u092a\u0915\u0947 \u0916\u093e\u0924\u0947 \u092a\u0930 \u092c\u093e\u0930\u0939 \u0939\u091c\u093c\u093e\u0930 \u092a\u093e\u0901\u091a \u0938\u094c \u0930\u0941\u092a\u092f\u0947 \u0915\u093e \u092c\u0915\u093e\u092f\u093e"
+    ],
+    [
+     "D11_full",
+     43,
+     "\u0915\u0943\u092a\u092f\u093e \u092a\u094d\u0930\u0924\u0940\u0915\u094d\u0937\u093e \u0915\u0930\u0947\u0902\u0964"
+    ]
+   ],
+   "male_to_female_examples": [
+    [
+     "D00_mixed",
+     44,
+     "\u0906\u092a\u0915\u0947 bank \u0938\u0947 transfer complete \u0939\u094b \u0917\u092f\u093e \u0939\u0948\u0964"
+    ],
+    [
+     "D00_full",
+     44,
+     "\u0906\u092a\u0915\u0947 \u092c\u0948\u0902\u0915 \u0938\u0947 \u0939\u0938\u094d\u0924\u093e\u0902\u0924\u0930\u0923 \u092a\u0942\u0930\u094d\u0923 \u0939\u094b \u0917\u092f\u093e \u0939\u0948\u0964"
+    ],
+    [
+     "D01_mixed",
+     42,
+     "\u0938\u0930 \u0915\u094d\u092f\u093e \u0906\u092a UPI \u0938\u0947 payment \u0915\u0930\u0928\u093e prefer \u0915\u0930\u0947\u0902\u0917\u0947?"
+    ],
+    [
+     "D01_mixed",
+     44,
+     "\u0938\u0930 \u0915\u094d\u092f\u093e \u0906\u092a UPI \u0938\u0947 payment \u0915\u0930\u0928\u093e prefer \u0915\u0930\u0947\u0902\u0917\u0947?"
+    ],
+    [
+     "D01_full",
+     42,
+     "\u0938\u0930 \u0915\u094d\u092f\u093e \u0906\u092a \u092f\u0942 \u092a\u0940 \u0906\u0908 \u0938\u0947 \u092d\u0941\u0917\u0924\u093e\u0928 \u0915\u0930\u0928\u093e \u092a\u0938\u0902\u0926 \u0915\u0930\u0947\u0902\u0917\u0947?"
+    ],
+    [
+     "D01_full",
+     44,
+     "\u0938\u0930 \u0915\u094d\u092f\u093e \u0906\u092a \u092f\u0942 \u092a\u0940 \u0906\u0908 \u0938\u0947 \u092d\u0941\u0917\u0924\u093e\u0928 \u0915\u0930\u0928\u093e \u092a\u0938\u0902\u0926 \u0915\u0930\u0947\u0902\u0917\u0947?"
+    ],
+    [
+     "D02_full",
+     42,
+     "\u0915\u0941\u0932 \u092c\u0915\u093e\u092f\u093e \u091a\u094c\u092c\u0940\u0938 \u0939\u091c\u093c\u093e\u0930 \u092a\u093e\u0901\u091a \u0938\u094c \u0905\u0921\u093c\u0938\u0920 \u0930\u0941\u092a\u092f\u0947 \u0939\u0948 \u0906\u091c \u0924\u0915"
+    ],
+    [
+     "D02_full",
+     43,
+     "\u0915\u0941\u0932 \u092c\u0915\u093e\u092f\u093e \u091a\u094c\u092c\u0940\u0938 \u0939\u091c\u093c\u093e\u0930 \u092a\u093e\u0901\u091a \u0938\u094c \u0905\u0921\u093c\u0938\u0920 \u0930\u0941\u092a\u092f\u0947 \u0939\u0948 \u0906\u091c \u0924\u0915"
+    ],
+    [
+     "D02_full",
+     44,
+     "\u0915\u0941\u0932 \u092c\u0915\u093e\u092f\u093e \u091a\u094c\u092c\u0940\u0938 \u0939\u091c\u093c\u093e\u0930 \u092a\u093e\u0901\u091a \u0938\u094c \u0905\u0921\u093c\u0938\u0920 \u0930\u0941\u092a\u092f\u0947 \u0939\u0948 \u0906\u091c \u0924\u0915"
+    ],
+    [
+     "D08_mixed",
+     42,
+     "\u0927\u0928\u094d\u092f\u0935\u093e\u0926, \u0906\u092a\u0915\u0940 payment successful \u0939\u094b \u0917\u092f\u0940 \u0939\u0948\u0964"
+    ]
+   ],
+   "median_latency_s": 7.830524682998657
+  },
+  "DEVANAGARI_MIXED": {
+   "name": "DEVA_MIXED",
+   "n_rows": 10,
+   "n_seeds_total": 30,
+   "n_male_seeds": 8,
+   "male_rate": 0.26666666666666666,
+   "improvements_male_to_female": 8,
+   "regressions_female_to_male": 3,
+   "same_female": 14,
+   "same_male": 5,
+   "net_male_change": -2.0,
+   "per_key": {
+    "D00_mixed": {
+     "baseline_key": "B00",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 2,
+      "male-drift": 1
+     },
+     "text": "\u0906\u092a\u0915\u0947 bank \u0938\u0947 transfer complete \u0939\u094b \u0917\u092f\u093e \u0939\u0948\u0964"
+    },
+    "D01_mixed": {
+     "baseline_key": "B01",
+     "baseline_dominant": "male-drift",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "\u0938\u0930 \u0915\u094d\u092f\u093e \u0906\u092a UPI \u0938\u0947 payment \u0915\u0930\u0928\u093e prefer \u0915\u0930\u0947\u0902\u0917\u0947?"
+    },
+    "D02_mixed": {
+     "baseline_key": "B02",
+     "baseline_dominant": "male-drift",
+     "variant_dominant": "male-drift",
+     "variant_counts": {
+      "male-drift": 3
+     },
+     "text": "\u0915\u0941\u0932 outstanding 24,568 \u0930\u0941\u092a\u092f\u0947 \u0939\u0948 as of \u0906\u091c\u0964"
+    },
+    "D03_mixed": {
+     "baseline_key": "B03",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "Principal amount 15,000 \u0930\u0941\u092a\u092f\u0947 \u092c\u093e\u0915\u0940 \u0939\u0948\u0964"
+    },
+    "D04_mixed": {
+     "baseline_key": "B04",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "\u0928\u092e\u0938\u094d\u0924\u0947 \u0938\u0930, \u092e\u0948\u0902 Kavya \u092c\u094b\u0932 \u0930\u0939\u0940 \u0939\u0942\u0901 Rajat Finance \u0938\u0947\u0964"
+    },
+    "D07_mixed": {
+     "baseline_key": "B07",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "male-drift",
+     "variant_counts": {
+      "male-drift": 3
+     },
+     "text": "\u0927\u0928\u094d\u092f\u0935\u093e\u0926 \u0938\u0930, \u0906\u092a\u0915\u0947 response \u0915\u093e \u0907\u0902\u0924\u091c\u093c\u093e\u0930 \u0930\u0939\u0947\u0917\u093e\u0964"
+    },
+    "D08_mixed": {
+     "baseline_key": "B08",
+     "baseline_dominant": "male-drift",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 2,
+      "male-drift": 1
+     },
+     "text": "\u0927\u0928\u094d\u092f\u0935\u093e\u0926, \u0906\u092a\u0915\u0940 payment successful \u0939\u094b \u0917\u092f\u0940 \u0939\u0948\u0964"
+    },
+    "D09_mixed": {
+     "baseline_key": "B09",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "\u0938\u0930, \u0906\u092a\u0915\u0947 account \u092a\u0930 12,500 \u0930\u0941\u092a\u092f\u0947 \u0915\u093e outstanding \u0939\u0948\u0964"
+    },
+    "D11_mixed": {
+     "baseline_key": "B11",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "\u0915\u0943\u092a\u092f\u093e wait \u0915\u0930\u0947\u0902\u0964"
+    },
+    "D14_mixed": {
+     "baseline_key": "B14",
+     "baseline_dominant": "male-drift",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "9,876,543 \u0930\u0941\u092a\u092f\u0947 \u0915\u093e total amount pending \u0939\u0948\u0964"
+    }
+   },
+   "stable_to_male_examples": [
+    [
+     "D00_mixed",
+     43,
+     "\u0906\u092a\u0915\u0947 bank \u0938\u0947 transfer complete \u0939\u094b \u0917\u092f\u093e \u0939\u0948\u0964"
+    ],
+    [
+     "D07_mixed",
+     42,
+     "\u0927\u0928\u094d\u092f\u0935\u093e\u0926 \u0938\u0930, \u0906\u092a\u0915\u0947 response \u0915\u093e \u0907\u0902\u0924\u091c\u093c\u093e\u0930 \u0930\u0939\u0947\u0917\u093e\u0964"
+    ],
+    [
+     "D07_mixed",
+     43,
+     "\u0927\u0928\u094d\u092f\u0935\u093e\u0926 \u0938\u0930, \u0906\u092a\u0915\u0947 response \u0915\u093e \u0907\u0902\u0924\u091c\u093c\u093e\u0930 \u0930\u0939\u0947\u0917\u093e\u0964"
+    ]
+   ],
+   "male_to_female_examples": [
+    [
+     "D00_mixed",
+     44,
+     "\u0906\u092a\u0915\u0947 bank \u0938\u0947 transfer complete \u0939\u094b \u0917\u092f\u093e \u0939\u0948\u0964"
+    ],
+    [
+     "D01_mixed",
+     42,
+     "\u0938\u0930 \u0915\u094d\u092f\u093e \u0906\u092a UPI \u0938\u0947 payment \u0915\u0930\u0928\u093e prefer \u0915\u0930\u0947\u0902\u0917\u0947?"
+    ],
+    [
+     "D01_mixed",
+     44,
+     "\u0938\u0930 \u0915\u094d\u092f\u093e \u0906\u092a UPI \u0938\u0947 payment \u0915\u0930\u0928\u093e prefer \u0915\u0930\u0947\u0902\u0917\u0947?"
+    ],
+    [
+     "D08_mixed",
+     42,
+     "\u0927\u0928\u094d\u092f\u0935\u093e\u0926, \u0906\u092a\u0915\u0940 payment successful \u0939\u094b \u0917\u092f\u0940 \u0939\u0948\u0964"
+    ],
+    [
+     "D08_mixed",
+     43,
+     "\u0927\u0928\u094d\u092f\u0935\u093e\u0926, \u0906\u092a\u0915\u0940 payment successful \u0939\u094b \u0917\u092f\u0940 \u0939\u0948\u0964"
+    ],
+    [
+     "D14_mixed",
+     42,
+     "9,876,543 \u0930\u0941\u092a\u092f\u0947 \u0915\u093e total amount pending \u0939\u0948\u0964"
+    ],
+    [
+     "D14_mixed",
+     43,
+     "9,876,543 \u0930\u0941\u092a\u092f\u0947 \u0915\u093e total amount pending \u0939\u0948\u0964"
+    ],
+    [
+     "D14_mixed",
+     44,
+     "9,876,543 \u0930\u0941\u092a\u092f\u0947 \u0915\u093e total amount pending \u0939\u0948\u0964"
+    ]
+   ],
+   "median_latency_s": 7.8335325717926025
+  },
+  "DEVANAGARI_FULL": {
+   "name": "DEVA_FULL",
+   "n_rows": 10,
+   "n_seeds_total": 30,
+   "n_male_seeds": 5,
+   "male_rate": 0.16666666666666666,
+   "improvements_male_to_female": 10,
+   "regressions_female_to_male": 2,
+   "same_female": 15,
+   "same_male": 3,
+   "net_male_change": -5.0,
+   "per_key": {
+    "D00_full": {
+     "baseline_key": "B00",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "\u0906\u092a\u0915\u0947 \u092c\u0948\u0902\u0915 \u0938\u0947 \u0939\u0938\u094d\u0924\u093e\u0902\u0924\u0930\u0923 \u092a\u0942\u0930\u094d\u0923 \u0939\u094b \u0917\u092f\u093e \u0939\u0948\u0964"
+    },
+    "D01_full": {
+     "baseline_key": "B01",
+     "baseline_dominant": "male-drift",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "\u0938\u0930 \u0915\u094d\u092f\u093e \u0906\u092a \u092f\u0942 \u092a\u0940 \u0906\u0908 \u0938\u0947 \u092d\u0941\u0917\u0924\u093e\u0928 \u0915\u0930\u0928\u093e \u092a\u0938\u0902\u0926 \u0915\u0930\u0947\u0902\u0917\u0947?"
+    },
+    "D02_full": {
+     "baseline_key": "B02",
+     "baseline_dominant": "male-drift",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "\u0915\u0941\u0932 \u092c\u0915\u093e\u092f\u093e \u091a\u094c\u092c\u0940\u0938 \u0939\u091c\u093c\u093e\u0930 \u092a\u093e\u0901\u091a \u0938\u094c \u0905\u0921\u093c\u0938\u0920 \u0930\u0941\u092a\u092f\u0947 \u0939\u0948 \u0906\u091c \u0924\u0915\u0964"
+    },
+    "D03_full": {
+     "baseline_key": "B03",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "\u092e\u0942\u0932 \u0930\u093e\u0936\u093f \u092a\u0902\u0926\u094d\u0930\u0939 \u0939\u091c\u093c\u093e\u0930 \u0930\u0941\u092a\u092f\u0947 \u092c\u093e\u0915\u0940 \u0939\u0948\u0964"
+    },
+    "D04_full": {
+     "baseline_key": "B04",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "\u0928\u092e\u0938\u094d\u0924\u0947 \u0938\u0930, \u092e\u0948\u0902 \u0915\u093e\u0935\u094d\u092f\u093e \u092c\u094b\u0932 \u0930\u0939\u0940 \u0939\u0942\u0901 \u0930\u091c\u0924 \u092b\u093c\u093e\u0907\u0928\u0947\u0902\u0938 \u0938\u0947\u0964"
+    },
+    "D07_full": {
+     "baseline_key": "B07",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 2,
+      "male-drift": 1
+     },
+     "text": "\u0927\u0928\u094d\u092f\u0935\u093e\u0926 \u0938\u0930, \u0906\u092a\u0915\u0947 \u0909\u0924\u094d\u0924\u0930 \u0915\u093e \u0907\u0902\u0924\u091c\u093c\u093e\u0930 \u0930\u0939\u0947\u0917\u093e\u0964"
+    },
+    "D08_full": {
+     "baseline_key": "B08",
+     "baseline_dominant": "male-drift",
+     "variant_dominant": "male-drift",
+     "variant_counts": {
+      "female-kavya": 1,
+      "male-drift": 2
+     },
+     "text": "\u0927\u0928\u094d\u092f\u0935\u093e\u0926, \u0906\u092a\u0915\u093e \u092d\u0941\u0917\u0924\u093e\u0928 \u0938\u092b\u0932 \u0939\u094b \u0917\u092f\u093e \u0939\u0948\u0964"
+    },
+    "D09_full": {
+     "baseline_key": "B09",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 2,
+      "male-drift": 1
+     },
+     "text": "\u0938\u0930, \u0906\u092a\u0915\u0947 \u0916\u093e\u0924\u0947 \u092a\u0930 \u092c\u093e\u0930\u0939 \u0939\u091c\u093c\u093e\u0930 \u092a\u093e\u0901\u091a \u0938\u094c \u0930\u0941\u092a\u092f\u0947 \u0915\u093e \u092c\u0915\u093e\u092f\u093e \u0939\u0948\u0964"
+    },
+    "D11_full": {
+     "baseline_key": "B11",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 2,
+      "male-drift": 1
+     },
+     "text": "\u0915\u0943\u092a\u092f\u093e \u092a\u094d\u0930\u0924\u0940\u0915\u094d\u0937\u093e \u0915\u0930\u0947\u0902\u0964"
+    },
+    "D14_full": {
+     "baseline_key": "B14",
+     "baseline_dominant": "male-drift",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "\u0905\u0920\u093e\u0928\u0935\u0947 \u0932\u093e\u0916 \u091b\u093f\u0939\u0924\u094d\u0924\u0930 \u0939\u091c\u093c\u093e\u0930 \u092a\u093e\u0901\u091a \u0938\u094c \u0924\u0948\u0902\u0924\u093e\u0932\u0940\u0938 \u0930\u0941\u092a\u092f\u0947 \u0915\u0941\u0932 \u092c\u0915\u093e\u092f\u093e \u0939\u0948\u0964"
+    }
+   },
+   "stable_to_male_examples": [
+    [
+     "D09_full",
+     44,
+     "\u0938\u0930, \u0906\u092a\u0915\u0947 \u0916\u093e\u0924\u0947 \u092a\u0930 \u092c\u093e\u0930\u0939 \u0939\u091c\u093c\u093e\u0930 \u092a\u093e\u0901\u091a \u0938\u094c \u0930\u0941\u092a\u092f\u0947 \u0915\u093e \u092c\u0915\u093e\u092f\u093e"
+    ],
+    [
+     "D11_full",
+     43,
+     "\u0915\u0943\u092a\u092f\u093e \u092a\u094d\u0930\u0924\u0940\u0915\u094d\u0937\u093e \u0915\u0930\u0947\u0902\u0964"
+    ]
+   ],
+   "male_to_female_examples": [
+    [
+     "D00_full",
+     44,
+     "\u0906\u092a\u0915\u0947 \u092c\u0948\u0902\u0915 \u0938\u0947 \u0939\u0938\u094d\u0924\u093e\u0902\u0924\u0930\u0923 \u092a\u0942\u0930\u094d\u0923 \u0939\u094b \u0917\u092f\u093e \u0939\u0948\u0964"
+    ],
+    [
+     "D01_full",
+     42,
+     "\u0938\u0930 \u0915\u094d\u092f\u093e \u0906\u092a \u092f\u0942 \u092a\u0940 \u0906\u0908 \u0938\u0947 \u092d\u0941\u0917\u0924\u093e\u0928 \u0915\u0930\u0928\u093e \u092a\u0938\u0902\u0926 \u0915\u0930\u0947\u0902\u0917\u0947?"
+    ],
+    [
+     "D01_full",
+     44,
+     "\u0938\u0930 \u0915\u094d\u092f\u093e \u0906\u092a \u092f\u0942 \u092a\u0940 \u0906\u0908 \u0938\u0947 \u092d\u0941\u0917\u0924\u093e\u0928 \u0915\u0930\u0928\u093e \u092a\u0938\u0902\u0926 \u0915\u0930\u0947\u0902\u0917\u0947?"
+    ],
+    [
+     "D02_full",
+     42,
+     "\u0915\u0941\u0932 \u092c\u0915\u093e\u092f\u093e \u091a\u094c\u092c\u0940\u0938 \u0939\u091c\u093c\u093e\u0930 \u092a\u093e\u0901\u091a \u0938\u094c \u0905\u0921\u093c\u0938\u0920 \u0930\u0941\u092a\u092f\u0947 \u0939\u0948 \u0906\u091c \u0924\u0915"
+    ],
+    [
+     "D02_full",
+     43,
+     "\u0915\u0941\u0932 \u092c\u0915\u093e\u092f\u093e \u091a\u094c\u092c\u0940\u0938 \u0939\u091c\u093c\u093e\u0930 \u092a\u093e\u0901\u091a \u0938\u094c \u0905\u0921\u093c\u0938\u0920 \u0930\u0941\u092a\u092f\u0947 \u0939\u0948 \u0906\u091c \u0924\u0915"
+    ],
+    [
+     "D02_full",
+     44,
+     "\u0915\u0941\u0932 \u092c\u0915\u093e\u092f\u093e \u091a\u094c\u092c\u0940\u0938 \u0939\u091c\u093c\u093e\u0930 \u092a\u093e\u0901\u091a \u0938\u094c \u0905\u0921\u093c\u0938\u0920 \u0930\u0941\u092a\u092f\u0947 \u0939\u0948 \u0906\u091c \u0924\u0915"
+    ],
+    [
+     "D08_full",
+     42,
+     "\u0927\u0928\u094d\u092f\u0935\u093e\u0926, \u0906\u092a\u0915\u093e \u092d\u0941\u0917\u0924\u093e\u0928 \u0938\u092b\u0932 \u0939\u094b \u0917\u092f\u093e \u0939\u0948\u0964"
+    ],
+    [
+     "D14_full",
+     42,
+     "\u0905\u0920\u093e\u0928\u0935\u0947 \u0932\u093e\u0916 \u091b\u093f\u0939\u0924\u094d\u0924\u0930 \u0939\u091c\u093c\u093e\u0930 \u092a\u093e\u0901\u091a \u0938\u094c \u0924\u0948\u0902\u0924\u093e\u0932\u0940\u0938 \u0930\u0941\u092a\u092f\u0947 \u0915\u0941"
+    ],
+    [
+     "D14_full",
+     43,
+     "\u0905\u0920\u093e\u0928\u0935\u0947 \u0932\u093e\u0916 \u091b\u093f\u0939\u0924\u094d\u0924\u0930 \u0939\u091c\u093c\u093e\u0930 \u092a\u093e\u0901\u091a \u0938\u094c \u0924\u0948\u0902\u0924\u093e\u0932\u0940\u0938 \u0930\u0941\u092a\u092f\u0947 \u0915\u0941"
+    ],
+    [
+     "D14_full",
+     44,
+     "\u0905\u0920\u093e\u0928\u0935\u0947 \u0932\u093e\u0916 \u091b\u093f\u0939\u0924\u094d\u0924\u0930 \u0939\u091c\u093c\u093e\u0930 \u092a\u093e\u0901\u091a \u0938\u094c \u0924\u0948\u0902\u0924\u093e\u0932\u0940\u0938 \u0930\u0941\u092a\u092f\u0947 \u0915\u0941"
+    ]
+   ],
+   "median_latency_s": 7.616602420806885
+  },
+  "SPELLING": {
+   "name": "SPELLING",
+   "n_rows": 13,
+   "n_seeds_total": 39,
+   "n_male_seeds": 9,
+   "male_rate": 0.23076923076923078,
+   "improvements_male_to_female": 0,
+   "regressions_female_to_male": 3,
+   "same_female": 30,
+   "same_male": 6,
+   "net_male_change": -4.0,
+   "per_key": {
+    "S_DV_01": {
+     "baseline_key": "B07",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 2,
+      "male-drift": 1
+     },
+     "text": "Dhanyavaad sir, aapke response ka intezaar rahega."
+    },
+    "S_DV_02": {
+     "baseline_key": "B07",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "male-drift",
+     "variant_counts": {
+      "male-drift": 2,
+      "female-kavya": 1
+     },
+     "text": "Dhanyawad sir, aapke response ka intezaar rahega."
+    },
+    "S_DV_03": {
+     "baseline_key": "B07",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 2,
+      "male-drift": 1
+     },
+     "text": "Dhanya waad sir, aapke response ka intezaar rahega."
+    },
+    "S_DV_04": {
+     "baseline_key": "B07",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 2,
+      "male-drift": 1
+     },
+     "text": "Dhanyabaad sir, aapke response ka intezaar rahega."
+    },
+    "S_DV_05": {
+     "baseline_key": "B07",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "male-drift",
+     "variant_counts": {
+      "female-kavya": 1,
+      "male-drift": 2
+     },
+     "text": "Shukriya sir, aapke response ka intezaar rahega."
+    },
+    "S_DV_06": {
+     "baseline_key": "B07",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "male-drift",
+     "variant_counts": {
+      "female-kavya": 1,
+      "male-drift": 2
+     },
+     "text": "Shukriyaa sir, aapke response ka intezaar rahega."
+    },
+    "S_NM_01": {
+     "baseline_key": "B06",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "Namaste sir aap kaise hain aaj?"
+    },
+    "S_NM_02": {
+     "baseline_key": "B06",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "Namaskaar sir aap kaise hain aaj?"
+    },
+    "S_NM_03": {
+     "baseline_key": "B06",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "Namaskar sir aap kaise hain aaj?"
+    },
+    "S_NM_04": {
+     "baseline_key": "B06",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "Namastey sir aap kaise hain aaj?"
+    },
+    "S_KP_01": {
+     "baseline_key": "B11",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "Kripa karke wait karein."
+    },
+    "S_KP_02": {
+     "baseline_key": "B11",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "Kripya wait karein."
+    },
+    "S_KP_03": {
+     "baseline_key": "B11",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "Krupya wait karein."
+    }
+   },
+   "stable_to_male_examples": [
+    [
+     "S_DV_02",
+     42,
+     "Dhanyawad sir, aapke response ka intezaar rahega."
+    ],
+    [
+     "S_DV_05",
+     43,
+     "Shukriya sir, aapke response ka intezaar rahega."
+    ],
+    [
+     "S_DV_06",
+     43,
+     "Shukriyaa sir, aapke response ka intezaar rahega."
+    ]
+   ],
+   "male_to_female_examples": [],
+   "median_latency_s": 5.013415098190308
+  },
+  "ACRONYM": {
+   "name": "ACRONYM",
+   "n_rows": 12,
+   "n_seeds_total": 36,
+   "n_male_seeds": 2,
+   "male_rate": 0.05555555555555555,
+   "improvements_male_to_female": 4,
+   "regressions_female_to_male": 0,
+   "same_female": 30,
+   "same_male": 2,
+   "net_male_change": -10.0,
+   "per_key": {
+    "A_UPI_raw": {
+     "baseline_key": "B01",
+     "baseline_dominant": "male-drift",
+     "variant_dominant": "male-drift",
+     "variant_counts": {
+      "male-drift": 2,
+      "female-kavya": 1
+     },
+     "text": "Sir kya aap UPI se payment karna prefer karenge?"
+    },
+    "A_UPI_spelled": {
+     "baseline_key": "B01",
+     "baseline_dominant": "male-drift",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "Sir kya aap yoo pee aaye se payment karna prefer karenge?"
+    },
+    "A_UPI_deva": {
+     "baseline_key": "B01",
+     "baseline_dominant": "male-drift",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "Sir kya aap \u092f\u0942 \u092a\u0940 \u0906\u0908 se payment karna prefer karenge?"
+    },
+    "A_OTP_raw": {
+     "baseline_key": "A_OTP_raw",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "Sir aapko OTP mila hai kya?"
+    },
+    "A_OTP_spelled": {
+     "baseline_key": "A_OTP_raw",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "Sir aapko oh tee pee mila hai kya?"
+    },
+    "A_OTP_deva": {
+     "baseline_key": "A_OTP_raw",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "Sir aapko \u0913 \u091f\u0940 \u092a\u0940 mila hai kya?"
+    },
+    "A_SMS_raw": {
+     "baseline_key": "A_SMS_raw",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "Aapko SMS bhej diya hai confirmation ke liye."
+    },
+    "A_SMS_spelled": {
+     "baseline_key": "A_SMS_raw",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "Aapko es em es bhej diya hai confirmation ke liye."
+    },
+    "A_SMS_deva": {
+     "baseline_key": "A_SMS_raw",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "Aapko \u090f\u0938 \u090f\u092e \u090f\u0938 bhej diya hai confirmation ke liye."
+    },
+    "A_EMI_raw": {
+     "baseline_key": "A_EMI_raw",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "Aapki EMI 5,000 rupees hai monthly."
+    },
+    "A_EMI_spelled": {
+     "baseline_key": "A_EMI_raw",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "Aapki ee em aaye 5,000 rupees hai monthly."
+    },
+    "A_EMI_deva": {
+     "baseline_key": "A_EMI_raw",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "Aapki \u0908 \u090f\u092e \u0906\u0908 5,000 rupees hai monthly."
+    }
+   },
+   "stable_to_male_examples": [],
+   "male_to_female_examples": [
+    [
+     "A_UPI_spelled",
+     42,
+     "Sir kya aap yoo pee aaye se payment karna prefer k"
+    ],
+    [
+     "A_UPI_spelled",
+     44,
+     "Sir kya aap yoo pee aaye se payment karna prefer k"
+    ],
+    [
+     "A_UPI_deva",
+     42,
+     "Sir kya aap \u092f\u0942 \u092a\u0940 \u0906\u0908 se payment karna prefer karen"
+    ],
+    [
+     "A_UPI_deva",
+     44,
+     "Sir kya aap \u092f\u0942 \u092a\u0940 \u0906\u0908 se payment karna prefer karen"
+    ]
+   ],
+   "median_latency_s": 6.762301445007324
+  },
+  "PROMPT": {
+   "name": "PROMPT",
+   "n_rows": 20,
+   "n_seeds_total": 60,
+   "n_male_seeds": 15,
+   "male_rate": 0.25,
+   "improvements_male_to_female": 9,
+   "regressions_female_to_male": 0,
+   "same_female": 36,
+   "same_male": 15,
+   "net_male_change": -5.0,
+   "per_key": {
+    "P_UPI_V1": {
+     "baseline_key": "B01",
+     "baseline_dominant": "male-drift",
+     "variant_dominant": "male-drift",
+     "variant_counts": {
+      "male-drift": 2,
+      "female-kavya": 1
+     },
+     "text": "<spk_kavya> Sir kya aap UPI se payment karna prefer karenge?"
+    },
+    "P_UPI_V2": {
+     "baseline_key": "B01",
+     "baseline_dominant": "male-drift",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "<spk_kavya> <spk_kavya> Sir kya aap UPI se payment karna prefer karenge?"
+    },
+    "P_UPI_V3": {
+     "baseline_key": "B01",
+     "baseline_dominant": "male-drift",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "<spk_kavya> Sir kya aap UPI se payment karna prefer karenge? <spk_kavya>"
+    },
+    "P_UPI_V4": {
+     "baseline_key": "B01",
+     "baseline_dominant": "male-drift",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "male-drift": 1,
+      "female-kavya": 2
+     },
+     "text": "<spk_kavya>Sir kya aap UPI se payment karna prefer karenge?"
+    },
+    "P_OUT24k_V1": {
+     "baseline_key": "B02",
+     "baseline_dominant": "male-drift",
+     "variant_dominant": "male-drift",
+     "variant_counts": {
+      "male-drift": 3
+     },
+     "text": "<spk_kavya> Total outstanding 24,568 rupees hai as of aaj."
+    },
+    "P_OUT24k_V2": {
+     "baseline_key": "B02",
+     "baseline_dominant": "male-drift",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 2,
+      "male-drift": 1
+     },
+     "text": "<spk_kavya> <spk_kavya> Total outstanding 24,568 rupees hai as of aaj."
+    },
+    "P_OUT24k_V3": {
+     "baseline_key": "B02",
+     "baseline_dominant": "male-drift",
+     "variant_dominant": "male-drift",
+     "variant_counts": {
+      "male-drift": 3
+     },
+     "text": "<spk_kavya> Total outstanding 24,568 rupees hai as of aaj. <spk_kavya>"
+    },
+    "P_OUT24k_V4": {
+     "baseline_key": "B02",
+     "baseline_dominant": "male-drift",
+     "variant_dominant": "male-drift",
+     "variant_counts": {
+      "male-drift": 3
+     },
+     "text": "<spk_kavya>Total outstanding 24,568 rupees hai as of aaj."
+    },
+    "P_NAM_V1": {
+     "baseline_key": "B06",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "<spk_kavya> Namaste sir aap kaise hain aaj?"
+    },
+    "P_NAM_V2": {
+     "baseline_key": "B06",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "<spk_kavya> <spk_kavya> Namaste sir aap kaise hain aaj?"
+    },
+    "P_NAM_V3": {
+     "baseline_key": "B06",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "<spk_kavya> Namaste sir aap kaise hain aaj? <spk_kavya>"
+    },
+    "P_NAM_V4": {
+     "baseline_key": "B06",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "<spk_kavya>Namaste sir aap kaise hain aaj?"
+    },
+    "P_DV_V1": {
+     "baseline_key": "B07",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 2,
+      "male-drift": 1
+     },
+     "text": "<spk_kavya> Dhanyavaad sir, aapke response ka intezaar rahega."
+    },
+    "P_DV_V2": {
+     "baseline_key": "B07",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "<spk_kavya> <spk_kavya> Dhanyavaad sir, aapke response ka intezaar rahega."
+    },
+    "P_DV_V3": {
+     "baseline_key": "B07",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 2,
+      "male-drift": 1
+     },
+     "text": "<spk_kavya> Dhanyavaad sir, aapke response ka intezaar rahega. <spk_kavya>"
+    },
+    "P_DV_V4": {
+     "baseline_key": "B07",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "<spk_kavya>Dhanyavaad sir, aapke response ka intezaar rahega."
+    },
+    "P_KRIPA_V1": {
+     "baseline_key": "B11",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "<spk_kavya> Kripa karke wait karein."
+    },
+    "P_KRIPA_V2": {
+     "baseline_key": "B11",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "<spk_kavya> <spk_kavya> Kripa karke wait karein."
+    },
+    "P_KRIPA_V3": {
+     "baseline_key": "B11",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "<spk_kavya> Kripa karke wait karein. <spk_kavya>"
+    },
+    "P_KRIPA_V4": {
+     "baseline_key": "B11",
+     "baseline_dominant": "female-kavya",
+     "variant_dominant": "female-kavya",
+     "variant_counts": {
+      "female-kavya": 3
+     },
+     "text": "<spk_kavya>Kripa karke wait karein."
+    }
+   },
+   "stable_to_male_examples": [],
+   "male_to_female_examples": [
+    [
+     "P_UPI_V2",
+     42,
+     "<spk_kavya> <spk_kavya> Sir kya aap UPI se payment"
+    ],
+    [
+     "P_UPI_V2",
+     44,
+     "<spk_kavya> <spk_kavya> Sir kya aap UPI se payment"
+    ],
+    [
+     "P_UPI_V3",
+     42,
+     "<spk_kavya> Sir kya aap UPI se payment karna prefe"
+    ],
+    [
+     "P_UPI_V3",
+     44,
+     "<spk_kavya> Sir kya aap UPI se payment karna prefe"
+    ],
+    [
+     "P_UPI_V4",
+     44,
+     "<spk_kavya>Sir kya aap UPI se payment karna prefer"
+    ],
+    [
+     "P_OUT24k_V2",
+     42,
+     "<spk_kavya> <spk_kavya> Total outstanding 24,568 r"
+    ],
+    [
+     "P_OUT24k_V2",
+     44,
+     "<spk_kavya> <spk_kavya> Total outstanding 24,568 r"
+    ],
+    [
+     "P_DV_V2",
+     44,
+     "<spk_kavya> <spk_kavya> Dhanyavaad sir, aapke resp"
+    ],
+    [
+     "P_DV_V4",
+     44,
+     "<spk_kavya>Dhanyavaad sir, aapke response ka intez"
+    ]
+   ],
+   "median_latency_s": 7.641775369644165
+  }
+ },
+ "grades": {
+  "DEVANAGARI": "FAIL",
+  "SPELLING": "FAIL",
+  "ACRONYM": "CONDITIONAL",
+  "PROMPT": "FAIL",
+  "DEVANAGARI_MIXED": "FAIL",
+  "DEVANAGARI_FULL": "FAIL"
+ },
+ "baseline_stats": {
+  "n_texts": 19,
+  "n_seeds_total": 57,
+  "n_dominant_male": 6,
+  "n_any_male": 8,
+  "n_seeds_male": 19,
+  "male_seed_rate": 0.3333333333333333
+ },
+ "determinism": [
+  {
+   "key": "B01",
+   "unique_sha16": 1,
+   "unique_first21_audio": 1,
+   "classes": [
+    "male-drift",
+    "male-drift",
+    "male-drift"
+   ],
+   "median_f0s": [
+    150.0,
+    150.0,
+    150.0
+   ]
+  },
+  {
+   "key": "B02",
+   "unique_sha16": 1,
+   "unique_first21_audio": 1,
+   "classes": [
+    "male-drift",
+    "male-drift",
+    "male-drift"
+   ],
+   "median_f0s": [
+    129.72972972972974,
+    129.72972972972974,
+    129.72972972972974
+   ]
+  },
+  {
+   "key": "B07",
+   "unique_sha16": 1,
+   "unique_first21_audio": 1,
+   "classes": [
+    "female-kavya",
+    "female-kavya",
+    "female-kavya"
+   ],
+   "median_f0s": [
+    226.41509433962264,
+    226.41509433962264,
+    226.41509433962264
+   ]
+  },
+  {
+   "key": "D01_mixed",
+   "unique_sha16": 1,
+   "unique_first21_audio": 1,
+   "classes": [
+    "female-kavya",
+    "female-kavya",
+    "female-kavya"
+   ],
+   "median_f0s": [
+    222.22222222222223,
+    222.22222222222223,
+    222.22222222222223
+   ]
+  },
+  {
+   "key": "D07_mixed",
+   "unique_sha16": 1,
+   "unique_first21_audio": 1,
+   "classes": [
+    "male-drift",
+    "male-drift",
+    "male-drift"
+   ],
+   "median_f0s": [
+    146.34146341463415,
+    146.34146341463415,
+    146.34146341463415
+   ]
+  },
+  {
+   "key": "S_DV_02",
+   "unique_sha16": 1,
+   "unique_first21_audio": 1,
+   "classes": [
+    "male-drift",
+    "male-drift",
+    "male-drift"
+   ],
+   "median_f0s": [
+    116.50485436893204,
+    116.50485436893204,
+    116.50485436893204
+   ]
+  },
+  {
+   "key": "A_UPI_spelled",
+   "unique_sha16": 1,
+   "unique_first21_audio": 1,
+   "classes": [
+    "female-kavya",
+    "female-kavya",
+    "female-kavya"
+   ],
+   "median_f0s": [
+    252.6315789473684,
+    252.6315789473684,
+    252.6315789473684
+   ]
+  },
+  {
+   "key": "P_UPI_V2",
+   "unique_sha16": 1,
+   "unique_first21_audio": 1,
+   "classes": [
+    "female-kavya",
+    "female-kavya",
+    "female-kavya"
+   ],
+   "median_f0s": [
+    216.21621621621622,
+    216.21621621621622,
+    216.21621621621622
+   ]
+  },
+  {
+   "key": "P_DV_V2",
+   "unique_sha16": 1,
+   "unique_first21_audio": 1,
+   "classes": [
+    "female-kavya",
+    "female-kavya",
+    "female-kavya"
+   ],
+   "median_f0s": [
+    212.38938053097345,
+    212.38938053097345,
+    212.38938053097345
+   ]
+  }
+ ],
+ "tokenizer_diagnostic_summary": {
+  "spk_kavya_id": 156940,
+  "spk_kavya_single_token": true,
+  "probes": {
+   "<spk_kavya>": {
+    "n": 1,
+    "ids": [
+     156940
+    ]
+   },
+   "<spk_kavya> <spk_kavya>": {
+    "n": 3,
+    "ids": [
+     156940,
+     220,
+     156940
+    ]
+   },
+   "<spk_kavya>test": {
+    "n": 2,
+    "ids": [
+     156940,
+     1985
+    ]
+   },
+   "<spk_kavya> test": {
+    "n": 2,
+    "ids": [
+     156940,
+     1296
+    ]
+   },
+   "test <spk_kavya>": {
+    "n": 3,
+    "ids": [
+     1985,
+     220,
+     156940
+    ]
+   },
+   "[kavya]": {
+    "n": 4,
+    "ids": [
+     6874,
+     5781,
+     64,
+     60
+    ]
+   },
+   "[kavya] test": {
+    "n": 5,
+    "ids": [
+     6874,
+     5781,
+     64,
+     60,
+     1296
+    ]
+   },
+   "<spk_kavya> Dhanyavaad sir.": {
+    "n": 7,
+    "ids": [
+     156940,
+     44327,
+     3852,
+     2979,
+     329,
+     28146,
+     13
+    ]
+   },
+   "<spk_kavya> \u0927\u0928\u094d\u092f\u0935\u093e\u0926 \u0938\u0930\u0964": {
+    "n": 6,
+    "ids": [
+     156940,
+     115443,
+     106652,
+     100612,
+     101822,
+     100278
+    ]
+   },
+   "<spk_apsara>": {
+    "n": 1,
+    "ids": [
+     156941
+    ]
+   }
+  }
+ }
+}

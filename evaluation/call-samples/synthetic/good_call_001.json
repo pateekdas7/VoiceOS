@@ -1,0 +1,65 @@
+{
+  "_comment": "Synthetic fixture: all automated checks should PASS. Agent only states facts matching customer_context.",
+  "call_id": "synthetic-good-001",
+  "customer_context": {
+    "outstanding_amount_inr": 50000.0,
+    "outstanding_amount_minor": 5000000,
+    "minimum_settlement_pct": 0.5,
+    "loan_id": "LOAN-20240112-001",
+    "due_date": "2026-08-01",
+    "calls_today_count": 1,
+    "call_hour": 14
+  },
+  "turns": [
+    {
+      "turn_index": 0,
+      "speaker": "agent",
+      "text": "Namaste, main VoiceOS collections department se bol raha hun. Kya aap Rajesh Kumar bol rahe hain?",
+      "human_intent": null,
+      "negotiation_offer_inr": null
+    },
+    {
+      "turn_index": 1,
+      "speaker": "customer",
+      "text": "Haan main hun.",
+      "human_intent": "CONSENT_GRANT",
+      "negotiation_offer_inr": null
+    },
+    {
+      "turn_index": 2,
+      "speaker": "agent",
+      "text": "Dhanyavaad. Main aapko yaad dilana chahta hun ki aapka loan LOAN-20240112-001 ka bakaya Rs. 50,000 hai jo 2026-08-01 tak dena hai.",
+      "human_intent": null,
+      "negotiation_offer_inr": null
+    },
+    {
+      "turn_index": 3,
+      "speaker": "customer",
+      "text": "Haan main jaanta hun. Main kal paise de dunga.",
+      "human_intent": "PROMISE_TO_PAY",
+      "negotiation_offer_inr": null
+    },
+    {
+      "turn_index": 4,
+      "speaker": "agent",
+      "text": "Bahut achha. Kya aap Rs. 25,000 abhi de sakte hain aur baaki baad mein?",
+      "human_intent": null,
+      "negotiation_offer_inr": 25000.0
+    },
+    {
+      "turn_index": 5,
+      "speaker": "customer",
+      "text": "Theek hai, main 25,000 de dunga.",
+      "human_intent": "PAYMENT",
+      "negotiation_offer_inr": null
+    }
+  ],
+  "completed": true,
+  "first_audio_ms": 820.0,
+  "expected_results": {
+    "loa_violations": 0,
+    "rbi_violations": 0,
+    "negotiation_violations": 0,
+    "intent_labels_present": 4
+  }
+}

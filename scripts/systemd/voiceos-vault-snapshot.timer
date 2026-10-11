@@ -1,0 +1,12 @@
+[Unit]
+Description=VoiceOS Vault daily snapshot timer
+Requires=voiceos-vault-snapshot.service
+
+[Timer]
+# Daily at 02:00 UTC — after MongoDB backup
+OnCalendar=*-*-* 02:00:00 UTC
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

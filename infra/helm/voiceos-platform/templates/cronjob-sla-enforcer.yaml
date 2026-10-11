@@ -1,0 +1,63 @@
+{{- if .Values.jobs.slaEnforcer.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "voiceos-platform.jobs.fullname" . }}-sla-enforcer
+  namespace: {{ .Values.jobs.namespace }}
+  labels:
+    {{- include "voiceos-platform.jobs.labels" . | nindent 4 }}
+    app.kubernetes.io/name: sla-enforcer
+    app.kubernetes.io/component: background-job
+spec:
+  schedule: {{ .Values.jobs.slaEnforcer.schedule | quote }}
+  # Forbid concurrent runs: if the previous tick is still running (e.g. slow DB),
+  # skip this tick rather than stacking jobs. The SLA window is 60 s so one
+  # missed tick is acceptable; stacked jobs are not.
+  concurrencyPolicy: Forbid
+  # If the job has not started within 30 s of its scheduled time (e.g. cluster
+  # pressure), skip that run rather than launching a late tick.
+  startingDeadlineSeconds: 30
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: {{ .Values.jobs.slaEnforcer.activeDeadlineSeconds }}
+      backoffLimit: {{ .Values.jobs.slaEnforcer.backoffLimit }}
+      template:
+        metadata:
+          labels:
+            {{- include "voiceos-platform.jobs.labels" . | nindent 12 }}
+            app.kubernetes.io/name: sla-enforcer
+        spec:
+          restartPolicy: OnFailure
+          priorityClassName: {{ .Values.jobs.priorityClassName }}
+          nodeSelector:
+            voiceos.io/node-pool: cpu
+          serviceAccountName: {{ include "voiceos-platform.jobs.fullname" . }}
+          containers:
+            - name: sla-enforcer
+              image: "{{ .Values.jobs.image.repository }}:{{ .Values.jobs.image.tag }}"
+              imagePullPolicy: {{ .Values.jobs.image.pullPolicy }}
+              command: ["python", "-m", "scripts.jobs.run_sla_enforcer"]
+              env:
+                - name: POSTGRES_DSN
+                  valueFrom:
+                    secretKeyRef:
+                      name: voiceos-postgres-credentials
+                      key: dsn
+              resources:
+                requests:
+                  cpu: {{ .Values.jobs.slaEnforcer.resources.cpu }}
+                  memory: {{ .Values.jobs.slaEnforcer.resources.memory }}
+                limits:
+                  cpu: {{ .Values.jobs.slaEnforcer.resources.cpu }}
+                  memory: {{ .Values.jobs.slaEnforcer.resources.memory }}
+              securityContext:
+                readOnlyRootFilesystem: true
+                allowPrivilegeEscalation: false
+                runAsNonRoot: true
+                capabilities:
+                  drop: ["ALL"]
+          securityContext:
+            runAsNonRoot: true
+{{- end }}

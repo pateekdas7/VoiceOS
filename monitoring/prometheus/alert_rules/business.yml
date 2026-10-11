@@ -28,3 +28,65 @@ groups:
         annotations:
           summary: "Campaign completion rate dropped more than 30% vs. the same hour yesterday"
           description: "voiceos:campaign_completion_rate:ratio_1h is more than 30% below its value 24h ago -- check ScheduleEngine/RetryPolicyEngine for a stuck or mis-configured campaign."
+
+      - alert: HITLSLABreach
+        expr: rate(voiceos_hitl_sla_breached_total[15m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          route: ticket
+          team: operations
+        annotations:
+          summary: "HITL SLA breaches detected for tenant {{ $labels.tenant_id }}"
+          description: >
+            voiceos_hitl_sla_breached_total is incrementing — escalated calls are
+            not being picked up by a human agent within the contracted SLA window.
+            This directly affects customer satisfaction and may trigger contractual
+            penalties. Check HITL agent availability and queue routing config.
+          runbook: "infra/runbooks/hitl-sla-breach.md"
+
+      - alert: HITLSLABreachCritical
+        expr: rate(voiceos_hitl_sla_breached_total[15m]) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+          route: page
+          team: operations
+        annotations:
+          summary: "Critical HITL SLA breach rate — 6+ per hour for tenant {{ $labels.tenant_id }}"
+          description: >
+            More than 6 HITL SLA breaches per hour for tenant {{ $labels.tenant_id }}.
+            The HITL pool is likely undersized or its routing is broken. Page operations.
+          runbook: "infra/runbooks/hitl-sla-breach.md"
+
+      - alert: TenantIsolationViolation
+        expr: increase(voiceos_tenant_isolation_violations_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          route: page
+          team: security
+        annotations:
+          summary: "Tenant isolation violation detected"
+          description: >
+            voiceos_tenant_isolation_violations_total has incremented — a request
+            has accessed or attempted to access data belonging to a different tenant.
+            This is a Severity-1 security event. Page the security team immediately.
+            Audit logs should contain the trace_id, actor_id, and affected tenant IDs.
+          runbook: "infra/runbooks/tenant-isolation-violation.md"
+
+      - alert: BillingInconsistency
+        expr: increase(voiceos_billing_inconsistency_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          route: page
+          team: finance
+        annotations:
+          summary: "Billing inconsistency detected"
+          description: >
+            voiceos_billing_inconsistency_total has incremented — a billing event
+            could not be matched to a corresponding call record, or a duplicate
+            billing event was detected. This requires immediate investigation to
+            prevent revenue leakage or customer overcharging.
+          runbook: "infra/runbooks/billing-inconsistency.md"

@@ -1,0 +1,99 @@
+# VoiceOS v2 -- BFF / dialer alerts (Phase 8e, Section 17.3):
+# callback auth failures, queue backlog, worker health, stuck calls.
+#
+# Architecture: V7 Ch8 (Alerting), V3 Ch17 (Observability §17.3).
+
+groups:
+  - name: voiceos_bff_dialer
+    rules:
+      - alert: CallbackAuthFailure
+        expr: rate(voiceos_callback_auth_failures_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          route: ticket
+          team: platform
+        annotations:
+          summary: "Dialer callback HMAC validation failures elevated ({{ $value | humanize }}/s)"
+          description: >
+            voiceos_callback_auth_failures_total is rising — more than 0.1 /s
+            of Twilio status-callback requests are failing HMAC-SHA1 validation.
+            Possible causes: rotated auth token not yet propagated, DNS-based
+            man-in-the-middle, or Twilio sending to a stale URL.
+          runbook: "infra/runbooks/callback-auth-failure.md"
+
+      - alert: CallbackAuthFailureCritical
+        expr: rate(voiceos_callback_auth_failures_total[5m]) > 1.0
+        for: 2m
+        labels:
+          severity: critical
+          route: page
+          team: platform
+        annotations:
+          summary: "Critical: dialer callback auth failures > 1/s — calls not progressing"
+          description: >
+            More than 1 Twilio callback/s is being rejected. At this rate the dialer
+            is not receiving call-status updates; leads stay in CALLING state
+            indefinitely. Page on-call to check auth token rotation and Twilio app config.
+          runbook: "infra/runbooks/callback-auth-failure.md"
+
+      - alert: QueueBacklog
+        expr: sum by (tenant_id) (voiceos_queue_depth) > 500
+        for: 10m
+        labels:
+          severity: warning
+          route: ticket
+          team: platform
+        annotations:
+          summary: "Dialer queue backlog high for tenant {{ $labels.tenant_id }} ({{ $value }} items)"
+          description: >
+            The outbound-call Redis queue for tenant {{ $labels.tenant_id }} has
+            more than 500 items pending for at least 10 minutes. Possible causes:
+            dialer workers scaled too low, Redis slow, or a campaign mis-configured
+            with a calling window that has already closed.
+          runbook: "infra/runbooks/queue-backlog.md"
+
+      - alert: QueueBacklogCritical
+        expr: sum by (tenant_id) (voiceos_queue_depth) > 2000
+        for: 5m
+        labels:
+          severity: critical
+          route: page
+          team: platform
+        annotations:
+          summary: "Critical: dialer queue > 2000 items for tenant {{ $labels.tenant_id }}"
+          description: >
+            Dialer queue has exceeded 2000 pending calls. SLA will be breached
+            unless workers are scaled up immediately or the campaign is paused.
+          runbook: "infra/runbooks/queue-backlog.md"
+
+      - alert: WorkerDead
+        expr: absent(voiceos_queue_depth) or (sum(voiceos_queue_depth) > 10 and rate(voiceos_calls_initiated_total[5m]) == 0)
+        for: 5m
+        labels:
+          severity: critical
+          route: page
+          team: platform
+        annotations:
+          summary: "Dialer worker appears dead — queue growing, no calls being placed"
+          description: >
+            The dialer queue has items but voiceos_calls_initiated_total has not
+            increased in 5 minutes. The dialer worker process is likely down or
+            deadlocked. Check BFF process health and Redis connectivity.
+          runbook: "infra/runbooks/worker-dead.md"
+
+      - alert: StuckCalls
+        expr: rate(voiceos_stuck_calls_total[15m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          route: ticket
+          team: platform
+        annotations:
+          summary: "Stuck calls detected for tenant {{ $labels.tenant_id }}"
+          description: >
+            voiceos_stuck_calls_total is incrementing — calls placed but not
+            receiving a terminal status callback within the watchdog window.
+            Possible causes: Twilio status-callback URL unreachable, HMAC
+            failures (see CallbackAuthFailure alert), or network partition.
+          runbook: "infra/runbooks/stuck-calls.md"

@@ -148,7 +148,7 @@ class PromiseToPayService:
     def _validate(
         self, tenant_id: TenantId, loan_account_id: str, promised_amount_minor: int, promise_date: datetime
     ) -> None:
-        now = datetime.now(UTC) if promise_date.tzinfo is not None else datetime.utcnow()
+        now = datetime.now(UTC)
         if promise_date <= now:
             raise PTPValidationError("promise_date must be strictly in the future (DocSuite-03)")
         next_emi = self._emi.next_unpaid_emi(tenant_id, loan_account_id)

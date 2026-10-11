@@ -33,9 +33,14 @@
 #        Sprint-009 Phase 2 switched to the public repo. Weights are BF16, NOT FP16.
 #        The TTS server needs --snac-path pointing at the local SNAC codec.
 #
-#   GPU util: vLLM runs at --gpu-memory-utilization 0.55 (reduced from 0.70) so the
-#        Veena 3B BF16 model (~7,980 MB) fits alongside on the 23 GB L4.
-#        Measured total with all three services: 21,850 MB used / 695 MB free.
+#   GPU util: vLLM runs at --gpu-memory-utilization 0.32 (KV-cache optimized 2026-07-18 on A6000).
+#        History: 0.70 → 0.55 (Sprint-009, fit Veena 3B BF16 on L4) → 0.45 (Sprint-028,
+#        ctranslate2 VRAM headroom on L4) → 0.32 (2026-07-18, A6000 KV-cache optimization).
+#        On A6000 (46,068 MiB): at 0.55 vLLM claimed 25,300 MiB (15.91 GiB KV cache, 72×
+#        concurrency) — overprovisioned for VoiceOS voice workloads (~1,350 token typical context).
+#        At 0.32: KV cache = 5.72 GiB (26 concurrent @ max 4096 tok / 79 @ typical 1,350 tok),
+#        ~10.2 GiB freed. TTFT is compute-bound, not KV-cache-bound — unchanged at 56.8ms.
+#        GPU_MEMORY_FRACTION env var in .env overrides this default.
 # ==============================================================================
 
 set -euo pipefail
@@ -120,7 +125,7 @@ else
     --dtype auto \
     --port "${LLM_SERVICE_PORT:-8000}" \
     --max-model-len 4096 \
-    --gpu-memory-utilization "${GPU_MEMORY_FRACTION:-0.55}" \
+    --gpu-memory-utilization "${GPU_MEMORY_FRACTION:-0.32}" \
     --served-model-name "qwen2.5-7b-instruct-fp8" \
     >> "${VOICEOS_GPU_HOME}/logs/llm.log" 2>&1 < /dev/null &
   echo $! > /tmp/voiceos-llm.pid

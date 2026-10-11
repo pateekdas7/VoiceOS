@@ -10,6 +10,8 @@ Group=ubuntu
 WorkingDirectory=/opt/voiceos-gpu
 EnvironmentFile=-/opt/voiceos-gpu/.env
 Environment=HF_HOME=/opt/voiceos-gpu/cache
+# CUDA 13.0 forward compatibility (see voiceos-stt.service for full note).
+Environment=LD_LIBRARY_PATH=/usr/local/cuda-13.0/compat:/usr/local/cuda-13.0/lib64
 # Veena + SNAC FastAPI server on port 8200 (~8 GB VRAM). Loads in ~28s.
 ExecStart=/opt/voiceos-gpu/venv/bin/python3 /opt/voiceos-gpu/services/tts/server.py \
   --model-path /opt/voiceos-gpu/models/veena-fp16 \

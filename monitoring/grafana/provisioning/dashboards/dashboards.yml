@@ -15,5 +15,5 @@ providers:
     updateIntervalSeconds: 30
     allowUiUpdates: false
     options:
-      path: /etc/grafana/provisioning/voiceos-dashboards
+      path: /var/lib/grafana/dashboards
       foldersFromFilesStructure: true

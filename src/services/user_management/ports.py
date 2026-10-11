@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Protocol
 
-from src.libs.contracts.models.user import RoleAssignment, User
+from src.libs.contracts.models.user import Role, RoleAssignment, User
 from src.libs.contracts.primitives import TenantId
 from src.libs.repositories.invitation import Invitation
 
@@ -34,3 +34,11 @@ class UserRepositoryPort(Protocol):
     def list_users(self, tenant_id: TenantId) -> tuple[User, ...]: ...
 
     def set_active_status(self, tenant_id: TenantId, user_id: str, *, is_active: bool) -> int: ...
+
+    def get_role(self, tenant_id: TenantId, role_id: str) -> Role | None: ...
+
+    def get_role_by_name(self, tenant_id: TenantId, name: str) -> Role | None: ...
+
+    def list_roles(self, tenant_id: TenantId) -> tuple[Role, ...]: ...
+
+    def create_role(self, role: Role) -> Role: ...

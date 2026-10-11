@@ -46,10 +46,13 @@ from .rule import PolicyRequest, PolicyRule
 
 POLICY_DECISION_MADE_EVENT_TYPE = "compliance.policy.decision_made"
 
-# Consequential outcomes (V4 Ch4 §4.9: "the decision ... is returned and
-# audited") — PERMIT-by-default (no rule matched) is not itself audited to
-# avoid flooding the audit log with the steady-state no-op case.
-_AUDITED_OUTCOMES = (PolicyOutcome.DENY, PolicyOutcome.FORBID, PolicyOutcome.REQUIRE)
+# Outcomes that are always written to the audit trail (V4 Ch11 §11.7: "all
+# ALLOW and DENY decisions logged"). PERMIT is also audited when at least one
+# rule explicitly matched — "PERMIT-by-default" (no rule matched, empty
+# matching_rules) is excluded to avoid flooding the audit log with the
+# steady-state no-op case.
+_ALWAYS_AUDITED_OUTCOMES = (PolicyOutcome.DENY, PolicyOutcome.FORBID, PolicyOutcome.REQUIRE)
+_AUDITED_OUTCOMES = _ALWAYS_AUDITED_OUTCOMES  # kept for backward-compat with tests
 
 DEFAULT_CACHE_TTL_SECONDS = 30
 """V4 Ch4 §4.13 ``decision_cache_ttl_s: 30``."""
@@ -167,7 +170,12 @@ class PolicyEngine:
         record_latency_ms((time.perf_counter() - start) * 1000)
         record_decision(outcome.value)
 
-        if outcome in _AUDITED_OUTCOMES:
+        # Audit explicit PERMIT (rule matched) as well as all restrictive outcomes.
+        # Skip PERMIT-by-default (no matching rule) to avoid flooding the log.
+        should_audit = outcome in _ALWAYS_AUDITED_OUTCOMES or (
+            outcome == PolicyOutcome.PERMIT and bool(decision.matching_rules)
+        )
+        if should_audit:
             self._audit(request, decision)
 
         return decision

@@ -1,0 +1,12 @@
+[Unit]
+Description=VoiceOS MongoDB daily backup timer
+Requires=voiceos-mongodb-backup.service
+
+[Timer]
+# Daily at 01:30 UTC — after analytics rollup (00:30) but before business hours
+OnCalendar=*-*-* 01:30:00 UTC
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

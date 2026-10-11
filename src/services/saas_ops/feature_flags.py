@@ -88,6 +88,10 @@ class FeatureFlagService:
         self._invalidate_cache(flag_name, scope_value or "")
         return flag
 
+    def list_targeting_rows(self, flag_name: str) -> tuple[FeatureFlag, ...]:
+        """Every targeting row (GLOBAL/PLAN/COHORT/TENANT) defined for ``flag_name``."""
+        return self._repo.list_for_flag(flag_name)
+
     def is_enabled(self, flag_name: str, tenant_id: TenantId) -> bool:
         """Resolve whether ``flag_name`` is enabled for ``tenant_id``.
 

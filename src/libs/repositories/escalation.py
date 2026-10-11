@@ -63,6 +63,17 @@ class EscalationRepository(BaseRepository):
         )
         return tuple(self._hydrate(row) for row in rows)
 
+    def list_for_tenant(self, tenant_id: TenantId, limit: int = 200) -> tuple[EscalationRecord, ...]:
+        """All escalations for ``tenant_id`` (open and resolved), most recent first."""
+        rows = self._tenant_select(
+            _TABLE,
+            _ESCALATION_COLUMNS,
+            tenant_id,
+            order_by="escalated_at DESC",
+            limit=limit,
+        )
+        return tuple(self._hydrate(row) for row in rows)
+
     def resolve(self, tenant_id: TenantId, escalation_id: str, resolved_at: Any, resolution_notes: str) -> None:
         self._tenant_update(
             _TABLE,

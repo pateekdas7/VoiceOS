@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ class QualityDashboard:
             grade=grade,
             weighted_score=weighted_score,
             turn_count=turn_count,
-            recorded_at=datetime.utcnow(),
+            recorded_at=datetime.now(UTC),
         )
         self._records.append(rec)
         logger.debug("QualityDashboard: recorded call %s grade=%s", call_id, grade)
@@ -83,6 +83,11 @@ class QualityDashboard:
         Returns:
             List of QualityRecord, ordered by recorded_at ascending.
         """
+        # Normalise naive datetimes (assumed UTC) so comparison with aware recorded_at works.
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=UTC)
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=UTC)
         results = [r for r in self._records if r.tenant_id == tenant_id and start <= r.recorded_at <= end]
         results.sort(key=lambda r: r.recorded_at)
         return results

@@ -1,0 +1,45 @@
+# VoiceOS GPU Runtime — CPU / Local Development Dependencies
+#
+# Use this file for local development WITHOUT a GPU.
+# vLLM is NOT included — use the mock LLM server instead.
+# TTS is mock-only on CPU (Veena 3B BF16 is too slow for CPU inference).
+# STT uses Whisper "tiny" model in int8 mode (fast on CPU).
+#
+# Install:
+#   pip install -r requirements.cpu.txt
+#
+# Start dev services:
+#   make dev
+
+# ── PyTorch (CPU-only build from PyPI) ────────────────────────────────────────
+torch==2.11.0
+torchvision==0.26.0
+torchaudio==2.11.0
+
+# ── STT engine (CPU mode: device="cpu", compute_type="int8") ─────────────────
+faster-whisper==1.2.1
+ctranslate2==4.8.0
+
+# ── Model utilities ───────────────────────────────────────────────────────────
+transformers==5.12.1
+tokenizers==0.22.2
+huggingface_hub==0.28.0
+numpy==2.3.5
+
+# ── HTTP servers ──────────────────────────────────────────────────────────────
+fastapi==0.115.6
+uvicorn[standard]==0.30.6
+pydantic==2.10.4
+httpx==0.27.0
+
+# ── Config ────────────────────────────────────────────────────────────────────
+pyyaml==6.0.2
+
+# ── Audio conversion (Python 3.13+: audioop removed from stdlib) ─────────────
+# The CPU-side AudioOutput.convert() uses audioop for PCM16→μ-law and resampling.
+# audioop-lts provides the same API as stdlib audioop for Python 3.13+.
+audioop-lts==0.2.1
+
+# ── Test ──────────────────────────────────────────────────────────────────────
+pytest==8.3.3
+pytest-asyncio==0.24.0

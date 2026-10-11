@@ -60,3 +60,54 @@ groups:
         expr: sum(rate(voiceos_negotiation_outcome_total{outcome="ptp_created"}[1h])) / sum(rate(voiceos_call_count_total[1h]))
       - record: voiceos:campaign_completion_rate:ratio_1h
         expr: sum(rate(voiceos_saas_campaign_completed_total[1h])) / sum(rate(voiceos_saas_campaign_activated_total[1h]))
+
+  # ── AI Service Latency Aggregations ─────────────────────────────────────────
+  # Pre-aggregate STT / LLM / TTS latency percentiles over standard windows
+  # so Grafana dashboards read the recorded series rather than running full
+  # histogram_quantile on every panel refresh.
+
+  - name: voiceos_stt_latency
+    rules:
+      - record: voiceos:stt_latency_ms:p95_5m
+        expr: histogram_quantile(0.95, sum(rate(voiceos_stt_latency_ms_bucket[5m])) by (le))
+      - record: voiceos:stt_latency_ms:p95_1h
+        expr: histogram_quantile(0.95, sum(rate(voiceos_stt_latency_ms_bucket[1h])) by (le))
+      - record: voiceos:stt_first_word_latency_ms:p95_5m
+        expr: histogram_quantile(0.95, sum(rate(voiceos_stt_first_word_latency_ms_bucket[5m])) by (le))
+      - record: voiceos:stt_first_word_latency_ms:p95_1h
+        expr: histogram_quantile(0.95, sum(rate(voiceos_stt_first_word_latency_ms_bucket[1h])) by (le))
+      - record: voiceos:stt_error_rate:ratio_5m
+        expr: sum(rate(voiceos_stt_requests_total{status="error"}[5m])) / sum(rate(voiceos_stt_requests_total[5m]))
+
+  - name: voiceos_llm_latency
+    rules:
+      - record: voiceos:llm_ttft_ms:p95_5m
+        expr: histogram_quantile(0.95, sum(rate(voiceos_llm_ttft_ms_bucket[5m])) by (le))
+      - record: voiceos:llm_ttft_ms:p95_1h
+        expr: histogram_quantile(0.95, sum(rate(voiceos_llm_ttft_ms_bucket[1h])) by (le))
+      - record: voiceos:llm_tokens_per_second:p50_5m
+        expr: histogram_quantile(0.50, sum(rate(voiceos_llm_tokens_per_second_bucket[5m])) by (le))
+      - record: voiceos:llm_completion_latency_ms:p95_5m
+        expr: histogram_quantile(0.95, sum(rate(voiceos_llm_completion_latency_ms_bucket[5m])) by (le))
+      - record: voiceos:llm_error_rate:ratio_5m
+        expr: sum(rate(voiceos_llm_requests_total{status="error"}[5m])) / sum(rate(voiceos_llm_requests_total[5m]))
+
+  - name: voiceos_tts_latency
+    rules:
+      - record: voiceos:tts_first_clause_latency_ms:p95_5m
+        expr: histogram_quantile(0.95, sum(rate(voiceos_tts_first_clause_latency_ms_bucket[5m])) by (le))
+      - record: voiceos:tts_first_clause_latency_ms:p95_1h
+        expr: histogram_quantile(0.95, sum(rate(voiceos_tts_first_clause_latency_ms_bucket[1h])) by (le))
+      - record: voiceos:tts_clause_latency_ms:p95_5m
+        expr: histogram_quantile(0.95, sum(rate(voiceos_tts_clause_latency_ms_bucket[5m])) by (le))
+      - record: voiceos:tts_error_rate:ratio_5m
+        expr: sum(rate(voiceos_tts_requests_total{status="error"}[5m])) / sum(rate(voiceos_tts_requests_total[5m]))
+
+  - name: voiceos_conversation_engine_latency
+    rules:
+      - record: voiceos:conversation_engine_latency_ms:p95_5m
+        expr: histogram_quantile(0.95, sum(rate(voiceos_conversation_engine_request_duration_ms_bucket[5m])) by (le))
+      - record: voiceos:conversation_engine_latency_ms:p95_1h
+        expr: histogram_quantile(0.95, sum(rate(voiceos_conversation_engine_request_duration_ms_bucket[1h])) by (le))
+      - record: voiceos:conversation_engine_error_rate:ratio_5m
+        expr: sum(rate(voiceos_conversation_engine_errors_total[5m])) / sum(rate(voiceos_conversation_engine_requests_total[5m]))

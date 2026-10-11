@@ -58,6 +58,7 @@ class _MockLLMAdapter:
         prompt: str,
         response_plan: ResponsePlan,
         max_tokens: int,
+        cancel_event: object = None,
     ) -> AsyncIterator[TokenChunk]:
         async def _gen() -> AsyncGenerator[TokenChunk, None]:
             tokens = [

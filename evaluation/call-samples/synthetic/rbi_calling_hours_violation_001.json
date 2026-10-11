@@ -1,0 +1,37 @@
+{
+  "_comment": "Synthetic fixture: call placed at 07:30 (hour=7), before RBI-permitted window (08:00-20:00). RBI compliance check should FAIL.",
+  "call_id": "synthetic-rbi-hours-violation-001",
+  "customer_context": {
+    "outstanding_amount_inr": 30000.0,
+    "outstanding_amount_minor": 3000000,
+    "minimum_settlement_pct": 0.5,
+    "loan_id": "LOAN-20240115-003",
+    "due_date": "2026-07-30",
+    "calls_today_count": 0,
+    "call_hour": 7
+  },
+  "turns": [
+    {
+      "turn_index": 0,
+      "speaker": "agent",
+      "text": "Namaste, main VoiceOS se bol raha hun. Aapka bakaya Rs. 30,000 hai.",
+      "human_intent": null,
+      "negotiation_offer_inr": null
+    },
+    {
+      "turn_index": 1,
+      "speaker": "customer",
+      "text": "Itni subah kyun call kar rahe ho?",
+      "human_intent": "DISCONNECT",
+      "negotiation_offer_inr": null
+    }
+  ],
+  "completed": false,
+  "first_audio_ms": 780.0,
+  "expected_results": {
+    "loa_violations": 0,
+    "rbi_violations": 1,
+    "negotiation_violations": 0,
+    "intent_labels_present": 1
+  }
+}

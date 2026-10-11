@@ -5,6 +5,7 @@ Architecture: V5 Ch4.3 (Promise-To-Pay); V3 Ch8 (Idempotency); Invariant EV-7.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from ..contracts.models.collections import PromiseToPay, PTPStatus
@@ -106,6 +107,16 @@ class PromiseToPayRepository(BaseRepository):
             extra_where="ptp_id = %s",
             extra_params=(ptp_id,),
         )
+
+    def sum_kept_amount_between(self, tenant_id: TenantId, start: datetime, end: datetime) -> int:
+        """Sum promised_amount_minor for KEPT PTPs within [start, end) for daily analytics rollups."""
+        cur = self._execute(
+            f"SELECT COALESCE(SUM(promised_amount_minor), 0) FROM {_TABLE}"
+            f" WHERE tenant_id = %s AND status = 'KEPT' AND recorded_at >= %s AND recorded_at < %s",
+            (str(tenant_id), start, end),
+        )
+        row = cur.fetchone()
+        return int(row[0]) if row else 0
 
     def find_by_loan(self, tenant_id: TenantId, loan_account_id: str) -> tuple[PromiseToPay, ...]:
         """Find all PTPs recorded against a loan account, scoped to ``tenant_id``."""

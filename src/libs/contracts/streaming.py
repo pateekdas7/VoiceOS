@@ -247,3 +247,20 @@ class AudioClause(BaseModel):
 
     is_final: bool
     """True if this is the last clause of the response; False if more follow."""
+
+    generation: int = Field(default=0, ge=0)
+    """Playback generation this clause was synthesised under (Phase E).
+
+    ``PlaybackScheduler.generation`` monotonically increments on every
+    ``flush()`` (i.e. every barge-in). Producers stamp each clause with the
+    generation snapshotted at the start of their synthesis scope; consumers
+    (``StartupBufferGate.enqueue`` / ``_release_buffered``,
+    ``PlaybackScheduler.enqueue``, and the WS entrypoint's per-frame Twilio
+    send loop) compare against the scheduler's current generation and DROP
+    anything stale. This is the fail-closed invalidation channel: a clause
+    from generation N whose synthesis coroutine resumed AFTER a barge-in
+    (and after the next turn cleared ``barge_in_event``) must never enter
+    the queue for generation N+1 or reach Twilio. Default 0 preserves
+    backwards compatibility for tests/callers that construct AudioClause
+    without a scheduler in play (still-valid: gen-0 matches the scheduler
+    default of 0 until the first flush)."""
