@@ -1,4 +1,5 @@
 """Support ticket system (W17 — Operational Support System)."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -69,19 +70,27 @@ class SupportTicketRepository:
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
             RETURNING id, status, created_at, updated_at
             """,
-            (tenant_id, subject, description, priority, category,
-             reporter_email, reporter_name, sla_deadline),
+            (tenant_id, subject, description, priority, category, reporter_email, reporter_name, sla_deadline),
         )
         row = cur.fetchone()
         self._conn.commit()
         cur.close()
         return SupportTicket(
-            id=row[0], tenant_id=tenant_id, subject=subject,
-            description=description, status=row[1], priority=priority,
-            category=category, reporter_email=reporter_email,
-            reporter_name=reporter_name, assignee_email=None,
-            resolution_note=None, created_at=row[2], updated_at=row[3],
-            resolved_at=None, sla_deadline=sla_deadline,
+            id=row[0],
+            tenant_id=tenant_id,
+            subject=subject,
+            description=description,
+            status=row[1],
+            priority=priority,
+            category=category,
+            reporter_email=reporter_email,
+            reporter_name=reporter_name,
+            assignee_email=None,
+            resolution_note=None,
+            created_at=row[2],
+            updated_at=row[3],
+            resolved_at=None,
+            sla_deadline=sla_deadline,
         )
 
     def get(self, ticket_id: str) -> SupportTicket | None:
@@ -117,9 +126,7 @@ class SupportTicketRepository:
         cur.close()
         return [_row_to_ticket(r) for r in rows]
 
-    def list_for_tenant(
-        self, tenant_id: str, *, status: str | None = None, limit: int = 50
-    ) -> list[SupportTicket]:
+    def list_for_tenant(self, tenant_id: str, *, status: str | None = None, limit: int = 50) -> list[SupportTicket]:
         params: list[Any] = [tenant_id]
         extra = ""
         if status:
@@ -173,9 +180,7 @@ class SupportTicketRepository:
         cur.close()
         return self.get(ticket_id)
 
-    def add_comment(
-        self, ticket_id: str, author: str, body: str, is_internal: bool = False
-    ) -> TicketComment:
+    def add_comment(self, ticket_id: str, author: str, body: str, is_internal: bool = False) -> TicketComment:
         cur = self._conn.cursor()
         cur.execute(
             "INSERT INTO support_ticket_comments (ticket_id, author, body, is_internal) "
@@ -187,8 +192,12 @@ class SupportTicketRepository:
         self._conn.commit()
         cur.close()
         return TicketComment(
-            id=row[0], ticket_id=ticket_id, author=author,
-            body=body, is_internal=is_internal, created_at=row[1],
+            id=row[0],
+            ticket_id=ticket_id,
+            author=author,
+            body=body,
+            is_internal=is_internal,
+            created_at=row[1],
         )
 
     def get_comments(self, ticket_id: str) -> list[TicketComment]:
@@ -201,8 +210,7 @@ class SupportTicketRepository:
         rows = cur.fetchall()
         cur.close()
         return [
-            TicketComment(id=r[0], ticket_id=r[1], author=r[2],
-                          body=r[3], is_internal=r[4], created_at=r[5])
+            TicketComment(id=r[0], ticket_id=r[1], author=r[2], body=r[3], is_internal=r[4], created_at=r[5])
             for r in rows
         ]
 
@@ -254,10 +262,19 @@ _SELECT = (
 
 def _row_to_ticket(row: tuple) -> SupportTicket:
     return SupportTicket(
-        id=row[0], tenant_id=row[1], subject=row[2], description=row[3],
-        status=row[4], priority=row[5], category=row[6],
-        reporter_email=row[7], reporter_name=row[8],
-        assignee_email=row[9], resolution_note=row[10],
-        created_at=row[11], updated_at=row[12],
-        resolved_at=row[13], sla_deadline=row[14],
+        id=row[0],
+        tenant_id=row[1],
+        subject=row[2],
+        description=row[3],
+        status=row[4],
+        priority=row[5],
+        category=row[6],
+        reporter_email=row[7],
+        reporter_name=row[8],
+        assignee_email=row[9],
+        resolution_note=row[10],
+        created_at=row[11],
+        updated_at=row[12],
+        resolved_at=row[13],
+        sla_deadline=row[14],
     )

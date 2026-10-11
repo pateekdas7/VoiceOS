@@ -15,6 +15,7 @@ run on any Python environment, including the CPU node without the full
 Run:
     python3 -m pytest tests/unit/web_api/test_phase2_route_order.py --noconftest -v
 """
+
 from __future__ import annotations
 
 import pathlib

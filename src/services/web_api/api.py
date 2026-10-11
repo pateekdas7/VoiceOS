@@ -454,6 +454,7 @@ def create_web_api(
     # (AdminRoleGateMiddleware + AuditMiddleware) applies to /admin/v1/* routes.
     if admin_portal_app is not None:
         from starlette.routing import Mount as _Mount
+
         routes.append(_Mount("", app=admin_portal_app))
 
     # Startup handlers for background tasks (GPU polling, daily aggregation,
@@ -2898,9 +2899,7 @@ def _build_startup_handlers(
 
         def _start_escalation_checker() -> None:
             asyncio.ensure_future(_run_escalation_checker())  # noqa: RUF006
-            _log.info(
-                "Alert escalation scheduler started (%ds interval)", escalation_interval_s
-            )
+            _log.info("Alert escalation scheduler started (%ds interval)", escalation_interval_s)
 
         registry.register("escalation_scheduler", _start_escalation_checker)
 
@@ -3137,6 +3136,7 @@ def _build_callbacks_routes(callback_scheduler: Any) -> list[Route]:
 # W17: Support Ticket routes
 # ---------------------------------------------------------------------------
 
+
 def _build_support_routes(ticket_repo: Any) -> list[Route]:
     """CRUD for support tickets + comments.
 
@@ -3151,20 +3151,30 @@ def _build_support_routes(ticket_repo: Any) -> list[Route]:
 
     def _serialize_ticket(t: Any) -> dict:
         return {
-            "id": t.id, "tenantId": t.tenant_id, "subject": t.subject,
-            "description": t.description, "status": t.status,
-            "priority": t.priority, "category": t.category,
-            "reporterEmail": t.reporter_email, "reporterName": t.reporter_name,
-            "assigneeEmail": t.assignee_email, "resolutionNote": t.resolution_note,
-            "createdAt": t.created_at.isoformat(), "updatedAt": t.updated_at.isoformat(),
+            "id": t.id,
+            "tenantId": t.tenant_id,
+            "subject": t.subject,
+            "description": t.description,
+            "status": t.status,
+            "priority": t.priority,
+            "category": t.category,
+            "reporterEmail": t.reporter_email,
+            "reporterName": t.reporter_name,
+            "assigneeEmail": t.assignee_email,
+            "resolutionNote": t.resolution_note,
+            "createdAt": t.created_at.isoformat(),
+            "updatedAt": t.updated_at.isoformat(),
             "resolvedAt": t.resolved_at.isoformat() if t.resolved_at else None,
             "slaDeadline": t.sla_deadline.isoformat() if t.sla_deadline else None,
         }
 
     def _serialize_comment(c: Any) -> dict:
         return {
-            "id": c.id, "ticketId": c.ticket_id, "author": c.author,
-            "body": c.body, "isInternal": c.is_internal,
+            "id": c.id,
+            "ticketId": c.ticket_id,
+            "author": c.author,
+            "body": c.body,
+            "isInternal": c.is_internal,
             "createdAt": c.created_at.isoformat(),
         }
 
@@ -3248,6 +3258,7 @@ def _build_support_routes(ticket_repo: Any) -> list[Route]:
 # W17: Customer impersonation routes
 # ---------------------------------------------------------------------------
 
+
 def _build_impersonation_routes(impersonation_svc: Any) -> list[Route]:
     """Customer impersonation with strict audit trail.
 
@@ -3259,18 +3270,25 @@ def _build_impersonation_routes(impersonation_svc: Any) -> list[Route]:
 
     def _serialize_session(s: Any) -> dict:
         return {
-            "id": s.id, "operatorId": s.operator_id, "operatorEmail": s.operator_email,
-            "tenantId": s.tenant_id, "reason": s.reason,
+            "id": s.id,
+            "operatorId": s.operator_id,
+            "operatorEmail": s.operator_email,
+            "tenantId": s.tenant_id,
+            "reason": s.reason,
             "startedAt": s.started_at.isoformat(),
             "endedAt": s.ended_at.isoformat() if s.ended_at else None,
-            "isActive": s.is_active, "ipAddress": s.ip_address,
+            "isActive": s.is_active,
+            "ipAddress": s.ip_address,
             "actionsCount": s.actions_count,
         }
 
     def _serialize_action(a: Any) -> dict:
         return {
-            "id": a.id, "sessionId": a.session_id, "actionType": a.action_type,
-            "resource": a.resource, "details": a.details,
+            "id": a.id,
+            "sessionId": a.session_id,
+            "actionType": a.action_type,
+            "resource": a.resource,
+            "details": a.details,
             "performedAt": a.performed_at.isoformat(),
         }
 
@@ -3279,9 +3297,7 @@ def _build_impersonation_routes(impersonation_svc: Any) -> list[Route]:
         session_state = getattr(request.state, "session", None) or {}
         operator_id = body.get("operatorId") or session_state.get("sub", "unknown")
         operator_email = body.get("operatorEmail") or session_state.get("email", "unknown")
-        ip = request.headers.get("x-forwarded-for") or (
-            request.client.host if request.client else None
-        )
+        ip = request.headers.get("x-forwarded-for") or (request.client.host if request.client else None)
         try:
             session = impersonation_svc.start_session(
                 operator_id=operator_id,
@@ -3325,11 +3341,13 @@ def _build_impersonation_routes(impersonation_svc: Any) -> list[Route]:
 # W17: SLA summary + public service status page
 # ---------------------------------------------------------------------------
 
+
 def _build_sla_routes(ticket_repo: Any) -> list[Route]:
     """GET /admin/support/sla-summary — aggregated SLA health metrics."""
 
     async def sla_summary(_request: Request) -> JSONResponse:
         import datetime as _dt
+
         stats = ticket_repo.sla_stats()
         stats["asOf"] = _dt.datetime.utcnow().isoformat() + "Z"
         return JSONResponse(stats)
@@ -3360,7 +3378,8 @@ def _build_security_incident_routes(incident_response: Any) -> list[Route]:
             "context": inc.context,
             "openedAt": inc.opened_at.isoformat(),
             "notificationDeadlineAt": inc.notification_deadline_at.isoformat()
-                if inc.notification_deadline_at else None,
+            if inc.notification_deadline_at
+            else None,
             "resolution": inc.resolution,
             "closedAt": inc.closed_at.isoformat() if inc.closed_at else None,
         }
@@ -3419,19 +3438,21 @@ def _build_service_status_route(health_aggregator: Any) -> list[Route]:
 
     async def service_status(_request: Request) -> JSONResponse:
         import datetime as _dt
+
         if health_aggregator is None:
-            return JSONResponse({"status": "unknown", "components": [], "updatedAt": _dt.datetime.utcnow().isoformat() + "Z"})
+            return JSONResponse(
+                {"status": "unknown", "components": [], "updatedAt": _dt.datetime.utcnow().isoformat() + "Z"}
+            )
         report = await health_aggregator.report()
-        components = [
-            {"name": name, "status": status.value}
-            for name, status in report.components.items()
-        ]
+        components = [{"name": name, "status": status.value} for name, status in report.components.items()]
         overall = "degraded" if any(c["status"] != "healthy" for c in components) else "operational"
-        return JSONResponse({
-            "status": overall,
-            "components": components,
-            "updatedAt": _dt.datetime.utcnow().isoformat() + "Z",
-        })
+        return JSONResponse(
+            {
+                "status": overall,
+                "components": components,
+                "updatedAt": _dt.datetime.utcnow().isoformat() + "Z",
+            }
+        )
 
     return [Route("/status", service_status, methods=["GET"])]
 

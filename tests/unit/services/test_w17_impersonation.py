@@ -4,6 +4,7 @@ Run with:
     cd ~/VoiceOS-phase17
     python3 -m pytest tests/unit/services/test_w17_impersonation.py --noconftest -v
 """
+
 from __future__ import annotations
 
 import uuid
@@ -21,6 +22,7 @@ from src.services.support.impersonation import (
 # ---------------------------------------------------------------------------
 # Fake DB infrastructure
 # ---------------------------------------------------------------------------
+
 
 class _FakeCursor:
     def __init__(self, script: list[Any]) -> None:
@@ -85,15 +87,23 @@ def _make_session_row(
     actions_count: int = 0,
 ) -> tuple:
     return (
-        session_id, operator_id, operator_email, tenant_id, reason,
-        started_at or datetime.now(UTC), ended_at, is_active,
-        ip_address, actions_count,
+        session_id,
+        operator_id,
+        operator_email,
+        tenant_id,
+        reason,
+        started_at or datetime.now(UTC),
+        ended_at,
+        is_active,
+        ip_address,
+        actions_count,
     )
 
 
 # ---------------------------------------------------------------------------
 # Max-active-per-operator constant
 # ---------------------------------------------------------------------------
+
 
 def test_max_active_per_operator_is_one() -> None:
     assert _MAX_ACTIVE_PER_OPERATOR == 1
@@ -102,6 +112,7 @@ def test_max_active_per_operator_is_one() -> None:
 # ---------------------------------------------------------------------------
 # Row-to-dataclass mapping
 # ---------------------------------------------------------------------------
+
 
 def test_row_to_session_active() -> None:
     row = _make_session_row(is_active=True, actions_count=3)
@@ -128,6 +139,7 @@ def test_row_to_session_ended() -> None:
 # ---------------------------------------------------------------------------
 # ImpersonationService.start_session
 # ---------------------------------------------------------------------------
+
 
 def test_start_session_succeeds_when_no_active_session() -> None:
     session_id = str(uuid.uuid4())
@@ -169,7 +181,9 @@ def test_start_session_blocked_when_operator_has_active_session() -> None:
 
 
 def test_start_session_error_message_includes_operator_email() -> None:
-    conn = _FakeConn([(1,)],)
+    conn = _FakeConn(
+        [(1,)],
+    )
     svc = ImpersonationService(conn)
     with pytest.raises(ValueError, match=r"ops@company\.com"):
         svc.start_session(
@@ -183,7 +197,9 @@ def test_start_session_error_message_includes_operator_email() -> None:
 def test_start_session_with_ip_address() -> None:
     session_id = str(uuid.uuid4())
     now = datetime.now(UTC)
-    conn = _FakeConn([(0,), (session_id, now)],)
+    conn = _FakeConn(
+        [(0,), (session_id, now)],
+    )
     svc = ImpersonationService(conn)
     session = svc.start_session(
         operator_id="op-1",
@@ -198,11 +214,15 @@ def test_start_session_with_ip_address() -> None:
 def test_start_session_commits_transaction() -> None:
     session_id = str(uuid.uuid4())
     now = datetime.now(UTC)
-    conn = _FakeConn([(0,), (session_id, now)],)
+    conn = _FakeConn(
+        [(0,), (session_id, now)],
+    )
     svc = ImpersonationService(conn)
     svc.start_session(
-        operator_id="op-1", operator_email="o@o.com",
-        tenant_id="t", reason="r",
+        operator_id="op-1",
+        operator_email="o@o.com",
+        tenant_id="t",
+        reason="r",
     )
     assert conn.committed
 
@@ -211,12 +231,13 @@ def test_start_session_commits_transaction() -> None:
 # ImpersonationService.end_session
 # ---------------------------------------------------------------------------
 
+
 def test_end_session_returns_updated_session() -> None:
     now = datetime.now(UTC)
     ended_row = _make_session_row(ended_at=now, is_active=False)
     conn = _FakeConn(
-        [("s1",)],       # cursor 1: UPDATE RETURNING id
-        [ended_row],     # cursor 2: SELECT in get_session()
+        [("s1",)],  # cursor 1: UPDATE RETURNING id
+        [ended_row],  # cursor 2: SELECT in get_session()
     )
     svc = ImpersonationService(conn)
     result = svc.end_session("s1", "op-1")
@@ -226,7 +247,9 @@ def test_end_session_returns_updated_session() -> None:
 
 def test_end_session_wrong_operator_returns_none() -> None:
     """UPDATE WHERE id=%s AND operator_id=%s returns nothing → None."""
-    conn = _FakeConn([None],)
+    conn = _FakeConn(
+        [None],
+    )
     svc = ImpersonationService(conn)
     result = svc.end_session("s1", "wrong-operator")
     assert result is None
@@ -235,8 +258,8 @@ def test_end_session_wrong_operator_returns_none() -> None:
 def test_end_session_commits() -> None:
     ended_row = _make_session_row(ended_at=datetime.now(UTC), is_active=False)
     conn = _FakeConn(
-        [("s1",)],     # cursor 1: UPDATE RETURNING id
-        [ended_row],   # cursor 2: SELECT in get_session()
+        [("s1",)],  # cursor 1: UPDATE RETURNING id
+        [ended_row],  # cursor 2: SELECT in get_session()
     )
     svc = ImpersonationService(conn)
     svc.end_session("s1", "op-1")
@@ -246,6 +269,7 @@ def test_end_session_commits() -> None:
 # ---------------------------------------------------------------------------
 # ImpersonationService.log_action
 # ---------------------------------------------------------------------------
+
 
 def test_log_action_returns_action_object() -> None:
     action_id = str(uuid.uuid4())
@@ -271,7 +295,9 @@ def test_log_action_returns_action_object() -> None:
 
 def test_log_action_without_details_defaults_to_empty_dict() -> None:
     now = datetime.now(UTC)
-    conn = _FakeConn([(str(uuid.uuid4()), now), None],)
+    conn = _FakeConn(
+        [(str(uuid.uuid4()), now), None],
+    )
     svc = ImpersonationService(conn)
     action = svc.log_action("s1", action_type="VIEW_LEADS", resource="leads/")
     assert action.details == {}
@@ -279,7 +305,9 @@ def test_log_action_without_details_defaults_to_empty_dict() -> None:
 
 def test_log_action_commits() -> None:
     now = datetime.now(UTC)
-    conn = _FakeConn([(str(uuid.uuid4()), now), None],)
+    conn = _FakeConn(
+        [(str(uuid.uuid4()), now), None],
+    )
     svc = ImpersonationService(conn)
     svc.log_action("s1", action_type="X", resource="r")
     assert conn.committed
@@ -289,9 +317,12 @@ def test_log_action_commits() -> None:
 # ImpersonationService.get_session
 # ---------------------------------------------------------------------------
 
+
 def test_get_session_returns_session() -> None:
     row = _make_session_row(session_id="s-xyz")
-    conn = _FakeConn([row],)
+    conn = _FakeConn(
+        [row],
+    )
     svc = ImpersonationService(conn)
     s = svc.get_session("s-xyz")
     assert s is not None
@@ -299,7 +330,9 @@ def test_get_session_returns_session() -> None:
 
 
 def test_get_session_not_found_returns_none() -> None:
-    conn = _FakeConn([None],)
+    conn = _FakeConn(
+        [None],
+    )
     svc = ImpersonationService(conn)
     s = svc.get_session("nonexistent")
     assert s is None
@@ -309,8 +342,11 @@ def test_get_session_not_found_returns_none() -> None:
 # ImpersonationService.list_sessions — filter SQL
 # ---------------------------------------------------------------------------
 
+
 def test_list_sessions_no_filter_no_where() -> None:
-    conn = _FakeConn([[]],)
+    conn = _FakeConn(
+        [[]],
+    )
     svc = ImpersonationService(conn)
     svc.list_sessions()
     sql = conn.last_cursor.executed[0][0]
@@ -318,7 +354,9 @@ def test_list_sessions_no_filter_no_where() -> None:
 
 
 def test_list_sessions_active_only_adds_is_active_clause() -> None:
-    conn = _FakeConn([[]],)
+    conn = _FakeConn(
+        [[]],
+    )
     svc = ImpersonationService(conn)
     svc.list_sessions(active_only=True)
     sql = conn.last_cursor.executed[0][0]
@@ -326,7 +364,9 @@ def test_list_sessions_active_only_adds_is_active_clause() -> None:
 
 
 def test_list_sessions_tenant_filter_adds_tenant_id_clause() -> None:
-    conn = _FakeConn([[]],)
+    conn = _FakeConn(
+        [[]],
+    )
     svc = ImpersonationService(conn)
     svc.list_sessions(tenant_id="tenant-x")
     sql = conn.last_cursor.executed[0][0]
@@ -334,7 +374,9 @@ def test_list_sessions_tenant_filter_adds_tenant_id_clause() -> None:
 
 
 def test_list_sessions_operator_filter() -> None:
-    conn = _FakeConn([[]],)
+    conn = _FakeConn(
+        [[]],
+    )
     svc = ImpersonationService(conn)
     svc.list_sessions(operator_id="op-99")
     sql = conn.last_cursor.executed[0][0]
@@ -342,7 +384,9 @@ def test_list_sessions_operator_filter() -> None:
 
 
 def test_list_sessions_combined_filters_use_and() -> None:
-    conn = _FakeConn([[]],)
+    conn = _FakeConn(
+        [[]],
+    )
     svc = ImpersonationService(conn)
     svc.list_sessions(tenant_id="t", active_only=True)
     sql = conn.last_cursor.executed[0][0]
@@ -353,14 +397,17 @@ def test_list_sessions_combined_filters_use_and() -> None:
 # ImpersonationService.get_actions
 # ---------------------------------------------------------------------------
 
+
 def test_get_actions_returns_action_list() -> None:
     now = datetime.now(UTC)
-    conn = _FakeConn([
+    conn = _FakeConn(
         [
-            ("a1", "s1", "VIEW_CAMPAIGN", "campaigns/c1", {}, now),
-            ("a2", "s1", "VIEW_LEADS",    "leads/",        {}, now),
+            [
+                ("a1", "s1", "VIEW_CAMPAIGN", "campaigns/c1", {}, now),
+                ("a2", "s1", "VIEW_LEADS", "leads/", {}, now),
+            ],
         ],
-    ],)
+    )
     svc = ImpersonationService(conn)
     actions = svc.get_actions("s1")
     assert len(actions) == 2
@@ -370,7 +417,9 @@ def test_get_actions_returns_action_list() -> None:
 
 
 def test_get_actions_empty_session() -> None:
-    conn = _FakeConn([[]],)
+    conn = _FakeConn(
+        [[]],
+    )
     svc = ImpersonationService(conn)
     actions = svc.get_actions("s-empty")
     assert actions == []

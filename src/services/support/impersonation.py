@@ -1,4 +1,5 @@
 """Customer impersonation with strict audit controls (W17)."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -55,15 +56,13 @@ class ImpersonationService:
     ) -> ImpersonationSession:
         cur = self._conn.cursor()
         cur.execute(
-            "SELECT COUNT(*) FROM impersonation_sessions "
-            "WHERE operator_id=%s AND is_active=TRUE",
+            "SELECT COUNT(*) FROM impersonation_sessions WHERE operator_id=%s AND is_active=TRUE",
             (operator_id,),
         )
         if cur.fetchone()[0] >= _MAX_ACTIVE_PER_OPERATOR:
             cur.close()
             raise ValueError(
-                f"{operator_email} already has an active impersonation session — "
-                "end it before starting a new one."
+                f"{operator_email} already has an active impersonation session — end it before starting a new one."
             )
         cur.execute(
             "INSERT INTO impersonation_sessions "
@@ -75,9 +74,16 @@ class ImpersonationService:
         self._conn.commit()
         cur.close()
         return ImpersonationSession(
-            id=row[0], operator_id=operator_id, operator_email=operator_email,
-            tenant_id=tenant_id, reason=reason, started_at=row[1],
-            ended_at=None, is_active=True, ip_address=ip_address, actions_count=0,
+            id=row[0],
+            operator_id=operator_id,
+            operator_email=operator_email,
+            tenant_id=tenant_id,
+            reason=reason,
+            started_at=row[1],
+            ended_at=None,
+            is_active=True,
+            ip_address=ip_address,
+            actions_count=0,
         )
 
     def end_session(self, session_id: str, operator_id: str) -> ImpersonationSession | None:
@@ -118,8 +124,12 @@ class ImpersonationService:
         self._conn.commit()
         cur.close()
         return ImpersonationAction(
-            id=row[0], session_id=session_id, action_type=action_type,
-            resource=resource, details=details or {}, performed_at=row[1],
+            id=row[0],
+            session_id=session_id,
+            action_type=action_type,
+            resource=resource,
+            details=details or {},
+            performed_at=row[1],
         )
 
     def get_session(self, session_id: str) -> ImpersonationSession | None:
@@ -149,9 +159,7 @@ class ImpersonationService:
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         params.append(limit)
         cur = self._conn.cursor()
-        cur.execute(
-            f"{_SELECT_SESSION} {where} ORDER BY started_at DESC LIMIT %s", params
-        )
+        cur.execute(f"{_SELECT_SESSION} {where} ORDER BY started_at DESC LIMIT %s", params)
         rows = cur.fetchall()
         cur.close()
         return [_row_to_session(r) for r in rows]
@@ -167,8 +175,12 @@ class ImpersonationService:
         cur.close()
         return [
             ImpersonationAction(
-                id=r[0], session_id=r[1], action_type=r[2],
-                resource=r[3], details=r[4], performed_at=r[5],
+                id=r[0],
+                session_id=r[1],
+                action_type=r[2],
+                resource=r[3],
+                details=r[4],
+                performed_at=r[5],
             )
             for r in rows
         ]
@@ -183,8 +195,14 @@ _SELECT_SESSION = (
 
 def _row_to_session(row: tuple) -> ImpersonationSession:
     return ImpersonationSession(
-        id=row[0], operator_id=row[1], operator_email=row[2],
-        tenant_id=row[3], reason=row[4], started_at=row[5],
-        ended_at=row[6], is_active=row[7],
-        ip_address=row[8], actions_count=row[9],
+        id=row[0],
+        operator_id=row[1],
+        operator_email=row[2],
+        tenant_id=row[3],
+        reason=row[4],
+        started_at=row[5],
+        ended_at=row[6],
+        is_active=row[7],
+        ip_address=row[8],
+        actions_count=row[9],
     )

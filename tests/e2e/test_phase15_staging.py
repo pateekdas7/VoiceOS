@@ -141,8 +141,12 @@ def scenario_1_full_happy_path(client: StagingClient, pg_dsn: str) -> bool:
     # 1d. Upload leads as JSON rows (upload endpoint accepts JSON, not multipart)
     log("Uploading 5 leads...")
     rows_payload = [
-        {"phone": f"+91900000{i:04d}", "name": f"Test Lead {i}",
-         "loan_account_id": f"LA{i:06d}", "amount_due": str((i + 1) * 1000)}
+        {
+            "phone": f"+91900000{i:04d}",
+            "name": f"Test Lead {i}",
+            "loan_account_id": f"LA{i:06d}",
+            "amount_due": str((i + 1) * 1000),
+        }
         for i in range(5)
     ]
     upload_resp = client.post(
@@ -160,6 +164,7 @@ def scenario_1_full_happy_path(client: StagingClient, pg_dsn: str) -> bool:
     # 1e. Poll import status until DONE
     log("Polling import status...")
     import time as _time
+
     for _ in range(10):
         st = client.get(f"/campaigns/{campaign_id}/leads/imports/{import_id}")
         status = st.get("status", "")
@@ -268,8 +273,12 @@ def scenario_4_import_resume(client: StagingClient) -> bool:
 
     # Upload 100 rows as JSON (upload endpoint accepts JSON, not multipart)
     rows_payload = [
-        {"phone": f"+91800000{i:04d}", "name": f"Resume Lead {i}",
-         "loan_account_id": f"RL{i:06d}", "amount_due": "5000"}
+        {
+            "phone": f"+91800000{i:04d}",
+            "name": f"Resume Lead {i}",
+            "loan_account_id": f"RL{i:06d}",
+            "amount_due": "5000",
+        }
         for i in range(100)
     ]
     upload_resp = client.post(
@@ -315,7 +324,10 @@ def scenario_5_crash_recovery(pg_dsn: str) -> bool:
     log("Restarting dialer_worker...")
     subprocess.run(
         ["sudo", "-S", "systemctl", "restart", "voiceos-dialer-worker"],
-        input="mamata@1976\n", capture_output=True, text=True, check=False,
+        input="mamata@1976\n",
+        capture_output=True,
+        text=True,
+        check=False,
     )
     time.sleep(5)
 

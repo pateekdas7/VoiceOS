@@ -351,9 +351,16 @@ def create_app() -> Starlette:
     impersonation_svc = ImpersonationService(conn)
 
     # C4 fix: build and mount AdminPortal (Sprint-025 built it; Sprint-026 wires it)
-    admin_portal_app = _build_admin_portal(conn, public_key, tenant_service, user_service,
-                                           campaign_service, billing_service, audit_repository,
-                                           admin_audit_repository)
+    admin_portal_app = _build_admin_portal(
+        conn,
+        public_key,
+        tenant_service,
+        user_service,
+        campaign_service,
+        billing_service,
+        audit_repository,
+        admin_audit_repository,
+    )
 
     # H5 fix: inject real AuditLogger + RegulatoryNotifier into IncidentResponse
     # so DPDP breach notifications and incident lifecycle transitions are durable.
@@ -459,9 +466,7 @@ def _build_admin_portal(
             admin_audit_view_repository=admin_audit_repository,
         ),
         ai_config_admin=AIConfigAdminController(ai_config_svc),
-        api_key_admin=APIKeyAdminController(
-            APIKeyLifecycleService(APIKeyRepository(conn), audit_logger=audit_logger)
-        ),
+        api_key_admin=APIKeyAdminController(APIKeyLifecycleService(APIKeyRepository(conn), audit_logger=audit_logger)),
         audit_logger=audit_logger,
     )
 

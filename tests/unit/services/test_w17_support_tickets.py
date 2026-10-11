@@ -4,6 +4,7 @@ Run with:
     cd ~/VoiceOS-phase17
     python3 -m pytest tests/unit/services/test_w17_support_tickets.py --noconftest -v
 """
+
 from __future__ import annotations
 
 import uuid
@@ -19,6 +20,7 @@ from src.services.support.tickets import (
 # ---------------------------------------------------------------------------
 # Fake DB infrastructure
 # ---------------------------------------------------------------------------
+
 
 class _FakeCursor:
     """Replays a pre-loaded script of results, one per execute() call."""
@@ -104,8 +106,16 @@ def _make_ticket_row(
 ) -> tuple:
     now = datetime.now(UTC)
     return (
-        ticket_id, tenant_id, subject, description, status, priority,
-        category, reporter_email, reporter_name, assignee_email,
+        ticket_id,
+        tenant_id,
+        subject,
+        description,
+        status,
+        priority,
+        category,
+        reporter_email,
+        reporter_name,
+        assignee_email,
         resolution_note,
         created_at or now,
         updated_at or now,
@@ -117,6 +127,7 @@ def _make_ticket_row(
 # ---------------------------------------------------------------------------
 # SLA constants
 # ---------------------------------------------------------------------------
+
 
 def test_sla_hours_critical() -> None:
     assert _SLA_HOURS["CRITICAL"] == 4
@@ -142,14 +153,24 @@ def test_all_standard_priorities_covered() -> None:
 # Row-to-dataclass mapping
 # ---------------------------------------------------------------------------
 
+
 def test_row_to_ticket_full_mapping() -> None:
     now = datetime.now(UTC)
     row = _make_ticket_row(
-        ticket_id="abc", tenant_id="t-xyz", subject="Test subject",
-        description="Test desc", status="IN_PROGRESS", priority="CRITICAL",
-        category="billing", reporter_email="a@b.com", reporter_name="Alice",
-        assignee_email="ops@co.com", resolution_note=None,
-        created_at=now, updated_at=now, resolved_at=None,
+        ticket_id="abc",
+        tenant_id="t-xyz",
+        subject="Test subject",
+        description="Test desc",
+        status="IN_PROGRESS",
+        priority="CRITICAL",
+        category="billing",
+        reporter_email="a@b.com",
+        reporter_name="Alice",
+        assignee_email="ops@co.com",
+        resolution_note=None,
+        created_at=now,
+        updated_at=now,
+        resolved_at=None,
         sla_deadline=now + timedelta(hours=4),
     )
     t = _row_to_ticket(row)
@@ -166,9 +187,7 @@ def test_row_to_ticket_full_mapping() -> None:
 
 def test_row_to_ticket_resolved_row() -> None:
     now = datetime.now(UTC)
-    row = _make_ticket_row(
-        status="RESOLVED", resolved_at=now, resolution_note="Fixed it"
-    )
+    row = _make_ticket_row(status="RESOLVED", resolved_at=now, resolution_note="Fixed it")
     t = _row_to_ticket(row)
     assert t.status == "RESOLVED"
     assert t.resolved_at == now
@@ -178,6 +197,7 @@ def test_row_to_ticket_resolved_row() -> None:
 # ---------------------------------------------------------------------------
 # Repository.create — SLA deadline logic
 # ---------------------------------------------------------------------------
+
 
 def test_create_critical_sla_deadline() -> None:
     """CRITICAL ticket must get a deadline ~4 hours from now."""
@@ -189,9 +209,13 @@ def test_create_critical_sla_deadline() -> None:
     repo = SupportTicketRepository(conn)
     before = datetime.now(UTC)
     ticket = repo.create(
-        tenant_id="t1", subject="S", description="D",
-        priority="CRITICAL", category="c",
-        reporter_email="e@e.com", reporter_name="E",
+        tenant_id="t1",
+        subject="S",
+        description="D",
+        priority="CRITICAL",
+        category="c",
+        reporter_email="e@e.com",
+        reporter_name="E",
     )
     after = datetime.now(UTC)
     assert ticket.sla_deadline is not None
@@ -209,9 +233,13 @@ def test_create_low_priority_sla_deadline() -> None:
     repo = SupportTicketRepository(conn)
     before = datetime.now(UTC)
     ticket = repo.create(
-        tenant_id="t1", subject="S", description="D",
-        priority="LOW", category="c",
-        reporter_email="e@e.com", reporter_name="E",
+        tenant_id="t1",
+        subject="S",
+        description="D",
+        priority="LOW",
+        category="c",
+        reporter_email="e@e.com",
+        reporter_name="E",
     )
     after = datetime.now(UTC)
     expected_low = before + timedelta(hours=72)
@@ -229,9 +257,13 @@ def test_create_unknown_priority_falls_back_to_24h() -> None:
     repo = SupportTicketRepository(conn)
     before = datetime.now(UTC)
     ticket = repo.create(
-        tenant_id="t1", subject="S", description="D",
+        tenant_id="t1",
+        subject="S",
+        description="D",
         priority="SUPERCRITICAL",  # unknown
-        category="c", reporter_email="e@e.com", reporter_name="E",
+        category="c",
+        reporter_email="e@e.com",
+        reporter_name="E",
     )
     after = datetime.now(UTC)
     assert ticket.sla_deadline is not None
@@ -242,12 +274,18 @@ def test_create_unknown_priority_falls_back_to_24h() -> None:
 
 def test_create_commits_transaction() -> None:
     now = datetime.now(UTC)
-    conn = _FakeConn([(str(uuid.uuid4()), "OPEN", now, now)],)
+    conn = _FakeConn(
+        [(str(uuid.uuid4()), "OPEN", now, now)],
+    )
     repo = SupportTicketRepository(conn)
     repo.create(
-        tenant_id="t1", subject="S", description="D",
-        priority="MEDIUM", category="c",
-        reporter_email="e@e.com", reporter_name="E",
+        tenant_id="t1",
+        subject="S",
+        description="D",
+        priority="MEDIUM",
+        category="c",
+        reporter_email="e@e.com",
+        reporter_name="E",
     )
     assert conn.committed
 
@@ -255,12 +293,17 @@ def test_create_commits_transaction() -> None:
 def test_create_returns_correct_field_values() -> None:
     ticket_id = str(uuid.uuid4())
     now = datetime.now(UTC)
-    conn = _FakeConn([(ticket_id, "OPEN", now, now)],)
+    conn = _FakeConn(
+        [(ticket_id, "OPEN", now, now)],
+    )
     repo = SupportTicketRepository(conn)
     ticket = repo.create(
-        tenant_id="tenant-x", subject="My subject",
-        description="My desc", priority="HIGH",
-        category="billing", reporter_email="u@u.com",
+        tenant_id="tenant-x",
+        subject="My subject",
+        description="My desc",
+        priority="HIGH",
+        category="billing",
+        reporter_email="u@u.com",
         reporter_name="User",
     )
     assert ticket.id == ticket_id
@@ -281,9 +324,12 @@ def test_create_returns_correct_field_values() -> None:
 # Repository.get
 # ---------------------------------------------------------------------------
 
+
 def test_get_returns_ticket_when_found() -> None:
     row = _make_ticket_row()
-    conn = _FakeConn([row],)
+    conn = _FakeConn(
+        [row],
+    )
     repo = SupportTicketRepository(conn)
     ticket = repo.get("t1")
     assert ticket is not None
@@ -291,7 +337,9 @@ def test_get_returns_ticket_when_found() -> None:
 
 
 def test_get_returns_none_when_not_found() -> None:
-    conn = _FakeConn([None],)
+    conn = _FakeConn(
+        [None],
+    )
     repo = SupportTicketRepository(conn)
     ticket = repo.get("missing-id")
     assert ticket is None
@@ -301,11 +349,12 @@ def test_get_returns_none_when_not_found() -> None:
 # Repository.update_status
 # ---------------------------------------------------------------------------
 
+
 def test_update_status_resolved_sets_resolved_at() -> None:
     row = _make_ticket_row(status="RESOLVED", resolved_at=datetime.now(UTC))
     conn = _FakeConn(
         [("t1",)],  # cursor 1: UPDATE RETURNING id
-        [row],      # cursor 2: SELECT in self.get()
+        [row],  # cursor 2: SELECT in self.get()
     )
     repo = SupportTicketRepository(conn)
     result = repo.update_status("t1", "RESOLVED", resolution_note="All good")
@@ -314,7 +363,9 @@ def test_update_status_resolved_sets_resolved_at() -> None:
 
 
 def test_update_status_not_found_returns_none() -> None:
-    conn = _FakeConn([None],)  # cursor 1: UPDATE RETURNING returns nothing → early return
+    conn = _FakeConn(
+        [None],
+    )  # cursor 1: UPDATE RETURNING returns nothing → early return
     repo = SupportTicketRepository(conn)
     result = repo.update_status("nonexistent", "RESOLVED")
     assert result is None
@@ -325,7 +376,7 @@ def test_update_status_non_resolved_does_not_set_resolved_at() -> None:
     row = _make_ticket_row(status="IN_PROGRESS", resolved_at=None)
     conn = _FakeConn(
         [("t1",)],  # cursor 1: UPDATE RETURNING id
-        [row],      # cursor 2: SELECT in self.get()
+        [row],  # cursor 2: SELECT in self.get()
     )
     repo = SupportTicketRepository(conn)
     result = repo.update_status("t1", "IN_PROGRESS")
@@ -337,11 +388,12 @@ def test_update_status_non_resolved_does_not_set_resolved_at() -> None:
 # Repository.assign
 # ---------------------------------------------------------------------------
 
+
 def test_assign_returns_updated_ticket() -> None:
     row = _make_ticket_row(assignee_email="ops@ops.com", status="IN_PROGRESS")
     conn = _FakeConn(
         [("t1",)],  # cursor 1: UPDATE RETURNING id
-        [row],      # cursor 2: SELECT in self.get()
+        [row],  # cursor 2: SELECT in self.get()
     )
     repo = SupportTicketRepository(conn)
     result = repo.assign("t1", "ops@ops.com")
@@ -350,7 +402,9 @@ def test_assign_returns_updated_ticket() -> None:
 
 
 def test_assign_not_found_returns_none() -> None:
-    conn = _FakeConn([None],)
+    conn = _FakeConn(
+        [None],
+    )
     repo = SupportTicketRepository(conn)
     result = repo.assign("bad-id", "ops@ops.com")
     assert result is None
@@ -359,6 +413,7 @@ def test_assign_not_found_returns_none() -> None:
 # ---------------------------------------------------------------------------
 # Repository.add_comment
 # ---------------------------------------------------------------------------
+
 
 def test_add_comment_returns_comment_object() -> None:
     comment_id = str(uuid.uuid4())
@@ -380,7 +435,9 @@ def test_add_comment_returns_comment_object() -> None:
 def test_add_internal_comment() -> None:
     comment_id = str(uuid.uuid4())
     now = datetime.now(UTC)
-    conn = _FakeConn([(comment_id, now), None],)
+    conn = _FakeConn(
+        [(comment_id, now), None],
+    )
     repo = SupportTicketRepository(conn)
     comment = repo.add_comment("t1", "ops@co.com", "Internal note", is_internal=True)
     assert comment.is_internal is True
@@ -388,7 +445,9 @@ def test_add_internal_comment() -> None:
 
 def test_add_comment_commits_transaction() -> None:
     now = datetime.now(UTC)
-    conn = _FakeConn([(str(uuid.uuid4()), now), None],)
+    conn = _FakeConn(
+        [(str(uuid.uuid4()), now), None],
+    )
     repo = SupportTicketRepository(conn)
     repo.add_comment("t1", "a@b.com", "Hello")
     assert conn.committed
@@ -398,8 +457,11 @@ def test_add_comment_commits_transaction() -> None:
 # Repository.list_all — filter SQL construction
 # ---------------------------------------------------------------------------
 
+
 def test_list_all_no_filters_no_where_clause() -> None:
-    conn = _FakeConn([[]],)  # fetchall returns empty list
+    conn = _FakeConn(
+        [[]],
+    )  # fetchall returns empty list
     repo = SupportTicketRepository(conn)
     repo.list_all()
     sql = conn.last_cursor.executed[0][0]
@@ -407,7 +469,9 @@ def test_list_all_no_filters_no_where_clause() -> None:
 
 
 def test_list_all_status_filter_includes_where() -> None:
-    conn = _FakeConn([[]],)
+    conn = _FakeConn(
+        [[]],
+    )
     repo = SupportTicketRepository(conn)
     repo.list_all(status="OPEN")
     sql = conn.last_cursor.executed[0][0]
@@ -416,7 +480,9 @@ def test_list_all_status_filter_includes_where() -> None:
 
 
 def test_list_all_priority_filter_included() -> None:
-    conn = _FakeConn([[]],)
+    conn = _FakeConn(
+        [[]],
+    )
     repo = SupportTicketRepository(conn)
     repo.list_all(priority="CRITICAL")
     sql = conn.last_cursor.executed[0][0]
@@ -424,7 +490,9 @@ def test_list_all_priority_filter_included() -> None:
 
 
 def test_list_all_multiple_filters_uses_and() -> None:
-    conn = _FakeConn([[]],)
+    conn = _FakeConn(
+        [[]],
+    )
     repo = SupportTicketRepository(conn)
     repo.list_all(status="OPEN", priority="HIGH")
     sql = conn.last_cursor.executed[0][0]

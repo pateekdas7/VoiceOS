@@ -99,12 +99,20 @@ def scenario_s1_worker_crash(pg_dsn: str) -> bool:
 def _get_real_ids(pg_dsn: str) -> tuple[str, str, str]:
     """Return (tenant_id, campaign_id, lead_id) from real DB rows."""
     import subprocess as sp
-    tenant = sp.run(["psql", pg_dsn, "-t", "-c", "SELECT tenant_id FROM tenants LIMIT 1"],
-                    capture_output=True, text=True).stdout.strip()
-    campaign = sp.run(["psql", pg_dsn, "-t", "-c", f"SELECT campaign_id FROM campaigns WHERE tenant_id='{tenant}' LIMIT 1"],
-                      capture_output=True, text=True).stdout.strip()
-    lead = sp.run(["psql", pg_dsn, "-t", "-c", f"SELECT lead_id FROM leads WHERE tenant_id='{tenant}' LIMIT 1"],
-                  capture_output=True, text=True).stdout.strip()
+
+    tenant = sp.run(
+        ["psql", pg_dsn, "-t", "-c", "SELECT tenant_id FROM tenants LIMIT 1"], capture_output=True, text=True
+    ).stdout.strip()
+    campaign = sp.run(
+        ["psql", pg_dsn, "-t", "-c", f"SELECT campaign_id FROM campaigns WHERE tenant_id='{tenant}' LIMIT 1"],
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    lead = sp.run(
+        ["psql", pg_dsn, "-t", "-c", f"SELECT lead_id FROM leads WHERE tenant_id='{tenant}' LIMIT 1"],
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
     return tenant, campaign, lead
 
 
@@ -140,7 +148,8 @@ def scenario_s2_crash_before_active_calls(pg_dsn: str) -> bool:
 
     check_result = subprocess.run(
         ["psql", pg_dsn, "-t", "-A", "-q", "-c", f"SELECT status FROM call_attempts WHERE attempt_id='{attempt_id}'"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     status = check_result.stdout.strip()
 
@@ -326,7 +335,7 @@ def scenario_s6_redis_restart(redis_password: str = "") -> bool:
         if "PONG" in result.stdout:
             log("PASS: Redis recovered cleanly")
             return True
-        log(f"  Redis not ready yet (attempt {attempt+1}/5): {result.stdout.strip() or result.stderr.strip()}")
+        log(f"  Redis not ready yet (attempt {attempt + 1}/5): {result.stdout.strip() or result.stderr.strip()}")
         time.sleep(2)
     log("FAIL: Redis did not respond to PING after restart")
     return False
@@ -499,10 +508,13 @@ def main() -> None:
     parser.add_argument("--execute", action="store_true", help="Actually run destructive commands (default: dry-run)")
     parser.add_argument("--scenario", choices=list(SCENARIOS.keys()), help="Run only this scenario")
     parser.add_argument(
-        "--pg-dsn", default=os.getenv("POSTGRES_DSN", os.getenv("DATABASE_URL", "postgresql://localhost/voiceos")),
+        "--pg-dsn",
+        default=os.getenv("POSTGRES_DSN", os.getenv("DATABASE_URL", "postgresql://localhost/voiceos")),
         help="PostgreSQL DSN",
     )
-    parser.add_argument("--bff-url", default=os.getenv("PUBLIC_BFF_URL", "http://localhost:8000"), help="bff.js base URL")
+    parser.add_argument(
+        "--bff-url", default=os.getenv("PUBLIC_BFF_URL", "http://localhost:8000"), help="bff.js base URL"
+    )
     parser.add_argument(
         "--twilio-auth-token", default=os.getenv("TWILIO_AUTH_TOKEN", ""), help="Twilio auth token for HMAC"
     )

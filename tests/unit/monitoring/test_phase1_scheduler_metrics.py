@@ -8,6 +8,7 @@ Verifies:
 Run:
     python3 -m pytest tests/unit/monitoring/test_phase1_scheduler_metrics.py --noconftest -v
 """
+
 from __future__ import annotations
 
 import time

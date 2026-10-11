@@ -3,6 +3,7 @@
 Run:
     python3 -m pytest tests/unit/monitoring/test_phase3_registry_and_cardinality.py --noconftest -v
 """
+
 from __future__ import annotations
 
 import pytest
