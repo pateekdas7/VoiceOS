@@ -108,7 +108,8 @@ class SupportTicketRepository:
         assignee: str | None = None,
         limit: int = 100,
     ) -> list[SupportTicket]:
-        clauses, params = [], []
+        clauses: list[str] = []
+        params: list[Any] = []
         if status:
             clauses.append("status=%s")
             params.append(status)
@@ -260,7 +261,7 @@ _SELECT = (
 )
 
 
-def _row_to_ticket(row: tuple) -> SupportTicket:
+def _row_to_ticket(row: tuple[Any, ...]) -> SupportTicket:
     return SupportTicket(
         id=row[0],
         tenant_id=row[1],

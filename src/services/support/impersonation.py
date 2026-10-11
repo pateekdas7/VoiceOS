@@ -147,7 +147,8 @@ class ImpersonationService:
         active_only: bool = False,
         limit: int = 50,
     ) -> list[ImpersonationSession]:
-        clauses, params = [], []
+        clauses: list[str] = []
+        params: list[Any] = []
         if tenant_id:
             clauses.append("tenant_id=%s")
             params.append(tenant_id)
@@ -193,7 +194,7 @@ _SELECT_SESSION = (
 )
 
 
-def _row_to_session(row: tuple) -> ImpersonationSession:
+def _row_to_session(row: tuple[Any, ...]) -> ImpersonationSession:
     return ImpersonationSession(
         id=row[0],
         operator_id=row[1],
