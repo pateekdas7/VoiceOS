@@ -323,6 +323,100 @@ class REDMetrics:
 _RED_METRICS_CACHE: dict[str, REDMetrics] = {}
 
 
+# ---------------------------------------------------------------------------
+# Background handler registry (Phase 3 / G9) — observability for the BFF's
+# in-process asyncio periodic tasks. Replaces the positional-arg
+# `_build_startup_handlers(gpu, analytics, alert_lifecycle)` growth pattern.
+# ---------------------------------------------------------------------------
+
+startup_handlers_gauge = Gauge(
+    "voiceos_startup_handlers",
+    "Count of background handlers registered on the BFF lifespan, by name.",
+    labelnames=["name"],
+)
+
+
+class BackgroundHandlerRegistry:
+    """Collects named ``(name, start_callable)`` triples for the BFF lifespan.
+
+    Each registered handler surfaces as a ``voiceos_startup_handlers{name=...}``
+    gauge value of 1 so operators can diff the deployed set against expected
+    handlers without reading source.
+    """
+
+    def __init__(self) -> None:
+        self._handlers: list[tuple[str, object]] = []
+
+    def register(self, name: str, start_callable: object) -> None:
+        self._handlers.append((name, start_callable))
+        startup_handlers_gauge.labels(name=name).set(1)
+
+    def start_all(self) -> None:
+        for _name, start in self._handlers:
+            start()  # type: ignore[operator]
+
+    def names(self) -> tuple[str, ...]:
+        return tuple(name for name, _ in self._handlers)
+
+    def __len__(self) -> int:
+        return len(self._handlers)
+
+
+# ---------------------------------------------------------------------------
+# Cardinality guard (Phase 3 / G4) — enforce the metric-naming convention
+# and prevent high-cardinality label footguns (tenant_id, call_id, user_id,
+# alert_id, trace_id are per-event IDs — if any of those sneak into a label,
+# the series explodes).
+# ---------------------------------------------------------------------------
+
+_HIGH_CARDINALITY_LABELS: frozenset[str] = frozenset(
+    {
+        "tenant_id",
+        "call_id",
+        "user_id",
+        "alert_id",
+        "trace_id",
+        "request_id",
+        "session_id",
+        "incident_id",
+    }
+)
+
+_METRIC_NAME_PREFIX = "voiceos_"
+
+
+class MetricCardinalityError(ValueError):
+    """Raised when a metric declaration would create an unbounded label set."""
+
+
+def assert_label_cardinality_safe(metric_name: str, label_names: tuple[str, ...]) -> None:
+    """Validate ``metric_name`` + ``label_names`` against VoiceOS conventions.
+
+    Rules (Phase 3 / G4):
+
+    1. Every VoiceOS-emitted metric must start with ``voiceos_`` so Grafana
+       dashboards and alert rules can scope queries by prefix.
+    2. No label may be in the high-cardinality denylist — these are per-event
+       identifiers that must live in logs/traces, not label values.
+
+    Called at module-import time by code that declares collectors; raises
+    :class:`MetricCardinalityError` so the process fails fast on drift
+    rather than silently emitting a runaway series.
+    """
+    if not metric_name.startswith(_METRIC_NAME_PREFIX):
+        raise MetricCardinalityError(
+            f"Metric {metric_name!r} must start with {_METRIC_NAME_PREFIX!r} "
+            "to be routable by VoiceOS dashboards and alert rules."
+        )
+    offenders = sorted(set(label_names) & _HIGH_CARDINALITY_LABELS)
+    if offenders:
+        raise MetricCardinalityError(
+            f"Metric {metric_name!r} declares high-cardinality label(s) "
+            f"{offenders!r}. Per-event IDs belong in logs/traces, not metric "
+            "labels — remove them or aggregate to a bounded dimension."
+        )
+
+
 def get_red_metrics(service_name: str, *, registry: CollectorRegistry | None = None) -> REDMetrics:
     """Return the (process-wide, cached) :class:`REDMetrics` for ``service_name``.
 

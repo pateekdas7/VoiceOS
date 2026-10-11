@@ -16,6 +16,7 @@ groups:
           severity: warning
           route: ticket
         annotations:
+          runbook_url: /docs/runbooks/alerts/ptp-rate-drop.md
           summary: "Promise-to-pay rate dropped more than 30% vs. the same hour yesterday"
           description: "voiceos:ptp_rate:ratio_1h is more than 30% below its value 24h ago -- investigate campaign/strategy-engine regressions before assuming seasonality."
 
@@ -26,6 +27,7 @@ groups:
           severity: warning
           route: ticket
         annotations:
+          runbook_url: /docs/runbooks/alerts/campaign-completion-rate-drop.md
           summary: "Campaign completion rate dropped more than 30% vs. the same hour yesterday"
           description: "voiceos:campaign_completion_rate:ratio_1h is more than 30% below its value 24h ago -- check ScheduleEngine/RetryPolicyEngine for a stuck or mis-configured campaign."
 
@@ -37,6 +39,7 @@ groups:
           route: ticket
           team: operations
         annotations:
+          runbook_url: /docs/runbooks/alerts/hitlsla-breach.md
           summary: "HITL SLA breaches detected for tenant {{ $labels.tenant_id }}"
           description: >
             voiceos_hitl_sla_breached_total is incrementing — escalated calls are
@@ -53,6 +56,7 @@ groups:
           route: page
           team: operations
         annotations:
+          runbook_url: /docs/runbooks/alerts/hitlsla-breach-critical.md
           summary: "Critical HITL SLA breach rate — 6+ per hour for tenant {{ $labels.tenant_id }}"
           description: >
             More than 6 HITL SLA breaches per hour for tenant {{ $labels.tenant_id }}.
@@ -67,6 +71,7 @@ groups:
           route: page
           team: security
         annotations:
+          runbook_url: /docs/runbooks/alerts/tenant-isolation-violation.md
           summary: "Tenant isolation violation detected"
           description: >
             voiceos_tenant_isolation_violations_total has incremented — a request
@@ -83,6 +88,7 @@ groups:
           route: page
           team: finance
         annotations:
+          runbook_url: /docs/runbooks/alerts/billing-inconsistency.md
           summary: "Billing inconsistency detected"
           description: >
             voiceos_billing_inconsistency_total has incremented — a billing event

@@ -1,0 +1,49 @@
+# DEPRECATED (Phase 2 / G2) — DO NOT APPLY.
+#
+# The single source of truth for Alertmanager routing is now:
+#   monitoring/grafana/alerts/alertmanager.yml
+#
+# The infra Deployment at infra/k8s/observability/alertmanager.yaml mounts
+# that file as a ConfigMap called `alertmanager-config-template`. Keeping
+# this stub under the same ConfigMap name would silently override the real
+# routing (critical->pagerduty, warning->jira, info->slack, all->webhook)
+# with the obsolete "all->10.0.2.2" rule below.
+#
+# The CI drift check at scripts/ci/alertmanager_config_drift.py verifies
+# this file is not referenced by any deploy manifest.
+#
+# Original (obsolete) contents follow for historical reference only.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config-template-OBSOLETE
+  namespace: voiceos-ops
+data:
+  alertmanager.yml: |
+    global:
+      resolve_timeout: 5m
+    route:
+      receiver: system-x
+      group_by: [alertname, service]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      routes:
+        - matchers: [severity=critical]
+          receiver: system-x
+          continue: false
+          group_wait: 10s
+          repeat_interval: 15m
+        - matchers: [severity=warning]
+          receiver: system-x
+          continue: false
+          repeat_interval: 12h
+    inhibit_rules:
+      - source_matchers: [severity=critical]
+        target_matchers: [severity=warning]
+        equal: [alertname, service]
+    receivers:
+      - name: system-x
+        webhook_configs:
+          - url: http://10.0.2.2:8001/webhooks/alertmanager
+            send_resolved: true

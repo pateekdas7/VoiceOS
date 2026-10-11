@@ -14,6 +14,7 @@ groups:
           route: ticket
           team: platform
         annotations:
+          runbook_url: /docs/runbooks/alerts/callback-auth-failure.md
           summary: "Dialer callback HMAC validation failures elevated ({{ $value | humanize }}/s)"
           description: >
             voiceos_callback_auth_failures_total is rising — more than 0.1 /s
@@ -30,6 +31,7 @@ groups:
           route: page
           team: platform
         annotations:
+          runbook_url: /docs/runbooks/alerts/callback-auth-failure-critical.md
           summary: "Critical: dialer callback auth failures > 1/s — calls not progressing"
           description: >
             More than 1 Twilio callback/s is being rejected. At this rate the dialer
@@ -45,6 +47,7 @@ groups:
           route: ticket
           team: platform
         annotations:
+          runbook_url: /docs/runbooks/alerts/queue-backlog.md
           summary: "Dialer queue backlog high for tenant {{ $labels.tenant_id }} ({{ $value }} items)"
           description: >
             The outbound-call Redis queue for tenant {{ $labels.tenant_id }} has
@@ -61,6 +64,7 @@ groups:
           route: page
           team: platform
         annotations:
+          runbook_url: /docs/runbooks/alerts/queue-backlog-critical.md
           summary: "Critical: dialer queue > 2000 items for tenant {{ $labels.tenant_id }}"
           description: >
             Dialer queue has exceeded 2000 pending calls. SLA will be breached
@@ -75,6 +79,7 @@ groups:
           route: page
           team: platform
         annotations:
+          runbook_url: /docs/runbooks/alerts/worker-dead.md
           summary: "Dialer worker appears dead — queue growing, no calls being placed"
           description: >
             The dialer queue has items but voiceos_calls_initiated_total has not
@@ -90,6 +95,7 @@ groups:
           route: ticket
           team: platform
         annotations:
+          runbook_url: /docs/runbooks/alerts/stuck-calls.md
           summary: "Stuck calls detected for tenant {{ $labels.tenant_id }}"
           description: >
             voiceos_stuck_calls_total is incrementing — calls placed but not

@@ -1,0 +1,76 @@
+# VoiceOS v2 -- Prometheus configuration (single-host profile)
+#
+# This profile is for the laptop/single-host deployment where kube-proxy's
+# in-cluster API server ClusterIP (10.96.0.1 → 10.0.2.2 NAT) is unroutable
+# (TT-015). The three k8s_sd jobs from prometheus.yml would silently fail
+# here and never recover, so this profile omits them and relies on the
+# static file_sd target list under targets/dev.yml.
+#
+# When the networking limitation is lifted (TT-015 resolution), switch the
+# Prometheus unit back to prometheus.yml to re-enable automatic pod/node
+# discovery. See monitoring/prometheus/README.md for the switch procedure.
+#
+# Architecture: V7 Ch7 (Monitoring Platform).
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: voiceos-cpu-node
+    environment: dev
+    sd_profile: single-host
+
+rule_files:
+  - "recording_rules.yml"
+  - "alert_rules/slo_alerts.yml"
+  - "alert_rules/infrastructure.yml"
+  - "alert_rules/application.yml"
+  - "alert_rules/business.yml"
+  - "alert_rules/ai_services.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - "alertmanager.voiceos-ops.svc.cluster.local:9093"
+
+scrape_configs:
+  # -- Prometheus self-scrape --------------------------------------------
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # -- VoiceOS application pods (static file_sd fallback) ----------------
+  # Edit monitoring/prometheus/targets/dev.yml to register a new service.
+  # Prometheus auto-reloads this file on change (no SIGHUP required).
+  - job_name: voiceos-services-static
+    file_sd_configs:
+      - files:
+          - "targets/dev.yml"
+    relabel_configs:
+      - action: labeldrop
+        regex: __meta_.*
+
+  # -- GPU node (STT/LLM/vLLM/TTS export /metrics themselves) ------------
+  - job_name: gpu-node
+    static_configs:
+      - targets:
+          - "185.216.21.242:8100" # stt
+          - "185.216.21.242:8000" # llm-runtime (vLLM)
+          - "185.216.21.242:8200" # tts
+        labels:
+          node_pool: gpu
+          cluster_member: "false"
+
+  # -- Infra exporters ---------------------------------------------------
+  - job_name: node-exporter
+    static_configs:
+      - targets: ["node-exporter.voiceos-ops.svc.cluster.local:9100"]
+
+  - job_name: redis-exporter
+    static_configs:
+      - targets: ["redis-exporter.voiceos-ops.svc.cluster.local:9121"]
+
+  - job_name: postgres-exporter
+    static_configs:
+      - targets: ["postgres-exporter.voiceos-ops.svc.cluster.local:9187"]

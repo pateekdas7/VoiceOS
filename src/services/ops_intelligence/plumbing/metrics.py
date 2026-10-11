@@ -7,7 +7,7 @@ anything in ``reasoning/``.
 
 from __future__ import annotations
 
-from prometheus_client import Gauge
+from prometheus_client import Counter, Gauge
 
 from src.libs.observability.metrics import get_red_metrics
 
@@ -19,9 +19,47 @@ open_alerts_gauge = Gauge(
     labelnames=["status", "source"],
 )
 
+escalation_scheduler_last_run_gauge = Gauge(
+    "voiceos_alert_lifecycle_scheduler_last_run_timestamp",
+    "Unix timestamp of the last successful escalation-scheduler tick.",
+)
+
+escalation_scheduler_errors_counter = Counter(
+    "voiceos_alert_lifecycle_scheduler_errors_total",
+    "Count of escalation-scheduler tick failures.",
+)
+
+escalations_counter = Counter(
+    "voiceos_alert_lifecycle_escalations_total",
+    "Count of alerts auto-escalated by the lifecycle scheduler, by severity.",
+    labelnames=["severity"],
+)
+
 
 def record_open_alerts(status: str, source: str, count: int) -> None:
     open_alerts_gauge.labels(status=status, source=source).set(count)
 
 
-__all__ = ["open_alerts_gauge", "record_open_alerts", "red_metrics"]
+def record_scheduler_tick(timestamp: float) -> None:
+    escalation_scheduler_last_run_gauge.set(timestamp)
+
+
+def record_scheduler_error() -> None:
+    escalation_scheduler_errors_counter.inc()
+
+
+def record_escalation(severity: str) -> None:
+    escalations_counter.labels(severity=severity).inc()
+
+
+__all__ = [
+    "escalation_scheduler_errors_counter",
+    "escalation_scheduler_last_run_gauge",
+    "escalations_counter",
+    "open_alerts_gauge",
+    "record_escalation",
+    "record_open_alerts",
+    "record_scheduler_error",
+    "record_scheduler_tick",
+    "red_metrics",
+]

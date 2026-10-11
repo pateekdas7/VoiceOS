@@ -1,0 +1,131 @@
+# VoiceOS v2 — Promtail configuration (Phase 4 / G8).
+#
+# Scrapes three log sources into Loki with consistent VoiceOS labels so
+# Grafana queries can pivot by tenant/service without hunting across
+# ingest pipelines:
+#
+#   1. journald   — systemd units running the VoiceOS services, Prometheus,
+#                   Grafana, Loki, Jaeger, and the scheduler process
+#                   introduced in Phase 5 / G5.
+#   2. docker     — containerized services (voice-runtime, dialer-worker)
+#                   mounted from /var/lib/docker/containers.
+#   3. app files  — the structured JSON logs the StructuredLogger emits
+#                   under /var/log/voiceos/*.log.
+#
+# Every pipeline parses the JSON payload, promotes `service`, `tenant_id`,
+# `call_id`, `trace_id`, and `level` to Loki labels where cardinality is
+# bounded (service, level) and keeps call_id/trace_id as line fields.
+# Architecture: V3 Ch15 §15.9 (logging); V7 Ch9 (Logging platform).
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: info
+
+positions:
+  filename: /var/lib/promtail/positions.yaml
+
+clients:
+  - url: http://localhost:3100/loki/api/v1/push
+    tenant_id: voiceos
+    batchwait: 1s
+    batchsize: 1048576
+    backoff_config:
+      min_period: 500ms
+      max_period: 5m
+      max_retries: 10
+
+scrape_configs:
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 1. systemd journald — VoiceOS systemd units + monitoring stack
+  # ─────────────────────────────────────────────────────────────────────────
+  - job_name: journald
+    journal:
+      max_age: 12h
+      path: /var/log/journal
+      labels:
+        job: systemd-journal
+    relabel_configs:
+      - source_labels: ['__journal__systemd_unit']
+        target_label: unit
+      - source_labels: ['__journal__hostname']
+        target_label: host
+      - source_labels: ['__journal_priority_keyword']
+        target_label: level
+    pipeline_stages:
+      # Keep only VoiceOS + monitoring-stack units — drop OS noise.
+      - match:
+          selector: '{unit!~"voiceos.*|prometheus.*|grafana.*|loki.*|promtail.*|jaeger.*|alertmanager.*"}'
+          action: drop
+      # If a VoiceOS unit emits structured JSON on stdout, lift tenant/service
+      # into labels so operators can filter by them in Grafana.
+      - json:
+          expressions:
+            service: service
+            tenant_id: tenant_id
+            app_level: level
+            trace_id: trace_id
+            call_id: call_id
+      - labels:
+          service:
+          app_level:
+      # trace_id / call_id stay in the line body — too high-cardinality for
+      # Loki labels (same G4 convention we enforce on Prometheus labels).
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 2. docker socket — containerized workers (voice-runtime, dialer-worker)
+  # ─────────────────────────────────────────────────────────────────────────
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 15s
+        filters:
+          - name: label
+            values: ["com.voiceos.managed=true"]
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: container
+      - source_labels: ['__meta_docker_container_label_com_voiceos_service']
+        target_label: service
+      - source_labels: ['__meta_docker_container_label_com_voiceos_tenant']
+        target_label: tenant_id
+    pipeline_stages:
+      - json:
+          expressions:
+            app_level: level
+            trace_id: trace_id
+            call_id: call_id
+      - labels:
+          app_level:
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 3. structured application log files (/var/log/voiceos/*.log)
+  # ─────────────────────────────────────────────────────────────────────────
+  - job_name: voiceos-app-logs
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: voiceos-app
+          __path__: /var/log/voiceos/*.log
+    pipeline_stages:
+      - json:
+          expressions:
+            service: service
+            tenant_id: tenant_id
+            app_level: level
+            trace_id: trace_id
+            call_id: call_id
+            timestamp: timestamp
+      - timestamp:
+          source: timestamp
+          format: RFC3339Nano
+      - labels:
+          service:
+          app_level:
+      # Drop debug/trace noise before shipping to Loki.
+      - match:
+          selector: '{app_level=~"debug|trace"}'
+          action: drop

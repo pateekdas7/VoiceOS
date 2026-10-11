@@ -354,8 +354,17 @@ def create_app() -> Starlette:
                                            campaign_service, billing_service, audit_repository,
                                            admin_audit_repository)
 
+    # H5 fix: inject real AuditLogger + RegulatoryNotifier into IncidentResponse
+    # so DPDP breach notifications and incident lifecycle transitions are durable.
+    from src.libs.audit.logger import AuditLogger
+    from src.services.incident_response.notifier import RegulatoryNotifier
     from src.services.incident_response.service import IncidentResponse
-    incident_response = IncidentResponse()
+
+    incident_audit_logger = AuditLogger(audit_repository)
+    incident_response = IncidentResponse(
+        notifier=RegulatoryNotifier(),
+        audit_logger=incident_audit_logger,
+    )
 
     return create_web_api(
         session_codec=session_codec,

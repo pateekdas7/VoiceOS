@@ -40,6 +40,15 @@ jobs:
       - name: check_pii_logs.py — StructuredLogger never emits raw PII (blocking, Sprint-020)
         run: python scripts/check_pii_logs.py
 
+      - name: alertmanager_config_drift.py — single source of truth (Phase 2 / G2)
+        run: python scripts/ci/alertmanager_config_drift.py
+
+      - name: check_runbook_coverage.py — every alert has a runbook (Phase 6 / D1)
+        run: python scripts/ci/check_runbook_coverage.py
+
+      - name: generate_dashboards.py --check — dashboards match generator (Phase 4 / G3)
+        run: python scripts/grafana/generate_dashboards.py --check
+
   # ---------------------------------------------------------------------------
   # Stage 2 — Module boundary check (V6 Ch2 enforcement)
   # ---------------------------------------------------------------------------

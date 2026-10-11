@@ -1,0 +1,30 @@
+[Unit]
+Description=VoiceOS Prometheus
+Documentation=https://prometheus.io/docs/
+After=network.target
+
+[Service]
+Type=simple
+User=prometheus
+Group=prometheus
+# PROMETHEUS_CONFIG is set in /opt/voiceos/.env to select between the
+# monitoring/prometheus/prometheus.yml (K8s SD, DO cluster) and
+# monitoring/prometheus/prometheus-single-host.yml (file_sd, laptop CPU
+# node). Defaults to the single-host profile — see
+# monitoring/prometheus/README.md.
+EnvironmentFile=/opt/voiceos/.env
+Environment=PROMETHEUS_CONFIG=/opt/voiceos/app/monitoring/prometheus/prometheus-single-host.yml
+ExecStart=/usr/local/bin/prometheus \
+    --config.file=${PROMETHEUS_CONFIG} \
+    --storage.tsdb.path=/var/lib/prometheus \
+    --storage.tsdb.retention.time=15d \
+    --web.listen-address=0.0.0.0:9090 \
+    --web.enable-lifecycle
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

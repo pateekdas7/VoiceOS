@@ -5,6 +5,83 @@ Format: `## [version] — Sprint-NNN — Title (YYYY-MM-DD)`
 
 ---
 
+## [v2.0.44] — Monitoring Productionization — Phases 0-6 (2026-10-11)
+
+> Phase 0-6 of the end-to-end monitoring productionization mission. Fixes
+> 15 gaps catalogued in `MONITORING_GAP_REGISTER.md`, closes the three
+> critical blockers (Prometheus SD unroutable, GPU fleet never polled,
+> escalation scheduler never run), and lands three new CI checks that
+> prevent regression.
+
+### Phase 0 — Inventory
+- `MONITORING_BASELINE.md` — 16-section snapshot of the full stack
+- `MONITORING_DEPENDENCY_MAP.md` — call-graph + config dependency graph
+- `MONITORING_GAP_REGISTER.md` — 15 numbered gaps (C1-C4, H5, G1-G9, D1)
+
+### Phase 1 — Critical blockers (C1-C3)
+- `monitoring/prometheus/prometheus-single-host.yml` — file_sd profile for
+  the laptop CPU node where K8s SD apiserver is unroutable
+- `monitoring/gpu_fleet/metrics.py` — `voiceos_gpu_fleet_poller_last_run_timestamp`
+  + `voiceos_gpu_fleet_poller_errors_total`
+- `src/services/ops_intelligence/plumbing/metrics.py` —
+  `voiceos_escalation_scheduler_last_run_timestamp`,
+  `voiceos_escalation_scheduler_errors_total`, `voiceos_escalations_total`
+- `src/services/web_api/api.py` — GPU poller + escalation scheduler
+  instrumented and wired into the BFF lifespan with
+  `ALERT_ESCALATION_INTERVAL_S` env override
+
+### Phase 2 — Route order + Alertmanager drift + H5 wiring
+- `tests/unit/web_api/test_phase2_route_order.py` — regression test
+  asserting W17 routes register before the AdminPortal catch-all mount
+- `scripts/k8s/alertmanager-config.DEPRECATED.yaml` — renamed from
+  `.yaml`; ConfigMap name mutated to `*-OBSOLETE` so stray applies cannot
+  overwrite the live SoT at `monitoring/grafana/alerts/alertmanager.yml`
+- `scripts/ci/alertmanager_config_drift.py` — CI check enforcing (1) no
+  deploy manifest references the deprecated name, (2) live Deployment
+  mounts the canonical ConfigMap name
+- `src/services/web_api/main.py` — H5 fix: `IncidentResponse` now
+  constructed with a real `RegulatoryNotifier` and an `AuditLogger` bound
+  to the hash-chained Postgres audit log
+
+### Phase 3 — Metrics conventions (G4) + Handler registry (G9)
+- `src/libs/observability/metrics.py` — `BackgroundHandlerRegistry` +
+  `startup_handlers_gauge` + `assert_label_cardinality_safe()` guard
+  rejecting unprefixed metric names and per-event-ID labels
+- `src/services/web_api/api.py` — `_build_startup_handlers` refactored to
+  return a named registry; lifespan calls `registry.start_all()`
+- `tests/unit/monitoring/test_phase3_registry_and_cardinality.py` —
+  11 unit tests covering registry + cardinality guard
+
+### Phase 4 — Dashboards (G3) + Promtail (G8)
+- `scripts/grafana/generate_dashboards.py` — new
+  `build_monitoring_self_health()` dashboard surfacing poller/scheduler
+  freshness, escalation volume, and registered handler count
+- `monitoring/logging/promtail.yml` — journald + Docker socket + app log
+  file pipelines pushing to Loki with bounded-cardinality labels
+
+### Phase 5 — Scheduler process (G5) + systemd units (G7)
+- `scripts/workers/scheduler.py` — standalone process running the GPU
+  poller + escalation evaluator out-of-band from the BFF lifespan;
+  Prometheus endpoint on `SCHEDULER_METRICS_PORT`
+- `scripts/systemd/voiceos-scheduler.service` + units for
+  `prometheus`, `grafana`, `loki`, `promtail`, `jaeger`, `alertmanager`
+
+### Phase 6 — Schema docs (G6) + Runbook coverage (D1)
+- `docs/schema/MONITORING_SCHEMA.md` — authoritative map of every
+  monitoring persistence surface (Postgres, Redis, Prometheus, Loki,
+  in-process registries)
+- `scripts/ci/check_runbook_coverage.py` — CI check: every alert must
+  declare `annotations.runbook_url` pointing to an existing file
+- `docs/runbooks/alerts/*.md` — 32 stub runbooks (one per alert) seeded
+  by `scripts/ci/_bootstrap_runbook_annotations.py`; coverage 45/45
+
+### CI wiring
+- `.github/workflows/ci.yml` — static-analysis stage now runs
+  `alertmanager_config_drift.py`, `check_runbook_coverage.py`, and
+  `generate_dashboards.py --check` on every push/PR
+
+---
+
 ## [v2.0.43] — Phase 16 — Controlled Production Rollout (2026-09-18)
 
 > All deploy scripts, rollback procedure, single-tenant rollout strategy, systemd TimeoutStopSec hardening, and production readiness source verification.

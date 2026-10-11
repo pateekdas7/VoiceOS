@@ -455,15 +455,15 @@ def create_web_api(
         from starlette.routing import Mount as _Mount
         routes.append(_Mount("", app=admin_portal_app))
 
-    # Startup handlers for background tasks (GPU polling, daily aggregation).
-    startup_handlers = _build_startup_handlers(gpu_fleet_monitor, analytics_service, alert_lifecycle)
+    # Startup handlers for background tasks (GPU polling, daily aggregation,
+    # escalation scheduler). Registered by name — see BackgroundHandlerRegistry.
+    startup_registry = _build_startup_handlers(gpu_fleet_monitor, analytics_service, alert_lifecycle)
 
     from contextlib import asynccontextmanager
 
     @asynccontextmanager
     async def _lifespan(app: Any):
-        for handler in startup_handlers:
-            handler()
+        startup_registry.start_all()
         yield
 
     return Starlette(
@@ -2781,17 +2781,25 @@ def _build_startup_handlers(
     gpu_fleet_monitor: GPUFleetHealthMonitor | None,
     analytics_service: Any,
     alert_lifecycle: Any = None,
-) -> list[Any]:
-    """Return Starlette ``on_startup`` callables for background monitoring tasks."""
+) -> "BackgroundHandlerRegistry":
+    """Build the named registry of Starlette ``on_startup`` callables.
+
+    Phase 3 / G9: each background task is registered by name so the deployed
+    set is introspectable (``voiceos_startup_handlers`` gauge) rather than an
+    anonymous positional list.
+    """
     import asyncio
     import logging
     import os
+    import time
 
     import httpx
 
+    from src.libs.observability.metrics import BackgroundHandlerRegistry
+
     _log = logging.getLogger("voiceos.web_api.background")
 
-    handlers: list[Any] = []
+    registry = BackgroundHandlerRegistry()
 
     # ── GPU node health polling ──────────────────────────────────────────────
     if gpu_fleet_monitor is not None:
@@ -2806,16 +2814,19 @@ def _build_startup_handlers(
 
         async def _poll_gpu_nodes() -> None:
             from monitoring.gpu_fleet.fleet_health import GPUNodeSnapshot
+            from monitoring.gpu_fleet.metrics import record_poller_error, record_poller_tick
 
             async with httpx.AsyncClient(timeout=5.0) as client:
                 while True:
+                    tick_started = time.time()
                     for _service, port in gpu_endpoints:
                         node_id = f"{gpu_host}:{port}"
                         try:
                             resp = await client.get(f"http://{gpu_host}:{port}/health")
                             healthy = resp.status_code == 200
                             data = resp.json() if healthy else {}
-                        except Exception:
+                        except Exception:  # noqa: BLE001
+                            record_poller_error(node_id)
                             healthy = False
                             data = {}
                         gpu_fleet_monitor.report_node(
@@ -2827,13 +2838,14 @@ def _build_startup_handlers(
                             )
                         )
                     gpu_fleet_monitor.fleet_health_score()
+                    record_poller_tick(tick_started)
                     await asyncio.sleep(gpu_poll_s)
 
         def _start_gpu_polling() -> None:
             asyncio.ensure_future(_poll_gpu_nodes())  # noqa: RUF006
             _log.info("GPU fleet poller started (host=%s interval=%ds)", gpu_host, gpu_poll_s)
 
-        handlers.append(_start_gpu_polling)
+        registry.register("gpu_poller", _start_gpu_polling)
 
     # ── DailyAggregationJob ──────────────────────────────────────────────────
     if analytics_service is not None and hasattr(analytics_service, "_aggregation_job"):
@@ -2858,29 +2870,44 @@ def _build_startup_handlers(
             asyncio.ensure_future(_run_daily_aggregation())  # noqa: RUF006
             _log.info("DailyAggregationJob scheduler started")
 
-        handlers.append(_start_daily_aggregation)
+        registry.register("daily_aggregation", _start_daily_aggregation)
 
     # C3 fix: escalation scheduler — calls evaluate_escalations() every 60s
     if alert_lifecycle is not None:
+        escalation_interval_s = int(os.environ.get("ALERT_ESCALATION_INTERVAL_S", "60"))
 
         async def _run_escalation_checker() -> None:
             from datetime import datetime, timezone as _tz
+
+            from src.services.ops_intelligence.plumbing.metrics import (
+                record_escalation,
+                record_scheduler_error,
+                record_scheduler_tick,
+            )
+
             while True:
+                tick_started = time.time()
                 try:
                     escalated = alert_lifecycle.evaluate_escalations(now=datetime.now(_tz.utc))
+                    record_scheduler_tick(tick_started)
+                    for alert in escalated:
+                        record_escalation(alert.severity.value)
                     if escalated:
                         _log.info("Escalated %d alert(s)", len(escalated))
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001
+                    record_scheduler_error()
                     _log.warning("Escalation checker error: %s", exc)
-                await asyncio.sleep(60)
+                await asyncio.sleep(escalation_interval_s)
 
         def _start_escalation_checker() -> None:
             asyncio.ensure_future(_run_escalation_checker())  # noqa: RUF006
-            _log.info("Alert escalation scheduler started (60s interval)")
+            _log.info(
+                "Alert escalation scheduler started (%ds interval)", escalation_interval_s
+            )
 
-        handlers.append(_start_escalation_checker)
+        registry.register("escalation_scheduler", _start_escalation_checker)
 
-    return handlers
+    return registry
 
 
 # ---------------------------------------------------------------------------
