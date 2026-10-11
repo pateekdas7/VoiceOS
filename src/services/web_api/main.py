@@ -342,8 +342,12 @@ def create_app() -> Starlette:
     health_aggregator = HealthAggregator(health_checks)
 
     from src.services.system_x import SystemXService
+    from src.services.support.tickets import SupportTicketRepository
+    from src.services.support.impersonation import ImpersonationService
 
     system_x_service = SystemXService(conn)
+    support_ticket_repo = SupportTicketRepository(conn)
+    impersonation_svc = ImpersonationService(conn)
 
     return create_web_api(
         session_codec=session_codec,
@@ -373,6 +377,8 @@ def create_app() -> Starlette:
         report_repository=report_repository,
         capacity_forecast_repository=capacity_forecast_repository,
         system_x_service=system_x_service,
+        support_ticket_repo=support_ticket_repo,
+        impersonation_svc=impersonation_svc,
         frontend_base_url=frontend_base_url,
         bff_public_url=bff_public_url,
         health_aggregator=health_aggregator,

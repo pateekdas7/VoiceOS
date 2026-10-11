@@ -224,6 +224,8 @@ def create_web_api(
     system_x_service: Any = None,
     call_summary_repository: Any = None,
     callback_scheduler: Any = None,
+    support_ticket_repo: Any = None,
+    impersonation_svc: Any = None,
     db_conn: Any = None,
     frontend_base_url: str,
     bff_public_url: str,
@@ -435,8 +437,16 @@ def create_web_api(
     if callback_scheduler is not None:
         routes.extend(_build_callbacks_routes(callback_scheduler))
 
+    # W17: Support tickets, impersonation, SLA, service status
+    if support_ticket_repo is not None:
+        routes.extend(_build_support_routes(support_ticket_repo))
+        routes.extend(_build_sla_routes(support_ticket_repo))
+    if impersonation_svc is not None:
+        routes.extend(_build_impersonation_routes(impersonation_svc))
+    routes.extend(_build_service_status_route(health_aggregator))
+
     # Startup handlers for background tasks (GPU polling, daily aggregation).
-    startup_handlers = _build_startup_handlers(gpu_fleet_monitor, analytics_service)
+    startup_handlers = _build_startup_handlers(gpu_fleet_monitor, analytics_service, alert_lifecycle)
 
     from contextlib import asynccontextmanager
 
@@ -2760,6 +2770,7 @@ def _build_system_x_routes(system_x_service: Any) -> list[Route]:
 def _build_startup_handlers(
     gpu_fleet_monitor: GPUFleetHealthMonitor | None,
     analytics_service: Any,
+    alert_lifecycle: Any = None,
 ) -> list[Any]:
     """Return Starlette ``on_startup`` callables for background monitoring tasks."""
     import asyncio
@@ -2838,6 +2849,26 @@ def _build_startup_handlers(
             _log.info("DailyAggregationJob scheduler started")
 
         handlers.append(_start_daily_aggregation)
+
+    # C3 fix: escalation scheduler — calls evaluate_escalations() every 60s
+    if alert_lifecycle is not None:
+
+        async def _run_escalation_checker() -> None:
+            from datetime import datetime, timezone as _tz
+            while True:
+                try:
+                    escalated = alert_lifecycle.evaluate_escalations(now=datetime.now(_tz.utc))
+                    if escalated:
+                        _log.info("Escalated %d alert(s)", len(escalated))
+                except Exception as exc:
+                    _log.warning("Escalation checker error: %s", exc)
+                await asyncio.sleep(60)
+
+        def _start_escalation_checker() -> None:
+            asyncio.ensure_future(_run_escalation_checker())  # noqa: RUF006
+            _log.info("Alert escalation scheduler started (60s interval)")
+
+        handlers.append(_start_escalation_checker)
 
     return handlers
 
@@ -3066,6 +3097,232 @@ def _build_callbacks_routes(callback_scheduler: Any) -> list[Route]:
         )
 
     return [Route("/callbacks/pending", list_pending_callbacks, methods=["GET"])]
+
+
+# ---------------------------------------------------------------------------
+# W17: Support Ticket routes
+# ---------------------------------------------------------------------------
+
+def _build_support_routes(ticket_repo: Any) -> list[Route]:
+    """CRUD for support tickets + comments.
+
+    GET  /admin/support/tickets               — list all tickets (platform ops)
+    POST /admin/support/tickets               — create ticket
+    GET  /admin/support/tickets/{id}          — get ticket + comments
+    POST /admin/support/tickets/{id}/status   — update status/resolve
+    POST /admin/support/tickets/{id}/assign   — assign to operator
+    POST /admin/support/tickets/{id}/comments — add comment
+    GET  /admin/clients/{id}/support/tickets  — per-tenant ticket list
+    """
+
+    def _serialize_ticket(t: Any) -> dict:
+        return {
+            "id": t.id, "tenantId": t.tenant_id, "subject": t.subject,
+            "description": t.description, "status": t.status,
+            "priority": t.priority, "category": t.category,
+            "reporterEmail": t.reporter_email, "reporterName": t.reporter_name,
+            "assigneeEmail": t.assignee_email, "resolutionNote": t.resolution_note,
+            "createdAt": t.created_at.isoformat(), "updatedAt": t.updated_at.isoformat(),
+            "resolvedAt": t.resolved_at.isoformat() if t.resolved_at else None,
+            "slaDeadline": t.sla_deadline.isoformat() if t.sla_deadline else None,
+        }
+
+    def _serialize_comment(c: Any) -> dict:
+        return {
+            "id": c.id, "ticketId": c.ticket_id, "author": c.author,
+            "body": c.body, "isInternal": c.is_internal,
+            "createdAt": c.created_at.isoformat(),
+        }
+
+    async def list_tickets(request: Request) -> JSONResponse:
+        tickets = ticket_repo.list_all(
+            status=request.query_params.get("status"),
+            priority=request.query_params.get("priority"),
+        )
+        return JSONResponse([_serialize_ticket(t) for t in tickets])
+
+    async def create_ticket(request: Request) -> JSONResponse:
+        body = await request.json()
+        ticket = ticket_repo.create(
+            tenant_id=body.get("tenantId", ""),
+            subject=body["subject"],
+            description=body["description"],
+            priority=body.get("priority", "MEDIUM"),
+            category=body.get("category", "general"),
+            reporter_email=body.get("reporterEmail", ""),
+            reporter_name=body.get("reporterName", ""),
+        )
+        return JSONResponse(_serialize_ticket(ticket), status_code=201)
+
+    async def get_ticket(request: Request) -> JSONResponse:
+        ticket = ticket_repo.get(request.path_params["id"])
+        if not ticket:
+            return _error(404, "not_found", "Ticket not found")
+        data = _serialize_ticket(ticket)
+        data["comments"] = [_serialize_comment(c) for c in ticket_repo.get_comments(ticket.id)]
+        return JSONResponse(data)
+
+    async def update_ticket_status(request: Request) -> JSONResponse:
+        body = await request.json()
+        ticket = ticket_repo.update_status(
+            request.path_params["id"],
+            body["status"],
+            resolution_note=body.get("resolutionNote"),
+        )
+        if not ticket:
+            return _error(404, "not_found", "Ticket not found")
+        return JSONResponse(_serialize_ticket(ticket))
+
+    async def assign_ticket(request: Request) -> JSONResponse:
+        body = await request.json()
+        ticket = ticket_repo.assign(request.path_params["id"], body["assigneeEmail"])
+        if not ticket:
+            return _error(404, "not_found", "Ticket not found")
+        return JSONResponse(_serialize_ticket(ticket))
+
+    async def add_comment(request: Request) -> JSONResponse:
+        body = await request.json()
+        session = getattr(request.state, "session", None)
+        author = body.get("author") or (session.get("email") if session else "operator")
+        comment = ticket_repo.add_comment(
+            request.path_params["id"],
+            author=author,
+            body=body["body"],
+            is_internal=body.get("isInternal", False),
+        )
+        return JSONResponse(_serialize_comment(comment), status_code=201)
+
+    async def list_tenant_tickets(request: Request) -> JSONResponse:
+        tickets = ticket_repo.list_for_tenant(
+            request.path_params["id"],
+            status=request.query_params.get("status"),
+        )
+        return JSONResponse([_serialize_ticket(t) for t in tickets])
+
+    return [
+        Route("/admin/support/tickets", list_tickets, methods=["GET"]),
+        Route("/admin/support/tickets", create_ticket, methods=["POST"]),
+        Route("/admin/support/tickets/{id}", get_ticket, methods=["GET"]),
+        Route("/admin/support/tickets/{id}/status", update_ticket_status, methods=["POST"]),
+        Route("/admin/support/tickets/{id}/assign", assign_ticket, methods=["POST"]),
+        Route("/admin/support/tickets/{id}/comments", add_comment, methods=["POST"]),
+        Route("/admin/clients/{id}/support/tickets", list_tenant_tickets, methods=["GET"]),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# W17: Customer impersonation routes
+# ---------------------------------------------------------------------------
+
+def _build_impersonation_routes(impersonation_svc: Any) -> list[Route]:
+    """Customer impersonation with strict audit trail.
+
+    POST /admin/impersonation/start        — start session (enforces 1-per-operator limit)
+    POST /admin/impersonation/{id}/end     — end session
+    GET  /admin/impersonation/sessions     — list sessions (filter: tenantId, activeOnly)
+    GET  /admin/impersonation/{id}/actions — full audit trail for a session
+    """
+
+    def _serialize_session(s: Any) -> dict:
+        return {
+            "id": s.id, "operatorId": s.operator_id, "operatorEmail": s.operator_email,
+            "tenantId": s.tenant_id, "reason": s.reason,
+            "startedAt": s.started_at.isoformat(),
+            "endedAt": s.ended_at.isoformat() if s.ended_at else None,
+            "isActive": s.is_active, "ipAddress": s.ip_address,
+            "actionsCount": s.actions_count,
+        }
+
+    def _serialize_action(a: Any) -> dict:
+        return {
+            "id": a.id, "sessionId": a.session_id, "actionType": a.action_type,
+            "resource": a.resource, "details": a.details,
+            "performedAt": a.performed_at.isoformat(),
+        }
+
+    async def start_session(request: Request) -> JSONResponse:
+        body = await request.json()
+        session_state = getattr(request.state, "session", None) or {}
+        operator_id = body.get("operatorId") or session_state.get("sub", "unknown")
+        operator_email = body.get("operatorEmail") or session_state.get("email", "unknown")
+        ip = request.headers.get("x-forwarded-for") or (
+            request.client.host if request.client else None
+        )
+        try:
+            session = impersonation_svc.start_session(
+                operator_id=operator_id,
+                operator_email=operator_email,
+                tenant_id=body["tenantId"],
+                reason=body["reason"],
+                ip_address=ip,
+            )
+        except ValueError as exc:
+            return _error(409, "conflict", str(exc))
+        return JSONResponse(_serialize_session(session), status_code=201)
+
+    async def end_session(request: Request) -> JSONResponse:
+        session_state = getattr(request.state, "session", None) or {}
+        operator_id = session_state.get("sub", "unknown")
+        session = impersonation_svc.end_session(request.path_params["id"], operator_id)
+        if not session:
+            return _error(404, "not_found", "Session not found or already ended")
+        return JSONResponse(_serialize_session(session))
+
+    async def list_sessions(request: Request) -> JSONResponse:
+        sessions = impersonation_svc.list_sessions(
+            tenant_id=request.query_params.get("tenantId"),
+            active_only=request.query_params.get("activeOnly", "").lower() == "true",
+        )
+        return JSONResponse([_serialize_session(s) for s in sessions])
+
+    async def get_actions(request: Request) -> JSONResponse:
+        actions = impersonation_svc.get_actions(request.path_params["id"])
+        return JSONResponse([_serialize_action(a) for a in actions])
+
+    return [
+        Route("/admin/impersonation/start", start_session, methods=["POST"]),
+        Route("/admin/impersonation/{id}/end", end_session, methods=["POST"]),
+        Route("/admin/impersonation/sessions", list_sessions, methods=["GET"]),
+        Route("/admin/impersonation/{id}/actions", get_actions, methods=["GET"]),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# W17: SLA summary + public service status page
+# ---------------------------------------------------------------------------
+
+def _build_sla_routes(ticket_repo: Any) -> list[Route]:
+    """GET /admin/support/sla-summary — aggregated SLA health metrics."""
+
+    async def sla_summary(_request: Request) -> JSONResponse:
+        import datetime as _dt
+        stats = ticket_repo.sla_stats()
+        stats["asOf"] = _dt.datetime.utcnow().isoformat() + "Z"
+        return JSONResponse(stats)
+
+    return [Route("/admin/support/sla-summary", sla_summary, methods=["GET"])]
+
+
+def _build_service_status_route(health_aggregator: Any) -> list[Route]:
+    """GET /status — public service status page (no auth required)."""
+
+    async def service_status(_request: Request) -> JSONResponse:
+        import datetime as _dt
+        if health_aggregator is None:
+            return JSONResponse({"status": "unknown", "components": [], "updatedAt": _dt.datetime.utcnow().isoformat() + "Z"})
+        report = await health_aggregator.report()
+        components = [
+            {"name": name, "status": status.value}
+            for name, status in report.components.items()
+        ]
+        overall = "degraded" if any(c["status"] != "healthy" for c in components) else "operational"
+        return JSONResponse({
+            "status": overall,
+            "components": components,
+            "updatedAt": _dt.datetime.utcnow().isoformat() + "Z",
+        })
+
+    return [Route("/status", service_status, methods=["GET"])]
 
 
 __all__ = ["create_web_api"]
