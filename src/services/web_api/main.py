@@ -349,6 +349,14 @@ def create_app() -> Starlette:
     support_ticket_repo = SupportTicketRepository(conn)
     impersonation_svc = ImpersonationService(conn)
 
+    # C4 fix: build and mount AdminPortal (Sprint-025 built it; Sprint-026 wires it)
+    admin_portal_app = _build_admin_portal(conn, public_key, tenant_service, user_service,
+                                           campaign_service, billing_service, audit_repository,
+                                           admin_audit_repository)
+
+    from src.services.incident_response.service import IncidentResponse
+    incident_response = IncidentResponse()
+
     return create_web_api(
         session_codec=session_codec,
         google_oauth=google_oauth,
@@ -379,12 +387,72 @@ def create_app() -> Starlette:
         system_x_service=system_x_service,
         support_ticket_repo=support_ticket_repo,
         impersonation_svc=impersonation_svc,
+        incident_response=incident_response,
+        admin_portal_app=admin_portal_app,
         frontend_base_url=frontend_base_url,
         bff_public_url=bff_public_url,
         health_aggregator=health_aggregator,
         cookie_secure=os.environ.get("WEB_API_COOKIE_SECURE", "true").lower() != "false",
         twilio_auth_token=os.environ.get("TWILIO_AUTH_TOKEN") or None,
         db_conn=conn,
+    )
+
+
+def _build_admin_portal(
+    conn: Any,
+    public_key: Any,
+    tenant_service: Any,
+    user_service: Any,
+    campaign_service: Any,
+    billing_service: Any,
+    audit_repository: Any,
+    admin_audit_repository: Any,
+) -> Any:
+    """Assemble the AdminPortal ASGI app (C4 fix — Sprint-026 wiring)."""
+    from src.libs.audit.logger import AuditLogger
+    from src.libs.audit.search import AuditSearch
+    from src.libs.repositories.ai_config import ModelConfigRepository, PromptVersionRepository
+    from src.libs.repositories.billing import InvoiceRepository
+    from src.libs.repositories.integration import APIKeyRepository
+    from src.services.admin_portal.ai_config_admin import AIConfigAdminController
+    from src.services.admin_portal.api import create_admin_api
+    from src.services.admin_portal.api_key_admin import APIKeyAdminController
+    from src.services.admin_portal.audit_admin import AuditAdminController
+    from src.services.admin_portal.billing_admin import BillingAdminController
+    from src.services.admin_portal.campaign_admin import CampaignAdminController
+    from src.services.admin_portal.tenant_admin import TenantAdminController
+    from src.services.admin_portal.user_admin import UserAdminController
+    from src.services.ai_config.model_config import ModelConfigService
+    from src.services.ai_config.prompt_versioning import PromptVersioningService
+    from src.services.ai_config.service import AIConfigService
+    from src.services.api_platform.api_key_lifecycle import APIKeyLifecycleService
+    from src.services.auth.jwt_validator import JWTValidator
+    from src.services.auth.service import AuthService
+
+    jwt_validator = JWTValidator(public_key)
+    auth_service = AuthService(jwt_validator=jwt_validator)
+    audit_logger = AuditLogger(audit_repository)
+
+    ai_config_svc = AIConfigService(
+        PromptVersioningService(PromptVersionRepository(conn)),
+        ModelConfigService(ModelConfigRepository(conn)),
+    )
+
+    return create_admin_api(
+        auth_service=auth_service,
+        tenant_admin=TenantAdminController(tenant_service),
+        user_admin=UserAdminController(user_service),
+        campaign_admin=CampaignAdminController(campaign_service),
+        billing_admin=BillingAdminController(billing_service, InvoiceRepository(conn)),
+        audit_admin=AuditAdminController(
+            AuditSearch(audit_repository),
+            admin_audit_view_repository=admin_audit_repository,
+        ),
+        ai_config_admin=AIConfigAdminController(ai_config_svc),
+        api_key_admin=APIKeyAdminController(
+            APIKeyLifecycleService(APIKeyRepository(conn), audit_logger=audit_logger)
+        ),
+        audit_logger=audit_logger,
     )
 
 

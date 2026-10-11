@@ -316,3 +316,124 @@ export const getSystemXRecoveryActions = (id: string) =>
 
 export const getSystemXNotifications = (id: string) =>
   get<{ notifications: SystemXNotification[] }>(`/admin/system-x/incidents/${encodeURIComponent(id)}/notifications`);
+
+// -- W17: Support Tickets --------------------------------------------------
+
+export type SupportTicket = {
+  id: string;
+  tenantId: string;
+  subject: string;
+  description: string;
+  status: "OPEN" | "IN_PROGRESS" | "WAITING_ON_CUSTOMER" | "RESOLVED" | "CLOSED";
+  priority: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  category: string;
+  reporterEmail: string;
+  reporterName: string;
+  assigneeEmail: string | null;
+  resolutionNote: string | null;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt: string | null;
+  slaDeadline: string | null;
+  comments?: TicketComment[];
+};
+
+export type TicketComment = {
+  id: string;
+  ticketId: string;
+  author: string;
+  body: string;
+  isInternal: boolean;
+  createdAt: string;
+};
+
+export type SlaSummary = {
+  openCount: number;
+  closedCount: number;
+  slaBreachedCount: number;
+  criticalOpen: number;
+  avgResolutionHours: number | null;
+  byPriority: Record<string, { total: number; breached: number }>;
+  asOf: string;
+};
+
+export const listSupportTickets = (params?: { status?: string; priority?: string }) => {
+  const q = new URLSearchParams();
+  if (params?.status) q.set("status", params.status);
+  if (params?.priority) q.set("priority", params.priority);
+  const qs = q.toString();
+  return get<SupportTicket[]>(`/admin/support/tickets${qs ? "?" + qs : ""}`);
+};
+export const getSupportTicket = (id: string) => get<SupportTicket>(`/admin/support/tickets/${encodeURIComponent(id)}`);
+export const createSupportTicket = (input: Partial<SupportTicket>) =>
+  post<SupportTicket>("/admin/support/tickets", input);
+export const updateTicketStatus = (id: string, status: string, resolutionNote?: string) =>
+  post<SupportTicket>(`/admin/support/tickets/${encodeURIComponent(id)}/status`, { status, resolutionNote });
+export const assignTicket = (id: string, assigneeEmail: string) =>
+  post<SupportTicket>(`/admin/support/tickets/${encodeURIComponent(id)}/assign`, { assigneeEmail });
+export const addTicketComment = (id: string, body: string, isInternal = false) =>
+  post<TicketComment>(`/admin/support/tickets/${encodeURIComponent(id)}/comments`, { body, isInternal });
+export const getSlaSummary = () => get<SlaSummary>("/admin/support/sla-summary");
+
+// -- W17: Customer Impersonation -------------------------------------------
+
+export type ImpersonationSession = {
+  id: string;
+  operatorId: string;
+  operatorEmail: string;
+  tenantId: string;
+  reason: string;
+  startedAt: string;
+  endedAt: string | null;
+  isActive: boolean;
+  ipAddress: string | null;
+  actionsCount: number;
+};
+
+export type ImpersonationAction = {
+  id: string;
+  sessionId: string;
+  actionType: string;
+  resource: string;
+  details: Record<string, unknown>;
+  performedAt: string;
+};
+
+export const listImpersonationSessions = (params?: { tenantId?: string; activeOnly?: boolean }) => {
+  const q = new URLSearchParams();
+  if (params?.tenantId) q.set("tenantId", params.tenantId);
+  if (params?.activeOnly) q.set("activeOnly", "true");
+  const qs = q.toString();
+  return get<ImpersonationSession[]>(`/admin/impersonation/sessions${qs ? "?" + qs : ""}`);
+};
+export const startImpersonationSession = (tenantId: string, reason: string) =>
+  post<ImpersonationSession>("/admin/impersonation/start", { tenantId, reason });
+export const endImpersonationSession = (id: string) =>
+  post<ImpersonationSession>(`/admin/impersonation/${encodeURIComponent(id)}/end`);
+export const getImpersonationActions = (id: string) =>
+  get<ImpersonationAction[]>(`/admin/impersonation/${encodeURIComponent(id)}/actions`);
+
+// -- W17: Security Incidents (H5) ------------------------------------------
+
+export type SecurityIncident = {
+  incidentId: string;
+  tenantId: string;
+  incidentType: string;
+  severity: string;
+  status: string;
+  context: Record<string, unknown>;
+  openedAt: string;
+  notificationDeadlineAt: string | null;
+  resolution: string | null;
+  closedAt: string | null;
+};
+
+export const listSecurityIncidents = () => get<SecurityIncident[]>("/admin/security-incidents");
+export const openSecurityIncident = (input: {
+  tenantId: string;
+  incidentType: string;
+  severity: string;
+  context?: Record<string, unknown>;
+}) => post<SecurityIncident>("/admin/security-incidents", input);
+export const closeSecurityIncident = (id: string, resolution: string) =>
+  post<SecurityIncident>(`/admin/security-incidents/${encodeURIComponent(id)}/close`, { resolution });

@@ -226,6 +226,8 @@ def create_web_api(
     callback_scheduler: Any = None,
     support_ticket_repo: Any = None,
     impersonation_svc: Any = None,
+    incident_response: Any = None,
+    admin_portal_app: Any = None,
     db_conn: Any = None,
     frontend_base_url: str,
     bff_public_url: str,
@@ -437,13 +439,21 @@ def create_web_api(
     if callback_scheduler is not None:
         routes.extend(_build_callbacks_routes(callback_scheduler))
 
-    # W17: Support tickets, impersonation, SLA, service status
+    # W17: Support tickets, impersonation, SLA, service status, security incidents
+    if incident_response is not None:
+        routes.extend(_build_security_incident_routes(incident_response))
     if support_ticket_repo is not None:
         routes.extend(_build_support_routes(support_ticket_repo))
         routes.extend(_build_sla_routes(support_ticket_repo))
     if impersonation_svc is not None:
         routes.extend(_build_impersonation_routes(impersonation_svc))
     routes.extend(_build_service_status_route(health_aggregator))
+
+    # C4 fix: mount AdminPortal as catch-all at end — its own middleware
+    # (AdminRoleGateMiddleware + AuditMiddleware) applies to /admin/v1/* routes.
+    if admin_portal_app is not None:
+        from starlette.routing import Mount as _Mount
+        routes.append(_Mount("", app=admin_portal_app))
 
     # Startup handlers for background tasks (GPU polling, daily aggregation).
     startup_handlers = _build_startup_handlers(gpu_fleet_monitor, analytics_service, alert_lifecycle)
@@ -3301,6 +3311,83 @@ def _build_sla_routes(ticket_repo: Any) -> list[Route]:
         return JSONResponse(stats)
 
     return [Route("/admin/support/sla-summary", sla_summary, methods=["GET"])]
+
+
+def _build_security_incident_routes(incident_response: Any) -> list[Route]:
+    """Security/privacy incident management (H5 fix — V4 Ch17).
+
+    POST /admin/security-incidents              — open incident
+    GET  /admin/security-incidents              — list all incidents
+    GET  /admin/security-incidents/{id}         — get incident detail
+    POST /admin/security-incidents/{id}/close   — close with resolution
+    """
+    from src.services.incident_response.playbooks import IncidentType, Severity
+
+    VALID_TYPES = {t.value for t in IncidentType}
+    VALID_SEVERITIES = {s.value for s in Severity}
+
+    def _serialize(inc: Any) -> dict:
+        return {
+            "incidentId": inc.incident_id,
+            "tenantId": inc.tenant_id,
+            "incidentType": inc.incident_type,
+            "severity": inc.severity,
+            "status": inc.status,
+            "context": inc.context,
+            "openedAt": inc.opened_at.isoformat(),
+            "notificationDeadlineAt": inc.notification_deadline_at.isoformat()
+                if inc.notification_deadline_at else None,
+            "resolution": inc.resolution,
+            "closedAt": inc.closed_at.isoformat() if inc.closed_at else None,
+        }
+
+    async def open_incident(request: Request) -> JSONResponse:
+        body = await request.json()
+        inc_type = body.get("incidentType", "")
+        severity = body.get("severity", "SEV3")
+        if inc_type not in VALID_TYPES:
+            return _error(400, "invalid_type", f"incidentType must be one of: {', '.join(sorted(VALID_TYPES))}")
+        if severity not in VALID_SEVERITIES:
+            return _error(400, "invalid_severity", f"severity must be one of: {', '.join(sorted(VALID_SEVERITIES))}")
+        session = getattr(request.state, "session", None) or {}
+        actor_id = session.get("sub", "operator")
+        incident = incident_response.open(
+            tenant_id=body.get("tenantId", ""),
+            incident_type=IncidentType(inc_type),
+            severity=Severity(severity),
+            context=body.get("context", {}),
+            actor_id=actor_id,
+        )
+        return JSONResponse(_serialize(incident), status_code=201)
+
+    async def list_incidents(_request: Request) -> JSONResponse:
+        incidents = list(incident_response._incidents.values())
+        return JSONResponse([_serialize(i) for i in incidents])
+
+    async def get_incident(request: Request) -> JSONResponse:
+        try:
+            incident = incident_response.get(request.path_params["id"])
+        except KeyError:
+            return _error(404, "not_found", "Incident not found")
+        return JSONResponse(_serialize(incident))
+
+    async def close_incident(request: Request) -> JSONResponse:
+        body = await request.json()
+        resolution = body.get("resolution", "")
+        if not resolution:
+            return _error(400, "missing_resolution", "resolution is required")
+        try:
+            incident = incident_response.close(request.path_params["id"], resolution)
+        except KeyError:
+            return _error(404, "not_found", "Incident not found")
+        return JSONResponse(_serialize(incident))
+
+    return [
+        Route("/admin/security-incidents", open_incident, methods=["POST"]),
+        Route("/admin/security-incidents", list_incidents, methods=["GET"]),
+        Route("/admin/security-incidents/{id}", get_incident, methods=["GET"]),
+        Route("/admin/security-incidents/{id}/close", close_incident, methods=["POST"]),
+    ]
 
 
 def _build_service_status_route(health_aggregator: Any) -> list[Route]:
