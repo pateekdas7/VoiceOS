@@ -161,3 +161,21 @@ groups:
             Redis is effectively unreachable from the BFF. Outbound calls cannot
             be queued or dequeued. Page on-call immediately.
           runbook: "infra/runbooks/redis-errors.md"
+
+      - alert: VoiceOSStartupHandlersBelowBaseline
+        expr: min_over_time(voiceos_startup_handlers[5m]) < 3
+        for: 5m
+        labels:
+          severity: warning
+          route: ticket
+          team: platform
+        annotations:
+          runbook_url: /docs/runbooks/alerts/voiceos-startup-handlers-below-baseline.md
+          summary: "voiceos_startup_handlers has dropped below baseline (<3)"
+          description: >
+            BackgroundHandlerRegistry gauge voiceos_startup_handlers is below
+            the expected baseline of 3 handlers for 5 minutes. A silent
+            registration regression likely means one of GPU poller, escalation
+            evaluator, or alert_lifecycle poller failed to register during
+            webapi startup — monitoring freshness will degrade. Check webapi
+            journalctl and restart if a handler crashed on init.
