@@ -13,9 +13,7 @@ from typing import Any
 import pytest
 
 from src.services.support.tickets import (
-    SupportTicket,
     SupportTicketRepository,
-    TicketComment,
     _SLA_HOURS,
     _row_to_ticket,
 )
