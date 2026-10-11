@@ -7,20 +7,16 @@ Run with:
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 
 from src.services.support.impersonation import (
-    ImpersonationAction,
-    ImpersonationService,
-    ImpersonationSession,
     _MAX_ACTIVE_PER_OPERATOR,
+    ImpersonationService,
     _row_to_session,
 )
-
-UTC = timezone.utc
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +172,7 @@ def test_start_session_blocked_when_operator_has_active_session() -> None:
 def test_start_session_error_message_includes_operator_email() -> None:
     conn = _FakeConn([(1,)],)
     svc = ImpersonationService(conn)
-    with pytest.raises(ValueError, match="ops@company.com"):
+    with pytest.raises(ValueError, match=r"ops@company\.com"):
         svc.start_session(
             operator_id="op-2",
             operator_email="ops@company.com",

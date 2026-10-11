@@ -14,7 +14,6 @@ from src.libs.observability.metrics import (
     startup_handlers_gauge,
 )
 
-
 # ──────────────────────── G9 — BackgroundHandlerRegistry ────────────────────────
 
 

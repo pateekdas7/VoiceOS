@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
-
-UTC = timezone.utc
 
 # SLA resolution deadline by priority (hours)
 _SLA_HOURS: dict[str, int] = {
@@ -103,11 +101,14 @@ class SupportTicketRepository:
     ) -> list[SupportTicket]:
         clauses, params = [], []
         if status:
-            clauses.append("status=%s"); params.append(status)
+            clauses.append("status=%s")
+            params.append(status)
         if priority:
-            clauses.append("priority=%s"); params.append(priority)
+            clauses.append("priority=%s")
+            params.append(priority)
         if assignee:
-            clauses.append("assignee_email=%s"); params.append(assignee)
+            clauses.append("assignee_email=%s")
+            params.append(assignee)
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         params.append(limit)
         cur = self._conn.cursor()
@@ -122,7 +123,8 @@ class SupportTicketRepository:
         params: list[Any] = [tenant_id]
         extra = ""
         if status:
-            extra = " AND status=%s"; params.append(status)
+            extra = " AND status=%s"
+            params.append(status)
         params.append(limit)
         cur = self._conn.cursor()
         cur.execute(
@@ -150,7 +152,8 @@ class SupportTicketRepository:
             (status, resolution_note, resolved_at, ticket_id),
         )
         if not cur.fetchone():
-            cur.close(); return None
+            cur.close()
+            return None
         self._conn.commit()
         cur.close()
         return self.get(ticket_id)
@@ -164,7 +167,8 @@ class SupportTicketRepository:
             (assignee_email, ticket_id),
         )
         if not cur.fetchone():
-            cur.close(); return None
+            cur.close()
+            return None
         self._conn.commit()
         cur.close()
         return self.get(ticket_id)

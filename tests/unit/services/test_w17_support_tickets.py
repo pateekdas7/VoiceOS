@@ -7,18 +7,14 @@ Run with:
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import pytest
-
 from src.services.support.tickets import (
-    SupportTicketRepository,
     _SLA_HOURS,
+    SupportTicketRepository,
     _row_to_ticket,
 )
-
-UTC = timezone.utc
 
 
 # ---------------------------------------------------------------------------

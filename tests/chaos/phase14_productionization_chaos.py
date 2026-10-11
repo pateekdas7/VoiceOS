@@ -52,9 +52,9 @@ def sudo_run(cmd: list[str], *, check: bool = True) -> subprocess.CompletedProce
         return subprocess.CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
     log(f"$ sudo {' '.join(cmd)}")
     if SUDO_PASS:
-        full = ["sudo", "-S"] + cmd
+        full = ["sudo", "-S", *cmd]
         return subprocess.run(full, input=SUDO_PASS.encode() + b"\n", check=check, capture_output=True)
-    return subprocess.run(["sudo"] + cmd, check=check, capture_output=True)
+    return subprocess.run(["sudo", *cmd], check=check, capture_output=True)
 
 
 # ── Scenario 1: Worker crash mid-call ─────────────────────────────────────────

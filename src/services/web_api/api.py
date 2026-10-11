@@ -45,6 +45,7 @@ from starlette.responses import JSONResponse, RedirectResponse, Response, Stream
 from starlette.routing import Route
 
 from src.libs.audit.event import AuditEvent
+from src.libs.observability.metrics import BackgroundHandlerRegistry
 from src.libs.contracts.models.billing import SubscriptionTier
 from src.libs.contracts.models.campaign import AudienceCriteria, RetryPolicy
 from src.libs.contracts.models.customer import Customer, CustomerContact
@@ -2781,7 +2782,7 @@ def _build_startup_handlers(
     gpu_fleet_monitor: GPUFleetHealthMonitor | None,
     analytics_service: Any,
     alert_lifecycle: Any = None,
-) -> "BackgroundHandlerRegistry":
+) -> BackgroundHandlerRegistry:
     """Build the named registry of Starlette ``on_startup`` callables.
 
     Phase 3 / G9: each background task is registered by name so the deployed
@@ -2794,8 +2795,6 @@ def _build_startup_handlers(
     import time
 
     import httpx
-
-    from src.libs.observability.metrics import BackgroundHandlerRegistry
 
     _log = logging.getLogger("voiceos.web_api.background")
 
@@ -2825,7 +2824,7 @@ def _build_startup_handlers(
                             resp = await client.get(f"http://{gpu_host}:{port}/health")
                             healthy = resp.status_code == 200
                             data = resp.json() if healthy else {}
-                        except Exception:  # noqa: BLE001
+                        except Exception:
                             record_poller_error(node_id)
                             healthy = False
                             data = {}
@@ -2877,8 +2876,6 @@ def _build_startup_handlers(
         escalation_interval_s = int(os.environ.get("ALERT_ESCALATION_INTERVAL_S", "60"))
 
         async def _run_escalation_checker() -> None:
-            from datetime import datetime, timezone as _tz
-
             from src.services.ops_intelligence.plumbing.metrics import (
                 record_escalation,
                 record_scheduler_error,
@@ -2888,13 +2885,13 @@ def _build_startup_handlers(
             while True:
                 tick_started = time.time()
                 try:
-                    escalated = alert_lifecycle.evaluate_escalations(now=datetime.now(_tz.utc))
+                    escalated = alert_lifecycle.evaluate_escalations(now=datetime.now(UTC))
                     record_scheduler_tick(tick_started)
                     for alert in escalated:
                         record_escalation(alert.severity.value)
                     if escalated:
                         _log.info("Escalated %d alert(s)", len(escalated))
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     record_scheduler_error()
                     _log.warning("Escalation checker error: %s", exc)
                 await asyncio.sleep(escalation_interval_s)
@@ -3350,8 +3347,8 @@ def _build_security_incident_routes(incident_response: Any) -> list[Route]:
     """
     from src.services.incident_response.playbooks import IncidentType, Severity
 
-    VALID_TYPES = {t.value for t in IncidentType}
-    VALID_SEVERITIES = {s.value for s in Severity}
+    valid_types = {t.value for t in IncidentType}
+    valid_severities = {s.value for s in Severity}
 
     def _serialize(inc: Any) -> dict:
         return {
@@ -3372,10 +3369,10 @@ def _build_security_incident_routes(incident_response: Any) -> list[Route]:
         body = await request.json()
         inc_type = body.get("incidentType", "")
         severity = body.get("severity", "SEV3")
-        if inc_type not in VALID_TYPES:
-            return _error(400, "invalid_type", f"incidentType must be one of: {', '.join(sorted(VALID_TYPES))}")
-        if severity not in VALID_SEVERITIES:
-            return _error(400, "invalid_severity", f"severity must be one of: {', '.join(sorted(VALID_SEVERITIES))}")
+        if inc_type not in valid_types:
+            return _error(400, "invalid_type", f"incidentType must be one of: {', '.join(sorted(valid_types))}")
+        if severity not in valid_severities:
+            return _error(400, "invalid_severity", f"severity must be one of: {', '.join(sorted(valid_severities))}")
         session = getattr(request.state, "session", None) or {}
         actor_id = session.get("sub", "operator")
         incident = incident_response.open(

@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
-
-UTC = timezone.utc
 
 # Only one active session per operator at a time
 _MAX_ACTIVE_PER_OPERATOR = 1
@@ -91,7 +89,8 @@ class ImpersonationService:
             (session_id, operator_id),
         )
         if not cur.fetchone():
-            cur.close(); return None
+            cur.close()
+            return None
         self._conn.commit()
         cur.close()
         return self.get_session(session_id)
@@ -140,9 +139,11 @@ class ImpersonationService:
     ) -> list[ImpersonationSession]:
         clauses, params = [], []
         if tenant_id:
-            clauses.append("tenant_id=%s"); params.append(tenant_id)
+            clauses.append("tenant_id=%s")
+            params.append(tenant_id)
         if operator_id:
-            clauses.append("operator_id=%s"); params.append(operator_id)
+            clauses.append("operator_id=%s")
+            params.append(operator_id)
         if active_only:
             clauses.append("is_active=TRUE")
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""

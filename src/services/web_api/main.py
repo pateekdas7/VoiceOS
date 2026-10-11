@@ -30,6 +30,7 @@ Optional:
 from __future__ import annotations
 
 import os
+from typing import Any
 
 import httpx
 from cryptography.hazmat.primitives import serialization
@@ -341,9 +342,9 @@ def create_app() -> Starlette:
         health_checks.append(RedisHealthCheck(redis.Redis.from_url(redis_url)))
     health_aggregator = HealthAggregator(health_checks)
 
-    from src.services.system_x import SystemXService
-    from src.services.support.tickets import SupportTicketRepository
     from src.services.support.impersonation import ImpersonationService
+    from src.services.support.tickets import SupportTicketRepository
+    from src.services.system_x import SystemXService
 
     system_x_service = SystemXService(conn)
     support_ticket_repo = SupportTicketRepository(conn)
