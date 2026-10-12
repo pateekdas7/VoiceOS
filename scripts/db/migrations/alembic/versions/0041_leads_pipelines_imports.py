@@ -68,6 +68,34 @@ def upgrade() -> None:
     """)
 
     op.execute("""
+        ALTER TABLE pipelines
+            ADD COLUMN IF NOT EXISTS current_lead_id  UUID,
+            ADD COLUMN IF NOT EXISTS current_call_sid TEXT,
+            ADD COLUMN IF NOT EXISTS calls_completed  INTEGER     NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS calls_no_answer  INTEGER     NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS calls_failed     INTEGER     NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS total_duration_s INTEGER     NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS runtime_status   TEXT        NOT NULL DEFAULT 'IDLE';
+    """)
+
+    op.execute("""
+        DO $$ BEGIN
+            ALTER TABLE pipelines
+                ADD CONSTRAINT uq_pipelines_scope UNIQUE (pipeline_id, tenant_id, campaign_id);
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        WHEN duplicate_table THEN NULL;
+        END $$;
+    """)
+
+    op.execute("""
+        DO $$ BEGIN
+            ALTER TABLE pipelines
+                ADD CONSTRAINT pipelines_runtime_status_check
+                    CHECK (runtime_status IN ('IDLE','BUSY'));
+        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    """)
+
+    op.execute("""
         CREATE INDEX IF NOT EXISTS idx_pipelines_campaign_id ON pipelines (tenant_id, campaign_id);
         CREATE INDEX IF NOT EXISTS idx_pipelines_status      ON pipelines (tenant_id, status);
         CREATE INDEX IF NOT EXISTS idx_pipelines_tenant_id   ON pipelines (tenant_id);
@@ -189,6 +217,32 @@ def upgrade() -> None:
                 FOREIGN KEY (crm_customer_id, tenant_id)
                 REFERENCES customers(customer_id, tenant_id) ON DELETE RESTRICT
         )
+    """)
+
+    op.execute("""
+        ALTER TABLE leads
+            ADD COLUMN IF NOT EXISTS pipeline_stage_id UUID,
+            ADD COLUMN IF NOT EXISTS crm_customer_id   UUID,
+            ADD COLUMN IF NOT EXISTS priority          INTEGER NOT NULL DEFAULT 2;
+    """)
+
+    op.execute("""
+        DO $$ BEGIN
+            ALTER TABLE leads
+                ADD CONSTRAINT fk_leads_pipeline_stage_scope
+                    FOREIGN KEY (pipeline_stage_id, pipeline_id, tenant_id, campaign_id)
+                    REFERENCES pipeline_stages(stage_id, pipeline_id, tenant_id, campaign_id)
+                    ON DELETE RESTRICT;
+        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    """)
+
+    op.execute("""
+        DO $$ BEGIN
+            ALTER TABLE leads
+                ADD CONSTRAINT fk_leads_crm_customer_tenant
+                    FOREIGN KEY (crm_customer_id, tenant_id)
+                    REFERENCES customers(customer_id, tenant_id) ON DELETE RESTRICT;
+        EXCEPTION WHEN duplicate_object THEN NULL; END $$;
     """)
 
     op.execute("""
