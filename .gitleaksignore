@@ -1,0 +1,4 @@
+frontend/.next/
+reports/
+**/__pycache__/
+*.pyc

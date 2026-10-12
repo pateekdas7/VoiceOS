@@ -101,6 +101,23 @@ DOWNLOADERS = {
 }
 
 
+def download_companion_codec(codec: dict) -> None:
+    """Download a companion codec from HuggingFace Hub (e.g. SNAC 24 kHz for Veena)."""
+    from huggingface_hub import snapshot_download
+
+    repo_id = codec["repo_id"]
+    local_path = codec["local_path"]
+    os.makedirs(local_path, exist_ok=True)
+
+    if _is_populated(local_path):
+        log(f"Companion codec {codec['name']}: already present at {local_path} — skipping")
+        return
+
+    log(f"Downloading companion codec {repo_id} → {local_path} ...")
+    path = snapshot_download(repo_id, local_dir=local_path)
+    log(f"Companion codec download complete: {path}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="VoiceOS GPU model downloader")
     parser.add_argument("--manifest", required=True, help="Path to model_manifest.yaml")
@@ -136,6 +153,15 @@ def main() -> None:
         except Exception as exc:
             log(f"ERROR downloading {name}: {exc}")
             sys.exit(1)
+
+        codec = model.get("companion_codec")
+        if codec:
+            log(f"--- {name}: companion codec ({codec['name']}) ---")
+            try:
+                download_companion_codec(codec)
+            except Exception as exc:
+                log(f"ERROR downloading companion codec for {name}: {exc}")
+                sys.exit(1)
 
     log("All model downloads complete.")
 

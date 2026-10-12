@@ -1,0 +1,76 @@
+# NetworkPolicy patches applied to voiceos-ops namespace during CPU deployment.
+#
+# alertmanager: added egress to host port 8001 (web_api System X webhook).
+# prometheus:   added egress to exporter ports 9100/9121/9187 and host 10.0.2.2.
+# postgres-exporter / redis-exporter: ingress from Prometheus, egress to host data stores.
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-exporter
+  namespace: voiceos-ops
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgres-exporter
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - port: 9187
+          protocol: TCP
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+      to:
+        - namespaceSelector: {}
+    - ports:
+        - port: 5432
+          protocol: TCP
+      to:
+        - ipBlock:
+            cidr: 10.0.2.2/32
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-exporter
+  namespace: voiceos-ops
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis-exporter
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - port: 9121
+          protocol: TCP
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+      to:
+        - namespaceSelector: {}
+    - ports:
+        - port: 6379
+          protocol: TCP
+      to:
+        - ipBlock:
+            cidr: 10.0.2.2/32

@@ -33,7 +33,7 @@ from src.services.policy_engine.service import PolicyEngineService
 from tests.fixtures.redis import FakeRedisClient
 
 _TENANT = TenantId("tenant-a")
-_RAW_API_KEY = "test-api-key-12345"
+_RAW_API_KEY = "test-api-key-12345"  # gitleaks:allow
 
 
 class _FakeCustomerRepository:

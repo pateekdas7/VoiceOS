@@ -1,0 +1,20 @@
+[Unit]
+Description=VoiceOS Loki
+Documentation=https://grafana.com/docs/loki/
+After=network.target
+
+[Service]
+Type=simple
+User=loki
+Group=loki
+EnvironmentFile=-/opt/voiceos/.env
+ExecStart=/usr/local/bin/loki \
+    -config.file=/opt/voiceos/app/monitoring/logging/loki.yml
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

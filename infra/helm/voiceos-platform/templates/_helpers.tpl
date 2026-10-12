@@ -18,3 +18,14 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 app.kubernetes.io/name: saas-ops
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
+
+{{/* Background job helpers (Phase 6 CronJobs) */}}
+
+{{- define "voiceos-platform.jobs.fullname" -}}
+{{- printf "%s-jobs" .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "voiceos-platform.jobs.labels" -}}
+app.kubernetes.io/part-of: voiceos-platform
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}

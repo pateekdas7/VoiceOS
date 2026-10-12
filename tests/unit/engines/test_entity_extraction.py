@@ -253,3 +253,100 @@ def test_default_reference_date_is_today() -> None:
     promise = result.get(EntityType.PROMISE_DATE)
     assert promise is not None
     assert promise.normalized == today.isoformat()
+
+
+# ---------------------------------------------------------------------------
+# Path-A Phase 6: extended relative-date coverage (ported from
+# conv_server.py's proven parser, now feeding EntityExtractor directly)
+# ---------------------------------------------------------------------------
+
+
+def test_promise_date_tareekh_this_month(extractor: EntityExtractor) -> None:
+    """'29 tareekh' resolves to the 29th of the reference month if not yet passed."""
+    turn = _make_turn("29 tareekh tak pay kar dunga")
+    result = extractor.extract(turn)
+    promise = result.get(EntityType.PROMISE_DATE)
+    assert promise is not None
+    assert promise.normalized == "2026-07-29"
+
+
+def test_promise_date_tareekh_devanagari(extractor: EntityExtractor) -> None:
+    """'5 तारीख' — reference date is 2026-07-03, so day 5 hasn't passed yet
+    this month and resolves within July."""
+    turn = _make_turn("5 तारीख को kar dunga")
+    result = extractor.extract(turn)
+    promise = result.get(EntityType.PROMISE_DATE)
+    assert promise is not None
+    assert promise.normalized == "2026-07-05"
+
+
+def test_promise_date_tareekh_rolls_to_next_month(extractor: EntityExtractor) -> None:
+    """A day-of-month earlier than the reference date rolls to next month."""
+    turn = _make_turn("1 tareekh tak")  # reference date is 2026-07-03
+    result = extractor.extract(turn)
+    promise = result.get(EntityType.PROMISE_DATE)
+    assert promise is not None
+    assert promise.normalized == "2026-08-01"
+
+
+def test_promise_date_day_offset_hindi_word(extractor: EntityExtractor) -> None:
+    """'pandrah din mein' (Hinglish 'fifteen days') -> reference + 15 days."""
+    turn = _make_turn("pandrah din mein de dunga")
+    result = extractor.extract(turn)
+    promise = result.get(EntityType.PROMISE_DATE)
+    assert promise is not None
+    assert promise.normalized == "2026-07-18"
+
+
+def test_promise_date_day_offset_devanagari_word(extractor: EntityExtractor) -> None:
+    """'पंद्रह दिन में' -> reference + 15 days."""
+    turn = _make_turn("पंद्रह दिन में payment kar dunga")
+    result = extractor.extract(turn)
+    promise = result.get(EntityType.PROMISE_DATE)
+    assert promise is not None
+    assert promise.normalized == "2026-07-18"
+
+
+def test_promise_date_day_offset_numeric(extractor: EntityExtractor) -> None:
+    """'15 din mein' (numeric) -> reference + 15 days."""
+    turn = _make_turn("15 din mein kar dunga")
+    result = extractor.extract(turn)
+    promise = result.get(EntityType.PROMISE_DATE)
+    assert promise is not None
+    assert promise.normalized == "2026-07-18"
+
+
+def test_promise_date_agle_hafte(extractor: EntityExtractor) -> None:
+    """'agle hafte' -> reference + 7 days."""
+    turn = _make_turn("agle hafte tak ho jayega")
+    result = extractor.extract(turn)
+    promise = result.get(EntityType.PROMISE_DATE)
+    assert promise is not None
+    assert promise.normalized == "2026-07-10"
+
+
+def test_promise_date_do_hafte(extractor: EntityExtractor) -> None:
+    """'do hafte' -> reference + 14 days."""
+    turn = _make_turn("do hafte mein kar dunga")
+    result = extractor.extract(turn)
+    promise = result.get(EntityType.PROMISE_DATE)
+    assert promise is not None
+    assert promise.normalized == "2026-07-17"
+
+
+def test_promise_date_salary_ke_baad(extractor: EntityExtractor) -> None:
+    """'salary ke baad' resolves to a documented 30-day business default."""
+    turn = _make_turn("salary ke baad pay kar dunga")
+    result = extractor.extract(turn)
+    promise = result.get(EntityType.PROMISE_DATE)
+    assert promise is not None
+    assert promise.normalized == "2026-08-02"
+
+
+def test_absolute_date_takes_priority_over_relative(extractor: EntityExtractor) -> None:
+    """An explicit month-name date beats a co-occurring vague relative phrase."""
+    turn = _make_turn("kal nahi, 30 July ko full payment kar dunga")
+    result = extractor.extract(turn)
+    dt = result.get(EntityType.DATE)
+    assert dt is not None
+    assert dt.normalized == "2026-07-30"

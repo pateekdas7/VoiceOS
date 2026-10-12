@@ -109,12 +109,11 @@ def test_veena_adapter_satisfies_tts_protocol() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_clause_splitter_english_comma() -> None:
-    """ClauseSplitter splits English text into 3 clauses on comma boundaries.
+def test_clause_splitter_english_no_longer_splits_on_comma() -> None:
+    """Phase C: commas are NOT sentence boundaries.
 
-    Sprint-009: 'clause splitter splits on boundary characters'.
     Input: "Well, we understand your situation, and we'd like to help."
-    Expected: 3 clauses (2 from feed, 1 from flush).
+    Expected: 1 clause (the trailing '. ' does not appear; flush emits the whole thing).
     """
     splitter = ClauseSplitter()
     text = "Well, we understand your situation, and we'd like to help."
@@ -125,7 +124,7 @@ def test_clause_splitter_english_comma() -> None:
     if remainder:
         all_clauses.append(remainder)
 
-    assert len(all_clauses) == 3, f"Expected 3 clauses, got {len(all_clauses)}: {all_clauses}"
+    assert len(all_clauses) == 1, f"Expected 1 clause (no comma-split), got {len(all_clauses)}: {all_clauses}"
 
 
 def test_clause_splitter_hindi_boundary() -> None:
@@ -244,7 +243,7 @@ async def test_gpu_scheduler_called_before_tts_inference() -> None:
     cast(Any, scheduler.request_allocation).assert_called_once_with(
         service="tts",
         model="veena",
-        required_vram_mb=2048,
+        required_vram_mb=7974,
     )
     cast(Any, scheduler.release_allocation).assert_called_once()
 

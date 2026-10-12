@@ -1,0 +1,22 @@
+[Unit]
+Description=VoiceOS Promtail (journald + Docker + app logs -> Loki)
+Documentation=https://grafana.com/docs/loki/latest/clients/promtail/
+After=network.target voiceos-loki.service systemd-journald.service
+Wants=voiceos-loki.service
+
+[Service]
+Type=simple
+User=promtail
+Group=promtail
+# Promtail needs read access to journald + /var/log + the Docker socket.
+SupplementaryGroups=systemd-journal docker adm
+ExecStart=/usr/local/bin/promtail \
+    -config.file=/opt/voiceos/app/monitoring/logging/promtail.yml
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

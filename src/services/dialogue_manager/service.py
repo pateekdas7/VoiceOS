@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import AsyncIterator
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 
 from src.libs.contracts.streaming import WordHypothesis
@@ -95,7 +95,7 @@ class DialogueManager:
         """
         self._state = DialogueState.CUSTOMER_SPEAKING
         self._accumulated = []
-        self._start_time = datetime.utcnow()
+        self._start_time = datetime.now(UTC)
 
         async for hypothesis in word_stream:
             if hypothesis.is_final:
@@ -139,7 +139,7 @@ class DialogueManager:
             role=TurnRole.CUSTOMER,
             transcript=transcript,
             segments=segments,
-            created_at=self._start_time or datetime.utcnow(),
+            created_at=self._start_time or datetime.now(UTC),
             correlation_id=self._correlation_id,
             trace_id=self._trace_id,
             turn_index=self._turn_index,

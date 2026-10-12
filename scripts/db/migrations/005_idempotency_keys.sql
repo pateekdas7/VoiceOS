@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
     key                     TEXT        PRIMARY KEY,
     tenant_id               UUID        NOT NULL,
     resource_type           TEXT        NOT NULL,       -- 'ptp' | 'sms' | 'payment' | 'settlement' | etc.
+    result                  JSONB,                      -- cached outcome for duplicate-key lookups (see 0009_idempotency_keys.py)
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     expires_at              TIMESTAMPTZ NOT NULL
 );

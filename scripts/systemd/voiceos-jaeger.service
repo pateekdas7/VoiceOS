@@ -1,0 +1,26 @@
+[Unit]
+Description=VoiceOS Jaeger (all-in-one tracing backend)
+Documentation=https://www.jaegertracing.io/docs/
+After=network.target
+
+[Service]
+Type=simple
+User=jaeger
+Group=jaeger
+EnvironmentFile=-/opt/voiceos/.env
+Environment=COLLECTOR_OTLP_ENABLED=true
+Environment=SPAN_STORAGE_TYPE=badger
+Environment=BADGER_EPHEMERAL=false
+Environment=BADGER_DIRECTORY_VALUE=/var/lib/jaeger/data
+Environment=BADGER_DIRECTORY_KEY=/var/lib/jaeger/key
+ExecStart=/usr/local/bin/jaeger-all-in-one \
+    --collector.otlp.enabled=true \
+    --query.base-path=/
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

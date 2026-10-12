@@ -1,0 +1,61 @@
+{{- if .Values.jobs.dailyAggregation.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "voiceos-platform.jobs.fullname" . }}-daily-aggregation
+  namespace: {{ .Values.jobs.namespace }}
+  labels:
+    {{- include "voiceos-platform.jobs.labels" . | nindent 4 }}
+    app.kubernetes.io/name: daily-aggregation
+    app.kubernetes.io/component: background-job
+spec:
+  schedule: {{ .Values.jobs.dailyAggregation.schedule | quote }}
+  # Forbid concurrent runs: daily aggregation is idempotent via ON CONFLICT upsert,
+  # but running two instances simultaneously doubles DB load with no benefit.
+  concurrencyPolicy: Forbid
+  # Allow up to 15 min late start to handle cluster pressure at midnight UTC.
+  startingDeadlineSeconds: 900
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: {{ .Values.jobs.dailyAggregation.activeDeadlineSeconds }}
+      backoffLimit: {{ .Values.jobs.dailyAggregation.backoffLimit }}
+      template:
+        metadata:
+          labels:
+            {{- include "voiceos-platform.jobs.labels" . | nindent 12 }}
+            app.kubernetes.io/name: daily-aggregation
+        spec:
+          restartPolicy: OnFailure
+          priorityClassName: {{ .Values.jobs.priorityClassName }}
+          nodeSelector:
+            voiceos.io/node-pool: cpu
+          serviceAccountName: {{ include "voiceos-platform.jobs.fullname" . }}
+          containers:
+            - name: daily-aggregation
+              image: "{{ .Values.jobs.image.repository }}:{{ .Values.jobs.image.tag }}"
+              imagePullPolicy: {{ .Values.jobs.image.pullPolicy }}
+              command: ["python", "-m", "scripts.jobs.run_daily_aggregation"]
+              env:
+                - name: POSTGRES_DSN
+                  valueFrom:
+                    secretKeyRef:
+                      name: voiceos-postgres-credentials
+                      key: dsn
+              resources:
+                requests:
+                  cpu: {{ .Values.jobs.dailyAggregation.resources.cpu }}
+                  memory: {{ .Values.jobs.dailyAggregation.resources.memory }}
+                limits:
+                  cpu: {{ .Values.jobs.dailyAggregation.resources.cpu }}
+                  memory: {{ .Values.jobs.dailyAggregation.resources.memory }}
+              securityContext:
+                readOnlyRootFilesystem: true
+                allowPrivilegeEscalation: false
+                runAsNonRoot: true
+                capabilities:
+                  drop: ["ALL"]
+          securityContext:
+            runAsNonRoot: true
+{{- end }}

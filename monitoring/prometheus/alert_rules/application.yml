@@ -18,6 +18,7 @@ groups:
           severity: warning
           route: ticket
         annotations:
+          runbook_url: /docs/runbooks/alerts/error-rate-spike.md
           summary: "Error rate spike on {{ $labels.service }}"
           description: "{{ $labels.service }} error rate has exceeded 0.05 req/s over 5 minutes."
 
@@ -28,6 +29,7 @@ groups:
           severity: warning
           route: ticket
         annotations:
+          runbook_url: /docs/runbooks/alerts/circuit-breaker-open.md
           summary: "Circuit breaker OPEN for dependency {{ $labels.service }}"
           description: "voiceos_circuit_breaker_state has been 2 (OPEN) for {{ $labels.service }} for at least 1 minute -- downstream calls are being short-circuited."
 
@@ -38,6 +40,7 @@ groups:
           severity: critical
           route: page
         annotations:
+          runbook_url: /docs/runbooks/alerts/circuit-breaker-open-critical.md
           summary: "Circuit breaker OPEN for {{ $labels.service }} for over 10 minutes"
           description: "Sustained OPEN circuit breaker for {{ $labels.service }} -- likely a prolonged dependency outage. Page on-call."
 
@@ -48,6 +51,7 @@ groups:
           severity: warning
           route: ticket
         annotations:
+          runbook_url: /docs/runbooks/alerts/dlq-growing.md
           summary: "DLQ depth growing for {{ $labels.queue_name }}"
           description: "{{ $labels.queue_name }} has grown by more than 5 entries in the last 15 minutes -- events are exhausting their retry budget."
 
@@ -58,5 +62,120 @@ groups:
           severity: critical
           route: page
         annotations:
+          runbook_url: /docs/runbooks/alerts/dlq-depth-critical.md
           summary: "DLQ depth critical for {{ $labels.queue_name }} ({{ $value }} entries)"
           description: "{{ $labels.queue_name }} has exceeded 100 entries -- likely a systemic downstream failure, not transient retries."
+
+      - alert: HighTurnLatency
+        expr: histogram_quantile(0.95, sum by (le, tenant_id) (rate(voiceos_turn_latency_ms_bucket[5m]))) > 4000
+        for: 5m
+        labels:
+          severity: warning
+          route: ticket
+          team: voice
+        annotations:
+          runbook_url: /docs/runbooks/alerts/high-turn-latency.md
+          summary: "p95 turn latency > 4000 ms for tenant {{ $labels.tenant_id }}"
+          description: >
+            95th-percentile end-to-end turn latency (VADSpeechEnd → first TTS frame)
+            has exceeded 4 seconds over the past 5 minutes. Customers experience
+            noticeable dead air. Check STT / LLM / TTS p95 histograms individually
+            to isolate the bottleneck. GPU node may be saturated or cold.
+          runbook: "infra/runbooks/high-turn-latency.md"
+
+      - alert: HighTurnLatencyCritical
+        expr: histogram_quantile(0.95, sum by (le, tenant_id) (rate(voiceos_turn_latency_ms_bucket[5m]))) > 7000
+        for: 3m
+        labels:
+          severity: critical
+          route: page
+          team: voice
+        annotations:
+          runbook_url: /docs/runbooks/alerts/high-turn-latency-critical.md
+          summary: "p95 turn latency > 7000 ms — callers hearing dead air"
+          description: >
+            Turn latency p95 has exceeded 7 seconds — callers are hanging up.
+            This is the architecture's hard SLA boundary (V1 Ch23 §23.5).
+            Page on-call; consider routing to a fallback TTS or reducing LLM max_tokens.
+          runbook: "infra/runbooks/high-turn-latency.md"
+
+      - alert: PostgresErrors
+        expr: rate(voiceos_bff_pg_errors_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          route: ticket
+          team: platform
+        annotations:
+          runbook_url: /docs/runbooks/alerts/postgres-errors.md
+          summary: "PostgreSQL error rate elevated ({{ $value | humanize }}/s)"
+          description: >
+            voiceos_bff_pg_errors_total is incrementing at more than 0.05/s.
+            Possible causes: connection pool exhaustion, slow query blocking the
+            pool, OOMKilled Postgres pod, or failed migration. Check BFF logs for
+            pg.idle_client_error events.
+          runbook: "infra/runbooks/postgres-errors.md"
+
+      - alert: PostgresErrorsCritical
+        expr: rate(voiceos_bff_pg_errors_total[5m]) > 0.5
+        for: 2m
+        labels:
+          severity: critical
+          route: page
+          team: platform
+        annotations:
+          runbook_url: /docs/runbooks/alerts/postgres-errors-critical.md
+          summary: "Critical Postgres error rate > 0.5/s — BFF degraded"
+          description: >
+            PostgreSQL errors are occurring at > 0.5/s. At this rate campaign
+            creation, lead uploads, and session auth are all failing. Page on-call.
+          runbook: "infra/runbooks/postgres-errors.md"
+
+      - alert: RedisErrors
+        expr: rate(voiceos_bff_redis_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          route: ticket
+          team: platform
+        annotations:
+          runbook_url: /docs/runbooks/alerts/redis-errors.md
+          summary: "Redis error rate elevated ({{ $value | humanize }}/s)"
+          description: >
+            voiceos_bff_redis_errors_total is incrementing at more than 0.1/s.
+            The dialer queue and session-token store are both Redis-backed; errors
+            here cause calls to fail silently. Check Redis pod health and memory.
+          runbook: "infra/runbooks/redis-errors.md"
+
+      - alert: RedisErrorsCritical
+        expr: rate(voiceos_bff_redis_errors_total[5m]) > 1.0
+        for: 2m
+        labels:
+          severity: critical
+          route: page
+          team: platform
+        annotations:
+          runbook_url: /docs/runbooks/alerts/redis-errors-critical.md
+          summary: "Critical Redis error rate > 1/s — dialer queue unreachable"
+          description: >
+            Redis is effectively unreachable from the BFF. Outbound calls cannot
+            be queued or dequeued. Page on-call immediately.
+          runbook: "infra/runbooks/redis-errors.md"
+
+      - alert: VoiceOSStartupHandlersBelowBaseline
+        expr: min_over_time(voiceos_startup_handlers[5m]) < 3
+        for: 5m
+        labels:
+          severity: warning
+          route: ticket
+          team: platform
+        annotations:
+          runbook_url: /docs/runbooks/alerts/voiceos-startup-handlers-below-baseline.md
+          summary: "voiceos_startup_handlers has dropped below baseline (<3)"
+          description: >
+            BackgroundHandlerRegistry gauge voiceos_startup_handlers is below
+            the expected baseline of 3 handlers for 5 minutes. A silent
+            registration regression likely means one of GPU poller, escalation
+            evaluator, or alert_lifecycle poller failed to register during
+            webapi startup — monitoring freshness will degrade. Check webapi
+            journalctl and restart if a handler crashed on init.

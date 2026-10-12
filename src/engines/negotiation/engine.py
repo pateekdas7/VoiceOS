@@ -14,6 +14,7 @@ Architecture: V2 Ch5 (Negotiation Engine); RI-5.
 from __future__ import annotations
 
 import logging
+from datetime import date
 
 from src.libs.contracts.context import CustomerContext
 from src.libs.contracts.primitives import Currency, Money
@@ -46,7 +47,7 @@ class NegotiationBoundaryViolationError(Exception):
 class NegotiationResult:
     """Output of NegotiationEngine.compute_move()."""
 
-    __slots__ = ("envelope", "move", "proposed_amount", "rationale")
+    __slots__ = ("envelope", "move", "proposed_amount", "proposed_date", "rationale")
 
     def __init__(
         self,
@@ -54,11 +55,13 @@ class NegotiationResult:
         proposed_amount: Money | None,
         envelope: NegotiationEnvelope,
         rationale: str,
+        proposed_date: date | None = None,
     ) -> None:
         self.move = move
         self.proposed_amount = proposed_amount
         self.envelope = envelope
         self.rationale = rationale
+        self.proposed_date = proposed_date
 
     def __repr__(self) -> str:
         return f"NegotiationResult(move={self.move!r}, proposed_amount={self.proposed_amount!r})"
@@ -161,6 +164,7 @@ class NegotiationEngine:
         customer_offer_minor: int | None = None,
         concession_round: int = 0,
         hardship_verified: bool = False,
+        customer_proposed_date: date | None = None,
     ) -> NegotiationResult:
         """Select the next NegotiationMove given the customer's position.
 
@@ -173,9 +177,14 @@ class NegotiationEngine:
             customer_offer_minor: Customer's proposed amount in minor units (None if none).
             concession_round: Number of concession rounds already completed.
             hardship_verified: True if customer hardship has been verified.
+            customer_proposed_date: Date the customer proposed for payment, if any
+                (from EntityExtractor's PROMISE_DATE/DATE slot). Used, when present,
+                as the ``proposed_date`` on ACCEPT/PROPOSE_PTP results instead of the
+                envelope's own floor/ceiling date default.
 
         Returns:
-            NegotiationResult with the selected move and proposed amount.
+            NegotiationResult with the selected move, proposed amount, and (for
+            ACCEPT/PROPOSE_PTP) a proposed_date suitable for a Collections commitment.
 
         Raises:
             NegotiationBoundaryViolationError: If any proposed offer violates the envelope.
@@ -192,6 +201,7 @@ class NegotiationEngine:
                 proposed_amount=Money(amount_minor=proposed, currency=envelope.floor_amount.currency),
                 envelope=envelope,
                 rationale="Hardship verified — propose PTP at floor amount",
+                proposed_date=customer_proposed_date or envelope.ceiling_date,
             )
 
         # Customer has made an offer
@@ -205,6 +215,7 @@ class NegotiationEngine:
                     proposed_amount=Money(amount_minor=clamped, currency=envelope.floor_amount.currency),
                     envelope=envelope,
                     rationale=f"Customer offer {customer_offer_minor} ≥ floor {floor} — ACCEPT",
+                    proposed_date=customer_proposed_date or envelope.floor_date,
                 )
 
             # Below floor — counter or decline

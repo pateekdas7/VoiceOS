@@ -130,6 +130,15 @@ class LoanAccountRepository(BaseRepository):
             as_of=as_of,
         )
 
+    def avg_dpd_for_tenant(self, tenant_id: TenantId) -> float:
+        """Average DPD across all loan accounts for a tenant (for daily analytics rollups)."""
+        cur = self._execute(
+            f"SELECT COALESCE(AVG(dpd), 0.0) FROM {_TABLE} WHERE tenant_id = %s",
+            (str(tenant_id),),
+        )
+        row = cur.fetchone()
+        return float(row[0]) if row else 0.0
+
     def select_cohort(
         self,
         tenant_id: TenantId,

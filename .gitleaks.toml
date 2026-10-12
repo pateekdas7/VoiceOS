@@ -1,0 +1,20 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Test fixtures with intentional fake credentials"
+regexes = [
+  "test-jwt-secret-phase5-voiceos-32c",
+  "test-api-key-12345",
+  "AKIAABCDEFGHIJKLMNOP",
+  "0e539e25b3e5ea96e7434dad38c6029557a9fb3b92f0869e"
+]
+
+[[allowlists]]
+description = "Build artifacts reports and bytecode"
+paths = [
+  'frontend/.next/',
+  'reports/',
+  '__pycache__/',
+  '.pyc$'
+]

@@ -44,13 +44,18 @@ _INTENT_BASE_ACTION: dict[str, StrategyAction] = {
 }
 
 _STATE_BASE_ACTION: dict[str, StrategyAction] = {
+    # Keyed by the real ConversationState enum values (src/engines/conversation_state)
+    # — was previously keyed by ad hoc strings ("VERIFICATION", "PROMISE_TO_PAY",
+    # "DISPUTE_HANDLING", "HARDSHIP_HANDLING") emitted only by the now-removed
+    # ResponsePlanningEngine._infer_state() heuristic, which never matched this
+    # engine's real caller (ConversationStateIntelligence).
     "GREETING": StrategyAction.VERIFY,
-    "VERIFICATION": StrategyAction.VERIFY,
+    "IDENTITY_VERIFICATION": StrategyAction.VERIFY,
     "DEBT_DISCUSSION": StrategyAction.ASK,
     "NEGOTIATION": StrategyAction.NEGOTIATE,
-    "PROMISE_TO_PAY": StrategyAction.CONFIRM,
-    "DISPUTE_HANDLING": StrategyAction.VERIFY,
-    "HARDSHIP_HANDLING": StrategyAction.REASSURE,
+    "COMMITMENT_CAPTURE": StrategyAction.CONFIRM,
+    "OBJECTION_HANDLING": StrategyAction.VERIFY,
+    "ESCALATION": StrategyAction.ESCALATE,
     "CLOSING": StrategyAction.CLOSE,
     "POST_CALL": StrategyAction.CLOSE,
 }
@@ -136,7 +141,7 @@ class StrategyEngine:
             return StrategySelection(StrategyAction.CLOSE, 0.9, "CONSENT_RISK — honour consent withdrawal")
 
         # Precedence 3: Verification gate
-        if not identity_verified and conversation_state in ("GREETING", "VERIFICATION"):
+        if not identity_verified and conversation_state in ("GREETING", "IDENTITY_VERIFICATION"):
             return StrategySelection(
                 StrategyAction.VERIFY, 0.95, "Identity not yet verified — must verify before disclosure"
             )

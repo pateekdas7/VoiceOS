@@ -1,42 +1,59 @@
-# VoiceOS v2 -- Alertmanager routing configuration (Sprint-027.md).
+# VoiceOS v2 — Alertmanager routing configuration.
 #
-# Routes: CRITICAL -> PagerDuty (page on-call, <5 min), WARNING -> JIRA
-# (auto-created ticket), INFO -> Slack channel. Receiver credentials are
-# never hardcoded here -- every receiver reads its key/webhook from an
-# environment variable resolved at container start (same "runtime
-# injection only" rule as src/libs/secrets/, CLAUDE.md's Security section).
+# Routes:
+#   CRITICAL → PagerDuty (page on-call, <5 min)
+#   WARNING  → JIRA (auto-created ticket)
+#   INFO     → Slack channel
+#   ALL      → voiceos-webhook (every alert, every severity, continue:true)
 #
-# Architecture: V7 Ch8 (Alerting).
+# Receiver credentials are NEVER hardcoded. Each is read from an environment
+# variable rendered at container start by `envsubst` (compose entrypoint).
+# Env file:  /opt/voiceos/monitoring-stack/alertmanager-secrets.env
+# Cutover:   docs/operations/PAGER_SETUP.md
+#
+# Placeholder values (`REPLACE_ME_*`) do NOT prevent alerting — the
+# `voiceos-webhook` receiver has no auth and always succeeds, so the
+# alert_lifecycle DB table is always written even when PagerDuty/Slack/JIRA
+# are not yet provisioned. The paid receivers simply fail silently until
+# their keys are swapped in.
+#
+# Architecture: V7 Ch8 (Alerting), V3 Ch11 (Alert lifecycle).
 
 global:
   resolve_timeout: 5m
 
 route:
-  receiver: default-slack
+  receiver: voiceos-webhook
   group_by: ["alertname", "service"]
   group_wait: 30s
   group_interval: 5m
   repeat_interval: 4h
   routes:
-    - match:
-        severity: critical
+    # Every alert — regardless of severity — feeds the VoiceOS webhook first
+    # (continue: true) so the Alerts Center always has a complete DB record.
+    - receiver: voiceos-webhook
+      continue: true
+      group_wait: 0s
+      repeat_interval: 1h
+    - matchers:
+        - severity="critical"
       receiver: pagerduty-critical
       continue: true
       group_wait: 10s
       repeat_interval: 15m
-    - match:
-        severity: warning
+    - matchers:
+        - severity="warning"
       receiver: jira-warning
       continue: true
       repeat_interval: 12h
-    - match:
-        severity: info
+    - matchers:
+        - severity="info"
       receiver: default-slack
       repeat_interval: 24h
 
 inhibit_rules:
   # A firing CRITICAL for the same alertname+service suppresses the
-  # corresponding WARNING (slow-burn) notification -- no duplicate paging.
+  # corresponding WARNING (slow-burn) notification — no duplicate paging.
   - source_matchers: ["severity=critical"]
     target_matchers: ["severity=warning"]
     equal: ["alertname", "service"]
@@ -47,6 +64,10 @@ receivers:
       - routing_key: "${PAGERDUTY_SERVICE_KEY}"
         severity: critical
         description: '{{ .CommonAnnotations.summary }}'
+        details:
+          service: '{{ .CommonLabels.service }}'
+          alertname: '{{ .CommonLabels.alertname }}'
+          runbook: '{{ .CommonAnnotations.runbook_url }}'
 
   - name: jira-warning
     webhook_configs:
@@ -60,3 +81,13 @@ receivers:
         send_resolved: true
         title: '{{ .CommonAnnotations.summary }}'
         text: '{{ .CommonAnnotations.description }}'
+
+  # VoiceOS web_api receiver: ingests every alert into the alert_lifecycle DB
+  # table regardless of severity so the Alerts Center page has a complete
+  # history. Runs in parallel with the severity-specific receivers above
+  # (continue: true on each severity route ensures all routes fire).
+  - name: voiceos-webhook
+    webhook_configs:
+      - url: "${VOICEOS_ALERT_WEBHOOK_URL}"
+        send_resolved: true
+        max_alerts: 0

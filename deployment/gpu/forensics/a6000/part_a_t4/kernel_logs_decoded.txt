@@ -1,0 +1,180 @@
+0.00s - Debugger warning: It seems that frozen modules are being used, which may
+0.00s - make the debugger miss breakpoints. Please pass -Xfrozen_modules=off
+0.00s - to python to disable frozen modules.
+0.00s - Note: Debugging will proceed. Set PYDEVD_DISABLE_FILE_VALIDATION=1 to disable this validation.
+0.00s - Debugger warning: It seems that frozen modules are being used, which may
+0.00s - make the debugger miss breakpoints. Please pass -Xfrozen_modules=off
+0.00s - to python to disable frozen modules.
+0.00s - Note: Debugging will proceed. Set PYDEVD_DISABLE_FILE_VALIDATION=1 to disable this validation.
+======================================================================
+VOICEOS SPRINT-29 PHASE-3 â REAL KAGGLE GPU VALIDATION
+======================================================================
+Timestamp: 2026-08-27 10:14:17 UTC
+Python:    3.12.13 (main, Mar  4 2026, 09:23:07) [GCC 11.4.0]
+--- nvidia-smi ---
+Thu Aug 27 10:14:17 2026
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.159.04             Driver Version: 580.159.04     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  Tesla T4                       Off |   00000000:00:04.0 Off |                    0 |
+| N/A   43C    P8              9W /   70W |       0MiB /  15360MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+|   1  Tesla T4                       Off |   00000000:00:05.0 Off |                    0 |
+| N/A   43C    P8              9W /   70W |       0MiB /  15360MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+--- PyTorch GPU Properties ---
+PyTorch:          2.10.0+cu128
+CUDA available:   True
+CUDA runtime:     12.8
+cuDNN:            91002
+GPU 0: Tesla T4
+  VRAM:    14.56 GB (14911 MiB)
+  Compute: 7.5 (sm_75)
+  BF16 tensor cores: False (requires sm_80+)
+  FP16 tensor cores: True
+GPU 1: Tesla T4
+  VRAM:    14.56 GB (14911 MiB)
+  Compute: 7.5 (sm_75)
+  BF16 tensor cores: False (requires sm_80+)
+  FP16 tensor cores: True
+--- Disk ---
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/loop1       20G  248K   20G   1% /kaggle/working
+--- RAM ---
+               total        used        free      shared  buff/cache   available
+Mem:            31Gi       1.1Gi        26Gi       1.0Mi       3.4Gi        29Gi
+Swap:             0B          0B          0B
+======================================================================
+KAGGLE T4 vs A6000 PRODUCTION SPECIFICATION
+======================================================================
+Production:  NVIDIA RTX A6000 | sm_86 | 46.0GB Ã 1
+Kaggle:      Tesla T4 Ã 2 | sm_75 | 14.56GB Ã 2 = 29.1GB
+  KAGGLE LIMITATION: BF16 runs in FP32 emulation (no BF16 tensor cores on sm_75; requires sm_80+)
+  KAGGLE LIMITATION: FP8 hardware not supported (T4=sm_75, requires Ada/Hopper sm_89+); Qwen FP8 dequantizes at runtime â still functional
+  KAGGLE LIMITATION: LLM: gpu_memory_utilization 0.32â0.85, max_model_len 4096â512 (T4=14.6GB vs A6000=46GB)
+T4 per-GPU VRAM: 14.56 GB | Total: 29.1 GB
+VRAM plan: LLM on GPU0 (15GB) | STT+TTS on GPU1 (15GB)
+  GPU0 LLM: ~12.4GB @ util=0.85 < 14.6GB T4 OK
+  GPU1 STT+TTS: ~1.8+6.0=7.8GB < 14.6GB T4 OK
+  STT=~1.8GB + TTS=~6GB = 7.8GB < 15GB â fits on GPU1
+Production spec NOT changed. A6000 spec remains authoritative.
+Kaggle T4 overrides apply ONLY during this temporary validation.
+Limitations found: 3
+======================================================================
+INSTALL PRODUCTION DEPENDENCIES
+======================================================================
+PyTorch pre-installed on Kaggle â not reinstalling
+  OK: faster-whisper==1.2.1 (9s)
+  OK: ctranslate2==4.8.0 (5s)
+  OK: transformers==5.12.1 (14s)
+  OK: tokenizers==0.22.2 (3s)
+  OK: huggingface_hub==0.28.0 (5s)
+  OK: accelerate==1.7.0 (5s)
+  OK: snac==1.0.0 (3s)
+  OK: numpy==2.3.5 (7s)
+  OK: fastapi==0.115.6 (4s)
+  OK: uvicorn[standard]==0.30.6 (4s)
+  OK: pydantic==2.10.4 (6s)
+  OK: httpx==0.27.0 (4s)
+Installing vLLM (production pin: 0.24.0)...
+  OK: vllm==0.24.0 (253s)
+--- Versions installed ---
+  torch: 2.10.0+cu128
+  faster_whisper: 1.2.1
+  ctranslate2: 4.8.0
+  transformers: 5.12.1
+  snac: 1.0.0
+  httpx: 0.28.1
+  vllm: NOT INSTALLED
+Installation: 13/13 OK | Failed: none
+Cloning claude/ssh-gpu-cpu-servers-y99fib...
+Cloned: 02d1f3b100d787d1e58b15c7a9162deacad2e446 fix(phase-5): replace tunnel cell with CELL SERVE that restarts GPU services
+Commit 182fea6 verified: False
+  â deployment/gpu/services/tts/server.py
+  â deployment/gpu/services/stt/server.py
+  â deployment/gpu/audio/pacer.py
+  â deployment/gpu/tests/test_audio_pipeline.py
+Python path: /kaggle/working/voiceos
+HF cache:    /kaggle/working/hf
+Speaker-Lock sweep patch applied to /kaggle/working/voiceos/deployment/gpu/services/tts/server.py
+  - Per-text CUDA RNG seed anchor: ON (determinism)
+  - Official Veena sampling: temperature=0.4 top_p=0.9 (RESTORED)
+  - Optional lock_tokens/boot_temp per-request (default lock_tokens=0 = off)
+  - SpeakerLockLogitsProcessor scales scores in lock region
+PATCH VERIFICATION OK â all markers present, Option B tightening reverted, official sampling restored
+======================================================================
+REAL STT VALIDATION â Whisper large-v3-turbo (int8_float16)
+======================================================================
+Downloading whisper-large-v3-turbo (~1.5 GB)...
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+  Downloaded in 7s
+Loading WhisperModel (int8_float16, cuda:0)...
+  Loaded 3817ms | VRAM delta: 0 MiB
+  Warmup: 814ms
+  Trial 1: 345ms | lang=hi | words=4
+  Trial 2: 333ms | lang=hi | words=4
+  Trial 3: 335ms | lang=hi | words=4
+REAL KAGGLE GPU â STT STATUS: PASS
+  Load=3817ms | Warmup=814ms | Avg=338ms
+  VRAM delta=0MiB | Peak=0MiB
+======================================================================
+REAL LLM VALIDATION â Qwen2.5-7B-Instruct-FP8 via vLLM (GPU 0)
+======================================================================
+KAGGLE LIMITATION: util=0.85, max_model_len=512 (vs prod: util=0.32, max_len=4096)
+REAL KAGGLE GPU â LLM STATUS: BLOCKED: vLLM not installed
+======================================================================
+REAL TTS VALIDATION â Veena 3B BF16 + SNAC (CRITICAL: PCM16LE check)
+======================================================================
+This test verifies the fix for the 'Na--mas--te' float32/PCM16 mismatch
+[Step 1] Starting TTS server (Veena 3B BF16, GPU 0)...
+  Downloads: maya-research/Veena (~6GB) + hubertsiuzdak/snac_24khz
+  Then: model load + SNAC warmup (~3-5 min)
+  TTS ready in 51095ms
+[Step 2] PCM16LE format contract check
+  encoding:    'pcm16le' (EXPECTED: 'pcm16le')
+  chunk_bytes: 4096 (EXPECTED: 4096; float32 bug = 8192)
+  mock:        False (EXPECTED: False)
+[Step 3] Synthesize Hindi text
+  Text: à¤¨à¤®à¤¸à¥à¤¤à¥, à¤®à¥à¤ Kavya à¤¬à¥à¤² à¤°à¤¹à¥ à¤¹à¥à¤à¥¤ payment à¤à¥ à¤¬à¤¾à¤°à¥ à¤®à¥à¤ à¤¬à¤¾à¤¤ à¤à¤°à¤¨à¥ à¤¥à¥à¥¤
+  Audio:     203808 bytes | 101904 samples | 4246ms
+  PCM16LE aligned: True
+  Int16 range:     True
+  TTFA:            1348ms (target <750ms)
+  Synthesis time:  15817ms
+  Chunk sizes:     [4096, 7200]
+  Float32 bug (8192B chunks): ABSENT â
+  VRAM peak GPU 0: 0 MiB (target: 7980 MiB)
+TTS STATUS: PASS
+[Step 4] AudioPacer: PCM16LE 24kHz â Î¼-law 8kHz â 20ms frames
+  Input:   203808 bytes PCM16LE
+  Output:  212 frames Ã 160 bytes Î¼-law = 4240ms
+  All 160B: True | Valid Î¼-law: True
+  Underruns: 0 | Silence: 0
+  Cancel works: True
+  Sample Twilio msg: ...{"event": "media", "streamSid": "MX_TEST", "media": {"payload": "LiwrKiorLC4xNjx...
+AUDIO PACER STATUS: PASS
+[Step 5] MANDATORY Hindi Sentence Continuity (REAL Veena)
+  Sentence: à¤¨à¤®à¤¸à¥à¤¤à¥ à¤¸à¤°, à¤®à¥à¤ Kavya à¤¬à¥à¤² à¤°à¤¹à¥ à¤¹à¥à¤à¥¤ à¤à¤ªà¤à¥ loan account à¤à¥ à¤¬à¤¾à¤°à¥ à¤®à¥à¤ à¤¬à¤¾à¤¤ à¤à¤°à¤¨à¥ à¤¥à¥à¥¤ à¤à¥à¤¯à¤¾ à¤à¤ª à¤¥à¥à¤¡à¤¼à¤¾ à¤µà¤à¥à¤¤ à¤¦à¥ à¤¸à¤à¤¤à¥ à¤¹à¥à¤?
+  Chunks: 79 | Sizes: [4096, 7200]
+  Total audio: 326688 bytes = 6806ms
+  TTFA: 1046ms | Synthesis: 23634ms
+  Inter-chunk: avg=290ms max=321ms
+  Pacer frames: 340 Ã 20ms = 6800ms
+  Underruns: 0 (MUST be 0 at real-time speed)
+  Silence: 0 frames
+  Float32 absent: True
+HINDI CONTINUITY STATUS: PASS

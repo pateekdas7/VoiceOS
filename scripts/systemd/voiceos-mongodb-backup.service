@@ -1,0 +1,12 @@
+[Unit]
+Description=VoiceOS MongoDB daily dump
+After=network.target mongod.service
+
+[Service]
+Type=oneshot
+User=voiceos
+EnvironmentFile=/etc/voiceos/cpu.env
+ExecStart=/bin/bash /opt/voiceos/scripts/backup/mongodb_dump.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=voiceos-mongodb-backup

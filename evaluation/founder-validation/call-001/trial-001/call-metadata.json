@@ -1,0 +1,58 @@
+{
+  "call_id": "call-001",
+  "trial_id": "trial-001",
+  "objective": "Audio & Voice Experience",
+  "call_sid": "CA54a74f177ec3e45feba3faa709a75a67",
+  "timestamp_start_utc": "2026-07-12T17:54:39Z",
+  "timestamp_end_utc": "2026-07-12T17:56:04Z",
+  "borrower_name": "Prateek Das",
+  "loan_id": "LOAN-TEST-001",
+  "outstanding_inr": 50000,
+  "due_date": "2026-07-30",
+  "greeting_text": "Namaste, Prateek Das ji. Main Kavya hun, Rajat Finance ke collections team se baat kar rahi hun. Aapke loan account mein pachaas hazaar rupay ka outstanding balance hai, jo tees July do hazaar chhabbees tak due hai. Kya aap aaj payment ke baare mein baat kar sakte hain? Main aapki poori madad karna chahti hun.",
+  "tts_model": "maya-research/Veena",
+  "tts_speaker": "kavya",
+  "tts_ttfa_ms": 663.7,
+  "tts_total_gen_ms": 22122.2,
+  "tts_duration_s": 8.513,
+  "wav_24k": {
+    "path": "/tmp/founder-validation/call-001/trial-001/call-001-trial-001.wav",
+    "size_bytes": 408652,
+    "sha256": "e363e98bd7cda118373846883b7e67c3f400233f82e8912f0ee3e9b0e6560483",
+    "info": {
+      "channels": 1,
+      "sample_rate": 24000,
+      "sample_width_bytes": 2,
+      "n_frames": 204304,
+      "duration_s": 8.513
+    }
+  },
+  "wav_8k": {
+    "path": "/tmp/founder-validation/call-001/trial-001/call-001-trial-001-8khz.wav",
+    "size_bytes": 136246,
+    "info": {
+      "channels": 1,
+      "sample_rate": 8000,
+      "sample_width_bytes": 2,
+      "n_frames": 68101,
+      "duration_s": 8.513
+    }
+  },
+  "twilio_from": "+13502204241",
+  "twilio_to": "+919911954448",
+  "twilio_call_status": "completed",
+  "twilio_call_duration_s": 29,
+  "twilio_recording": {
+    "path": "/tmp/founder-validation/call-001/trial-001/call-001-trial-001-twilio.wav",
+    "sha256": "7f7287007925253d5c102c3b0111535180ffcb467d043f2a44bb1892223eb2af",
+    "info": {
+      "channels": 1,
+      "sample_rate": 8000,
+      "sample_width_bytes": 2,
+      "n_frames": 200357,
+      "duration_s": 25.045
+    }
+  },
+  "gpu_host": "217.18.55.122",
+  "status_events": []
+}

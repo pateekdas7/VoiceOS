@@ -1,0 +1,14 @@
+{
+  "id": "mamatadas7777/voiceos-x4a-token-forensic",
+  "title": "VoiceOS X4A Token Forensic",
+  "code_file": "voiceos-x4a-token-forensic.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": true,
+  "dataset_sources": [],
+  "competition_sources": [],
+  "kernel_sources": []
+}

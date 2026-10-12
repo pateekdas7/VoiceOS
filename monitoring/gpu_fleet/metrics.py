@@ -41,6 +41,25 @@ MODEL_POOL_OCCUPANCY_RATIO: prom.Gauge = prom.Gauge(
     ["pool"],
 )
 
+POLLER_LAST_RUN: prom.Gauge = prom.Gauge(
+    "voiceos_gpu_fleet_poller_last_run_timestamp",
+    "Unix timestamp of the last successful GPU fleet poller tick.",
+)
+
+POLLER_ERRORS: prom.Counter = prom.Counter(
+    "voiceos_gpu_fleet_poller_errors_total",
+    "Count of GPU fleet poller errors, labeled by node_id.",
+    ["node_id"],
+)
+
+
+def record_poller_tick(timestamp: float) -> None:
+    POLLER_LAST_RUN.set(timestamp)
+
+
+def record_poller_error(node_id: str) -> None:
+    POLLER_ERRORS.labels(node_id=node_id).inc()
+
 
 def set_fleet_health_score(score: float) -> None:
     FLEET_HEALTH_SCORE.set(score)

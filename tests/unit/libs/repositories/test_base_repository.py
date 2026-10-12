@@ -137,3 +137,35 @@ class TestBaseRepositoryCircuitBreaker:
 
         with pytest.raises(CircuitOpenError):
             repo._tenant_select("customers", ("customer_id",), "tenant-a")
+
+
+class TestExecuteRollsBackOnFailure:
+    """A failed query must not poison every later request on the same
+    connection -- live in dev, a duplicate-key error during invitation
+    acceptance left the shared long-lived connection in Postgres's aborted-
+    transaction state, and the next unrelated request failed with
+    ``InFailedSqlTransaction`` even though it had nothing to do with the
+    original error. _execute() must roll back before propagating."""
+
+    def test_rolls_back_the_connection_on_execute_failure(self) -> None:
+        cursor = FakeCursor(raises_on_execute=ValueError("duplicate key value"))
+        conn = FakeConnection(cursor)
+        repo = BaseRepository(conn)
+
+        with pytest.raises(ValueError, match="duplicate key value"):
+            repo._execute("INSERT INTO users (email) VALUES (%s)", ("a@b.com",))
+
+        assert conn.rollback_count == 1
+
+    def test_connection_is_usable_again_after_a_failed_query(self) -> None:
+        cursor = FakeCursor(raises_on_execute=ValueError("duplicate key value"), fetchall_results=[[("row",)]])
+        conn = FakeConnection(cursor)
+        repo = BaseRepository(conn)
+
+        with pytest.raises(ValueError):
+            repo._execute("INSERT INTO users (email) VALUES (%s)", ("a@b.com",))
+
+        # A completely unrelated later request on the same connection must
+        # still succeed -- this is the exact failure mode that shipped.
+        rows = repo._tenant_select("customers", ("customer_id",), "tenant-a")
+        assert rows == [("row",)]

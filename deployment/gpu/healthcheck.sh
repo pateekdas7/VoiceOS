@@ -50,7 +50,8 @@ fi
 
 # ── VRAM budget check ─────────────────────────────────────────────────────────
 VRAM_USED_MB=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | head -1)
-VRAM_BUDGET=23034  # Actual NVIDIA L4 capacity; models target 24576 MB across multi-GPU
+# Query actual GPU capacity dynamically — supports L4 (23034 MiB), A6000 (46068 MiB), etc.
+VRAM_BUDGET=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -1)
 if [[ $VRAM_USED_MB -le $VRAM_BUDGET ]]; then
   ok "VRAM within capacity: ${VRAM_USED_MB} MiB ≤ ${VRAM_BUDGET} MiB"
 else

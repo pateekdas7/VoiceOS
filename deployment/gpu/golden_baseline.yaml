@@ -1,0 +1,288 @@
+# VoiceOS Golden Baseline — Kaggle v21
+# VALIDATED ON REAL 2×T4
+# DO NOT MODIFY — freeze artifact
+# See GOLDEN_T4X2_BASELINE.md for full documentation
+
+baseline:
+  label: "GOLDEN T4×2 BASELINE"
+  status: PASS
+  validated_at: "2026-08-21T11:09:16Z"
+  kaggle_kernel: "devishreedas/voiceos-sprint29-validation"
+  kaggle_version: 21
+
+git:
+  repository: "https://github.com/pateekdas7/VoiceOS.git"
+  branch: "claude/ssh-gpu-cpu-servers-y99fib"
+  commit: "1d36425165e8bc1e3e96aaf39897a873c6943233"
+  commit_message: "fix(tts): normalize speaker name to lowercase before validation"
+
+hardware:
+  gpu_count: 2
+  gpus:
+    - index: 0
+      model: "Tesla T4"
+      arch: "sm_75"
+      compute_capability: "7.5"
+      vram_mb: 14911
+      bf16_tensor_cores: false
+      fp16: true
+      fp8_hw: false
+      role: LLM
+    - index: 1
+      model: "Tesla T4"
+      arch: "sm_75"
+      compute_capability: "7.5"
+      vram_mb: 14911
+      bf16_tensor_cores: false
+      fp16: true
+      fp8_hw: false
+      role: "STT+TTS"
+  cuda_runtime: "12.8"
+  cudnn: 91002
+  driver_version: UNKNOWN  # not captured in v21
+
+python:
+  version: "3.12.13"
+  build: "GCC 11.4.0"
+  release_date: "2026-03-04"
+
+# Packages installed by Cell 1 (pip-requested pins)
+# torch is pre-installed by Kaggle and NOT reinstalled
+packages:
+  pre_installed_by_kaggle:
+    torch: "2.10.0+cu128"
+    triton: "3.6.0"
+  cell1_installed:
+    faster-whisper: "1.2.1"
+    ctranslate2: "4.8.0"
+    transformers: "5.12.1"
+    tokenizers: "0.22.2"
+    huggingface-hub: "0.28.0"
+    accelerate: "1.7.0"
+    snac: "1.0.0"
+    numpy: "2.3.5"
+    fastapi: "0.115.6"
+    uvicorn: "0.30.6"
+    pydantic: "2.10.4"
+    httpx: "0.27.0"
+    vllm: "0.24.0"
+
+models:
+  stt:
+    name: "faster-whisper-large-v3-turbo"
+    hf_repo: "mobiuslabsgmbh/faster-whisper-large-v3-turbo"
+    hf_revision: "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf"
+    compute_type: "int8_float16"
+    device: "cuda"
+    gpu_index: 1
+    port: 8100
+    health_endpoint: "GET /health/ready"
+    transcribe_endpoint: "POST /transcribe"
+    format: "ctranslate2"
+
+  llm:
+    name: "Qwen2.5-7B-Instruct-FP8-dynamic"
+    hf_repo: "RedHatAI/Qwen2.5-7B-Instruct-FP8-dynamic"
+    hf_revision: "a4f1d5442ea284bc8e5a3b3e1a4d528f7d6caacb"
+    served_name: "qwen2.5-7b-instruct-fp8"
+    quantization: "compressed-tensors FP8"
+    quantization_backend: "Marlin (T4 fallback — no native FP8)"
+    runtime_dtype: "torch.float16"
+    device: "cuda"
+    gpu_index: 0
+    port: 8000
+    health_endpoint: "GET /health"
+    chat_endpoint: "POST /v1/chat/completions"
+    engine: "vllm==0.24.0"
+
+  tts:
+    name: "Veena"
+    hf_repo: "maya-research/Veena"
+    hf_revision: "8b770f9e69e6b35ef320d4cd70a99a4ab6dd022f"
+    precision: "bfloat16 (FP32 emulation on T4)"
+    device: "cuda"
+    gpu_index: 1
+    port: 8200
+    health_endpoint: "GET /health/ready"
+    synthesize_endpoint: "POST /synthesize"
+    output_format: "PCM16LE"
+    sample_rate: 24000
+    chunk_bytes: 4096
+
+  snac:
+    name: "snac_24khz"
+    hf_repo: "hubertsiuzdak/snac_24khz"
+    hf_revision: "d73ad176a12188fcf4f360ba3bf2c2fbbe8f58ec"
+    package_version: "snac==1.0.0"
+    sample_rate: 24000
+    vq_strides: [4, 2, 1]
+    codebook_size: 4096
+    device: "cuda"
+    gpu_index: 1
+    patches_applied:
+      - manual_hf_download
+      - strip_LocalMHA
+      - restore_decode_method
+      - snake_jit_bypass
+
+gpu_allocation:
+  gpu_0:
+    service: LLM
+    cuda_visible_devices: "0"
+  gpu_1:
+    services: [STT, TTS]
+    cuda_visible_devices: "1"
+
+vllm_command:
+  executable: "python -m vllm.entrypoints.openai.api_server"
+  flags:
+    model: "{qpath}"  # snapshot path from hf_hub download
+    dtype: "auto"     # resolves to float16 on T4 sm_75
+    port: 8000
+    host: "0.0.0.0"
+    max_model_len: 512
+    gpu_memory_utilization: 0.85
+    served_model_name: "qwen2.5-7b-instruct-fp8"
+    trust_remote_code: true
+    enforce_eager: true  # T4-SPECIFIC: CUDA graphs fail on sm_75
+  t4_specific_flags:
+    - enforce_eager  # CUDA graphs require sm_80+; T4 is sm_75
+
+stt_command:
+  executable: "python deployment/gpu/services/stt/server.py"
+  flags:
+    model_path: "{wpath}"  # downloaded whisper snapshot path
+    compute_type: "int8_float16"
+    device: "cuda"
+    port: 8100
+    host: "0.0.0.0"
+
+tts_command:
+  executable: "python deployment/gpu/services/tts/server.py"
+  flags:
+    model_path: "maya-research/Veena"
+    snac_path: "hubertsiuzdak/snac_24khz"
+    device: "cuda"
+    port: 8200
+    host: "0.0.0.0"
+
+startup_order:
+  1: "Set HF_HOME=/kaggle/working/hf"
+  2: "Start LLM (CUDA_VISIBLE_DEVICES=0)"
+  3: "Start STT (CUDA_VISIBLE_DEVICES=1)"
+  4: "Start TTS (CUDA_VISIBLE_DEVICES=1)"
+  5: "Poll STT /health/ready (timeout=120s)"
+  6: "Poll TTS /health/ready (timeout=700s)"
+  7: "Poll LLM /health (timeout=300s)"
+  8: "Run E2E test"
+  9: "Terminate all subprocesses"
+
+environment_variables:
+  required:
+    HF_HOME: "/kaggle/working/hf"
+    CUDA_VISIBLE_DEVICES: "per-process (0 for LLM, 1 for STT+TTS)"
+  service:
+    VEENA_MODEL_PATH: "maya-research/Veena"
+    SNAC_MODEL_PATH: "hubertsiuzdak/snac_24khz"
+    TTS_DEVICE: "cuda"
+    TTS_SERVICE_PORT: "8200"
+    STT_SERVICE_PORT: "8100"
+  secrets:
+    HF_TOKEN: "SECRET — NOT CAPTURED"
+
+audio_pacer:
+  input_format: "PCM16LE"
+  input_sample_rate: 24000
+  output_format: "G.711 μ-law"
+  output_sample_rate: 8000
+  frame_ms: 20
+  frame_bytes: 160
+  src_samples_per_frame: 480
+  downsampling: "3:1 decimation"
+
+snac_patches:
+  - id: 1
+    name: "manual_hf_download"
+    t4_specific: false
+    file: "deployment/gpu/services/tts/server.py"
+    description: "Bypass SNAC.from_pretrained; use hf_hub_download directly"
+  - id: 2
+    name: "strip_LocalMHA"
+    t4_specific: false
+    file: "deployment/gpu/services/tts/server.py"
+    description: "Remove LocalMHA layers inserted by snac==1.0.0 default attn_window_size=32"
+  - id: 3
+    name: "restore_decode_method"
+    t4_specific: false
+    file: "deployment/gpu/services/tts/server.py"
+    description: "Patch SNAC.decode(codes) back — removed in snac==1.0.0"
+  - id: 4
+    name: "snake_jit_bypass"
+    t4_specific: true
+    t4_reason: "Missing libnvrtc-builtins.so.13.0 in Kaggle T4 environment"
+    safe_on_newer_gpus: true
+    file: "deployment/gpu/services/tts/server.py"
+    description: "Replace @torch.jit.script snake() with plain Python to avoid NVRTC compilation"
+
+t4_workarounds:
+  - id: 1
+    location: "notebook Cell 5"
+    workaround: "--enforce-eager in vLLM"
+    reason: "CUDA graphs require sm_80+; T4 is sm_75"
+    needed_on_a6000_l40s: false
+  - id: 2
+    location: "vLLM runtime (auto)"
+    workaround: "FP32 emulation for Veena BF16"
+    reason: "No BF16 tensor cores on sm_75"
+    needed_on_a6000_l40s: false
+  - id: 3
+    location: "vLLM runtime (auto)"
+    workaround: "Marlin kernel for FP8 dequant"
+    reason: "No native FP8 on sm_75"
+    needed_on_a6000_l40s: false
+  - id: 4
+    location: "deployment/gpu/services/tts/server.py"
+    workaround: "snake() JIT bypass (Patch 4)"
+    reason: "Missing libnvrtc-builtins.so.13.0"
+    needed_on_a6000_l40s: false
+
+validation_results:
+  stt:
+    status: PASS
+    model: "mobiuslabsgmbh/faster-whisper-large-v3-turbo"
+    revision: "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf"
+    load_ms: 18638
+    warmup_ms: 779
+    e2e_latency_ms: 494
+    language: hi
+    label: "REAL — KAGGLE 2×T4"
+  llm:
+    status: PASS
+    model: "RedHatAI/Qwen2.5-7B-Instruct-FP8-dynamic"
+    revision: "a4f1d5442ea284bc8e5a3b3e1a4d528f7d6caacb"
+    vllm_version: "0.24.0"
+    runtime_dtype: "float16"
+    kv_cache_tokens: 67424
+    prompt_throughput_toks: 3.1
+    generation_throughput_toks: 2.7
+    label: "REAL — KAGGLE 2×T4"
+  tts:
+    status: PASS
+    model: "maya-research/Veena"
+    revision: "8b770f9e69e6b35ef320d4cd70a99a4ab6dd022f"
+    snac_revision: "d73ad176a12188fcf4f360ba3bf2c2fbbe8f58ec"
+    load_ms: 21410
+    warmup_ms: 3490
+    ttfa_ms: 1160
+    total_synthesis_ms: 10855
+    input_chars: 32
+    speaker: kavya
+    label: "REAL — KAGGLE 2×T4"
+  audio_pacer:
+    status: PASS
+    label: "REAL — KAGGLE 2×T4"
+  e2e:
+    status: PASS
+    chain: "sine → STT(hi) → LLM(Qwen) → TTS(Veena) → AudioPacer"
+    label: "REAL — KAGGLE 2×T4"
+  overall: PASS

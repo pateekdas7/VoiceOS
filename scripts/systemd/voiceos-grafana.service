@@ -1,0 +1,27 @@
+[Unit]
+Description=VoiceOS Grafana
+Documentation=https://grafana.com/docs/
+After=network.target voiceos-prometheus.service voiceos-loki.service
+Wants=voiceos-prometheus.service voiceos-loki.service
+
+[Service]
+Type=simple
+User=grafana
+Group=grafana
+EnvironmentFile=/opt/voiceos/.env
+Environment=GF_PATHS_CONFIG=/opt/voiceos/app/monitoring/grafana/grafana.ini
+Environment=GF_PATHS_PROVISIONING=/opt/voiceos/app/monitoring/grafana/provisioning
+Environment=GF_PATHS_DATA=/var/lib/grafana
+Environment=GF_PATHS_LOGS=/var/log/grafana
+Environment=GF_PATHS_PLUGINS=/var/lib/grafana/plugins
+ExecStart=/usr/sbin/grafana-server \
+    --config=${GF_PATHS_CONFIG} \
+    --homepath=/usr/share/grafana
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

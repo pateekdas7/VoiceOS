@@ -1,0 +1,21 @@
+[Unit]
+Description=VoiceOS Monitoring Scheduler (GPU poller + alert escalation evaluator)
+After=network.target redis-server.service postgresql.service
+Wants=voiceos-webapi.service
+
+[Service]
+Type=simple
+User=voiceos
+Group=voiceos
+WorkingDirectory=/opt/voiceos/app
+EnvironmentFile=/opt/voiceos/.env
+Environment=PYTHONPATH=/opt/voiceos/app
+ExecStart=/usr/bin/python3 -m scripts.workers.scheduler
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+StandardOutput=append:/opt/voiceos/logs/scheduler.log
+StandardError=append:/opt/voiceos/logs/scheduler.log
+
+[Install]
+WantedBy=multi-user.target

@@ -649,6 +649,101 @@ def build_security() -> None:
     )
 
 
+def build_monitoring_self_health() -> None:
+    """Phase 4 / G3 — the monitoring system monitoring itself.
+
+    Dashboard surfaces the Phase 1-3 self-monitoring metrics so operators can
+    answer "is the monitoring pipeline actually alive?" without reading logs:
+
+    - GPU fleet poller freshness + error rate (``voiceos_gpu_fleet_poller_*``)
+    - Alert escalation scheduler freshness + error rate
+      (``voiceos_escalation_scheduler_*``)
+    - Registered background handlers (``voiceos_startup_handlers``)
+    """
+    panels = [
+        _panel(
+            "GPU Fleet Poller — seconds since last successful tick",
+            "stat",
+            [("time() - voiceos_gpu_fleet_poller_last_run_timestamp", "lag (s)")],
+            x=0,
+            y=0,
+            w=12,
+            h=6,
+            unit="s",
+            thresholds={
+                "mode": "absolute",
+                "steps": [
+                    {"color": "green", "value": None},
+                    {"color": "yellow", "value": 60},
+                    {"color": "red", "value": 180},
+                ],
+            },
+        ),
+        _panel(
+            "GPU Fleet Poller — errors / 5m by node",
+            "timeseries",
+            [("rate(voiceos_gpu_fleet_poller_errors_total[5m])", "{{node_id}}")],
+            x=12,
+            y=0,
+            w=12,
+            h=6,
+        ),
+        _panel(
+            "Alert Escalation Scheduler — seconds since last tick",
+            "stat",
+            [("time() - voiceos_escalation_scheduler_last_run_timestamp", "lag (s)")],
+            x=0,
+            y=6,
+            w=12,
+            h=6,
+            unit="s",
+            thresholds={
+                "mode": "absolute",
+                "steps": [
+                    {"color": "green", "value": None},
+                    {"color": "yellow", "value": 120},
+                    {"color": "red", "value": 300},
+                ],
+            },
+        ),
+        _panel(
+            "Alert Escalation Scheduler — error rate / 5m",
+            "timeseries",
+            [("rate(voiceos_escalation_scheduler_errors_total[5m])", "errors/s")],
+            x=12,
+            y=6,
+            w=12,
+            h=6,
+        ),
+        _panel(
+            "Escalations by severity (last 1h)",
+            "barchart",
+            [("sum by (severity) (increase(voiceos_escalations_total[1h]))", "{{severity}}")],
+            x=0,
+            y=12,
+            w=12,
+        ),
+        _panel(
+            "Background handlers registered on BFF lifespan",
+            "stat",
+            [("sum(voiceos_startup_handlers)", "handlers")],
+            x=12,
+            y=12,
+            w=12,
+            h=8,
+        ),
+    ]
+    _write(
+        "voiceos-monitoring-self-health",
+        "VoiceOS / Monitoring Self-Health",
+        "Observability for the observability stack — poller/scheduler freshness, "
+        "handler registry, escalation volume.",
+        panels,
+        ["voiceos", "monitoring", "self-health"],
+        "monitoring-self-health.json",
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true", help="verify generated files are up to date; exit 1 if not")
@@ -686,6 +781,7 @@ def _generate_all() -> None:
     build_business()
     build_governance()
     build_security()
+    build_monitoring_self_health()
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ Use `tests/fixtures/audio.py::make_wav_bytes` to create WAV bytes in tests:
 from tests.fixtures.audio import make_wav_bytes
 
 silence_wav = make_wav_bytes(sample_rate=8000, num_samples=160, silence=True)
-speech_wav  = make_wav_bytes(sample_rate=8000, num_samples=160, silence=False)
+speech_wav = make_wav_bytes(sample_rate=8000, num_samples=160, silence=False)
 ```
 
 ## Clip Patterns

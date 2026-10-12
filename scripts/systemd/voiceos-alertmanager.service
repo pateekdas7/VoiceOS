@@ -1,0 +1,27 @@
+[Unit]
+Description=VoiceOS Alertmanager
+Documentation=https://prometheus.io/docs/alerting/latest/alertmanager/
+After=network.target voiceos-prometheus.service
+Wants=voiceos-prometheus.service
+
+[Service]
+Type=simple
+User=alertmanager
+Group=alertmanager
+EnvironmentFile=-/opt/voiceos/.env
+# Phase 2 / G2 — the single source of truth for Alertmanager routing is
+# monitoring/grafana/alerts/alertmanager.yml. Deployed to the live
+# ConfigMap/path by the deployment pipeline; the DEPRECATED stub at
+# scripts/k8s/alertmanager-config.DEPRECATED.yaml must NEVER be applied.
+ExecStart=/usr/local/bin/alertmanager \
+    --config.file=/opt/voiceos/app/monitoring/grafana/alerts/alertmanager.yml \
+    --storage.path=/var/lib/alertmanager \
+    --web.listen-address=0.0.0.0:9093
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

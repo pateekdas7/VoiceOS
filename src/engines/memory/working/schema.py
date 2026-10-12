@@ -49,6 +49,11 @@ class WorkingMemory(BaseModel):
     customer_utterances: tuple[str, ...] = ()
     """Ordered history of customer utterance texts for this call."""
 
+    sales_state: dict | None = None
+    """Serialized SalesState dict from the Sales Intelligence Layer (Phase 2).
+    None when the sales layer is not wired. Persisted across turns so
+    SalesStateUpdater can access the previous turn's state."""
+
 
 class WorkingMemoryDelta(BaseModel):
     """Partial update applied to an existing WorkingMemory.
@@ -68,3 +73,4 @@ class WorkingMemoryDelta(BaseModel):
     last_strategy: str | None = None
     agent_utterances: tuple[str, ...] | None = None
     customer_utterances: tuple[str, ...] | None = None
+    sales_state: dict | None = None

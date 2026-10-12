@@ -13,6 +13,7 @@ groups:
           severity: critical
           route: page
         annotations:
+          runbook_url: /docs/runbooks/alerts/node-down.md
           summary: "Node target down: {{ $labels.instance }}"
           description: "Node {{ $labels.instance }} has been unreachable by Prometheus for 2 minutes."
           runbook: "infra/dr/runbooks/full-region-failure.md"
@@ -24,6 +25,7 @@ groups:
           severity: warning
           route: ticket
         annotations:
+          runbook_url: /docs/runbooks/alerts/disk-almost-full.md
           summary: "Disk usage above 90% on {{ $labels.instance }} ({{ $labels.mountpoint }})"
           description: "Less than 10% free space remains on {{ $labels.mountpoint }}."
 
@@ -34,6 +36,7 @@ groups:
           severity: critical
           route: page
         annotations:
+          runbook_url: /docs/runbooks/alerts/disk-critical.md
           summary: "Disk usage above 95% on {{ $labels.instance }} ({{ $labels.mountpoint }})"
           description: "Less than 5% free space remains on {{ $labels.mountpoint }} -- imminent write failures."
 
@@ -44,6 +47,7 @@ groups:
           severity: warning
           route: ticket
         annotations:
+          runbook_url: /docs/runbooks/alerts/pod-oom-killed.md
           summary: "Pod {{ $labels.pod }} OOMKilled"
           description: "Container {{ $labels.container }} in pod {{ $labels.pod }} (namespace {{ $labels.namespace }}) was OOMKilled within the last 15 minutes."
 
@@ -54,6 +58,7 @@ groups:
           severity: critical
           route: page
         annotations:
+          runbook_url: /docs/runbooks/alerts/gpu-unavailable.md
           summary: "GPU node inference service unreachable: {{ $labels.instance }}"
           description: "One of STT/LLM/TTS on the GPU node has not responded to Prometheus scrape for 1 minute."
           runbook: "infra/dr/runbooks/gpu-node-failure.md"
@@ -65,6 +70,7 @@ groups:
           severity: critical
           route: page
         annotations:
+          runbook_url: /docs/runbooks/alerts/gpu-fleet-degraded.md
           summary: "GPU fleet health degraded (score={{ $value }})"
           description: "GPUFleetHealthMonitor.fleet_health_score() has dropped below 0.8 -- see monitoring/gpu-fleet/fleet_health.py. Below 0.5 pages on-call per Sprint-027.md's own threshold."
           runbook: "infra/dr/runbooks/gpu-node-failure.md"
@@ -76,6 +82,7 @@ groups:
           severity: critical
           route: page
         annotations:
+          runbook_url: /docs/runbooks/alerts/gpu-fleet-severe-degradation.md
           summary: "GPU fleet severely degraded (score={{ $value }}) -- page on-call"
           description: "Majority of GPU fleet nodes are unhealthy. Immediate page per Sprint-027.md's explicit < 0.5 threshold."
           runbook: "infra/dr/runbooks/gpu-node-failure.md"

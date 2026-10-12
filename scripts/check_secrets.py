@@ -64,7 +64,7 @@ _PATTERNS: dict[str, re.Pattern[str]] = {
 
 # Placeholders that legitimately look like the patterns above — never real
 # secrets, appear throughout .env.example / docs / this scanner's own tests.
-_ALLOWLIST_SUBSTRINGS = ("CHANGE_ME", "<redacted>", "xxxxxxxx", "EXAMPLE", "test-token-not-a-real-secret")
+_ALLOWLIST_SUBSTRINGS = ("CHANGE_ME", "<redacted>", "xxxxxxxx", "EXAMPLE", "test-token-not-a-real-secret", "thisTokenWasNeverIssued", "correct-pass")
 
 # Explicit per-line marker for intentionally-planted fake secrets in this
 # scanner's own tests (e.g. test_secrets_scan_catches_hardcoded plants a
