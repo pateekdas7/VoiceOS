@@ -112,7 +112,7 @@ export function ImpersonationView() {
                       </TableCell>
                       <TableCell className="font-mono text-xs">{s.tenantId.slice(0, 8)}…</TableCell>
                       <TableCell>
-                        <Badge variant={s.isActive ? "warning" : "secondary"}>
+                        <Badge tone={s.isActive ? "warning" : "neutral"}>
                           {s.isActive ? "ACTIVE" : "ENDED"}
                         </Badge>
                       </TableCell>

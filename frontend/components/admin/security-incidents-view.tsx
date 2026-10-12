@@ -13,11 +13,11 @@ import {
   type SecurityIncident,
 } from "@/lib/api/admin-ops";
 
-const SEVERITY_COLORS: Record<string, string> = {
-  SEV1: "destructive",
+const SEVERITY_COLORS: Record<string, "critical" | "warning" | "brand" | "neutral"> = {
+  SEV1: "critical",
   SEV2: "warning",
-  SEV3: "default",
-  SEV4: "secondary",
+  SEV3: "brand",
+  SEV4: "neutral",
 };
 
 const INCIDENT_TYPES = [
@@ -104,10 +104,10 @@ export function SecurityIncidentsView() {
                     <TableRow key={inc.incidentId}>
                       <TableCell className="font-mono text-xs">{inc.incidentType.replace("_", " ")}</TableCell>
                       <TableCell>
-                        <Badge variant={SEVERITY_COLORS[inc.severity] as any}>{inc.severity}</Badge>
+                        <Badge tone={SEVERITY_COLORS[inc.severity]}>{inc.severity}</Badge>
                       </TableCell>
                       <TableCell>
-                        <Badge variant={inc.status === "CLOSED" ? "secondary" : "destructive"}>
+                        <Badge tone={inc.status === "CLOSED" ? "neutral" : "critical"}>
                           {inc.status}
                         </Badge>
                       </TableCell>

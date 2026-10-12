@@ -14,8 +14,20 @@ export function TableBody({ children }: { children: React.ReactNode }) {
   return <tbody className="divide-y divide-border">{children}</tbody>;
 }
 
-export function TableRow({ children }: { children: React.ReactNode }) {
-  return <tr className="hover:bg-background/60">{children}</tr>;
+export function TableRow({
+  children,
+  className = "",
+  onClick,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  onClick?: () => void;
+}) {
+  return (
+    <tr className={`hover:bg-background/60 ${className}`} onClick={onClick}>
+      {children}
+    </tr>
+  );
 }
 
 export function TableHeaderCell({ children }: { children: React.ReactNode }) {

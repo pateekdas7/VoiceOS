@@ -14,19 +14,19 @@ import {
   type SupportTicket,
 } from "@/lib/api/admin-ops";
 
-const PRIORITY_COLORS: Record<string, string> = {
-  CRITICAL: "destructive",
+const PRIORITY_COLORS: Record<string, "critical" | "warning" | "brand" | "neutral"> = {
+  CRITICAL: "critical",
   HIGH: "warning",
-  MEDIUM: "default",
-  LOW: "secondary",
+  MEDIUM: "brand",
+  LOW: "neutral",
 };
 
-const STATUS_COLORS: Record<string, string> = {
-  OPEN: "default",
+const STATUS_COLORS: Record<string, "brand" | "warning" | "neutral" | "healthy"> = {
+  OPEN: "brand",
   IN_PROGRESS: "warning",
-  WAITING_ON_CUSTOMER: "secondary",
-  RESOLVED: "success",
-  CLOSED: "secondary",
+  WAITING_ON_CUSTOMER: "neutral",
+  RESOLVED: "healthy",
+  CLOSED: "neutral",
 };
 
 export function SupportTicketsView() {
@@ -131,10 +131,10 @@ export function SupportTicketsView() {
                       <TableCell className="font-medium">{t.subject}</TableCell>
                       <TableCell className="font-mono text-xs">{t.tenantId.slice(0, 8)}…</TableCell>
                       <TableCell>
-                        <Badge variant={PRIORITY_COLORS[t.priority] as any}>{t.priority}</Badge>
+                        <Badge tone={PRIORITY_COLORS[t.priority]}>{t.priority}</Badge>
                       </TableCell>
                       <TableCell>
-                        <Badge variant={STATUS_COLORS[t.status] as any}>{t.status}</Badge>
+                        <Badge tone={STATUS_COLORS[t.status]}>{t.status}</Badge>
                       </TableCell>
                       <TableCell className="text-sm">{t.reporterEmail}</TableCell>
                       <TableCell className={`text-xs ${breached ? "text-status-critical font-semibold" : ""}`}>
